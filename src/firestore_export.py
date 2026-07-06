@@ -139,6 +139,18 @@ def _write_meta(cfg: RoboticsConfig, summary: dict[str, Any]) -> None:
 # ── Firebase Storage uploads ───────────────────────────────────────
 
 
+def _file_md5_b64(path: str) -> str:
+    """base64 md5 of a local file — the encoding GCS uses in blob.md5_hash."""
+    import base64
+    import hashlib
+
+    h = hashlib.md5()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return base64.b64encode(h.digest()).decode()
+
+
 def _upload_pngs(
     cfg: RoboticsConfig,
     cards: list[dict[str, Any]],
@@ -146,7 +158,13 @@ def _upload_pngs(
 ) -> tuple[int, int, int]:
     """Upload local card PNGs to gs://{bucket}/{prefix}/{entry_id}.png.
 
-    Returns (uploaded, skipped_existing, missing_local).
+    Content-aware idempotence: a blob is skipped only when its md5 matches
+    the local file. A re-rendered PNG (e.g. the 2026-07-05 2400x1260
+    poster reframe) differs in content, so the sync overwrites the stale
+    blob — existence alone is not "already synced".
+
+    Returns (uploaded, skipped_same, missing_local); `uploaded` includes
+    overwrites of stale blobs.
     """
     if not cfg.storage.bucket:
         log.warning("storage.bucket not set — skipping PNG upload")
@@ -165,10 +183,14 @@ def _upload_pngs(
             missing += 1
             continue
 
-        blob = bucket.blob(f"{cfg.storage.cards_prefix}/{entry_id}.png")
-        if blob.exists():
+        # get_blob fetches metadata (None if absent); blob.md5_hash is the
+        # base64 md5 GCS computed at upload time.
+        blob = bucket.get_blob(f"{cfg.storage.cards_prefix}/{entry_id}.png")
+        if blob is not None and blob.md5_hash == _file_md5_b64(local_path):
             skipped += 1
             continue
+        if blob is None:
+            blob = bucket.blob(f"{cfg.storage.cards_prefix}/{entry_id}.png")
 
         # Private bucket — no make_public(). Browsers read via the Firebase
         # Storage SDK gated by storage.rules; this SA write is IAM-governed.

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
 
 import duckdb
@@ -331,7 +331,16 @@ def build_payload(cfg: RoboticsConfig) -> dict[str, Any]:
     finally:
         con.close()
 
-    graph = _build_graph_projection(cards)
+    # Graph projection is windowed independently of the card list: the graph
+    # lands in ONE Firestore doc (CKG-<sector>/graph/sectors/<sector>) which
+    # hard-caps at 1 MiB — all-time nodes+edges blew it at 248 cards
+    # (2026-07-06). Cards sync in full; the graph doc stays the recent view.
+    if cfg.graph.graph_window_days > 0:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=cfg.graph.graph_window_days)).strftime("%Y-%m-%d")
+        graph_cards = [c for c in cards if str(c.get("date", "")) >= cutoff]
+    else:
+        graph_cards = cards
+    graph = _build_graph_projection(graph_cards)
 
     return {
         "schema_version": cfg.export.schema_version,
@@ -342,6 +351,7 @@ def build_payload(cfg: RoboticsConfig) -> dict[str, Any]:
             "time_window_days": cfg.graph.time_window_days,
             "min_edge_confidence": cfg.graph.min_edge_confidence,
             "show_invalidated": cfg.graph.show_invalidated,
+            "graph_window_days": cfg.graph.graph_window_days,
         },
         "cards": cards,
         "graph": graph,

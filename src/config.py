@@ -90,9 +90,12 @@ class ExportConfig:
 @dataclass(frozen=True)
 class GraphConfig:
     """Frontend render filters (§2.5)."""
-    time_window_days: int            # 0 = no cap
+    time_window_days: int            # 0 = no cap (cards/edges in the payload)
     min_edge_confidence: float
     show_invalidated: bool
+    graph_window_days: int           # window for the GRAPH projection only —
+                                     # bounds the single Firestore graph doc
+                                     # under the 1 MiB document limit. 0 = all.
 
 
 @dataclass(frozen=True)
@@ -287,6 +290,7 @@ def load_config() -> RoboticsConfig:
             time_window_days=int(graph_cfg.get("time_window_days", 90)),
             min_edge_confidence=float(graph_cfg.get("min_edge_confidence", 0.0)),
             show_invalidated=bool(graph_cfg.get("show_invalidated", False)),
+            graph_window_days=int(graph_cfg.get("graph_window_days", 90)),
         ),
         lifecycle=LifecycleConfig(
             enabled=bool(lifecycle_cfg.get("enabled", False)),

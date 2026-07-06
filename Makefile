@@ -41,6 +41,7 @@ help:
 	@echo ""
 	@echo "Pipeline triggers"
 	@echo "  firestore-ping     Read 1 finding from Arboryx Firestore — verifies auth + connectivity"
+	@echo "  ingest-render-status  Pipeline number map: ingest/export/Firestore + render stats"
 	@echo "  check-log          Sanity-check upstream Arboryx data (dup IDs, order, shape)"
 	@echo "  watermark          Show last-processed date + entry_id"
 	@echo "  ingest [LIMIT=N]   Real run (bounded if LIMIT set). Always re-exports cards.json."
@@ -185,6 +186,12 @@ export:
 watermark:
 	@docker compose exec duckdb duckdb /data/robotics.duckdb \
 		"SELECT sector, last_processed_date, last_processed_entry_id, last_processed_at FROM ingestion_meta;"
+
+# Full pipeline number map: upstream findings vs ingested vs exported vs
+# Firestore, plus render stats (local/bucket PNGs, poster vs old format,
+# md5 sync state). Cloud rows need GOOGLE_APPLICATION_CREDENTIALS.
+ingest-render-status:
+	@python3 dev-utils/pipeline_status.py
 
 # Connectivity probe: read 1 doc from Arboryx Firestore and print its
 # entry_id. Exit non-zero on auth/permission/database-name failures so
