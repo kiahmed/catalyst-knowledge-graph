@@ -1,0 +1,7 @@
+flask>=3.0.0
+gunicorn>=22.0.0
+playwright==1.49.0   # pinned: must match Dockerfile base image (playwright/python:v1.49.0-noble) — browsers ship with the image
+jinja2>=3.1.0
+duckdb>=1.2.0
+google-cloud-storage>=2.18.0
+google-cloud-firestore>=2.18.0   # OG deep-link routes read card docs (robotics-og service)

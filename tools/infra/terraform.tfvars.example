@@ -1,0 +1,9 @@
+project_id                   = "sample-gcp-project-id"  # Single-project deployment
+region                       = "us-central1"
+data_bucket_name             = "robotics-data"          # Private: DuckDB + raw exports
+cards_bucket_name            = "robotics-cards"         # Public: Firebase Storage for card PNGs
+arboryx_firestore_database   = "(default)"              # Same DB as Arboryx; collections separate the data
+arboryx_firestore_collection = "findings"               # Source collection (Arboryx writes here)
+sector                       = "Robotics"
+ingest_schedule              = "0 6 * * *"
+image_tag                    = "latest"

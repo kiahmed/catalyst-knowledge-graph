@@ -1,0 +1,168 @@
+.robotics-graph {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: var(--bg, #f3f1ed);
+  font-family: 'Inter', -apple-system, sans-serif;
+  overflow: hidden;
+}
+
+.robotics-graph .robotics-graph-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.robotics-graph .robotics-edge-tip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: none;
+  max-width: 340px;
+  padding: 10px 12px;
+  background: var(--bg-card, #fdfcfa);
+  color: var(--text, #1c1917);
+  border: 1px solid var(--border, #ddd8cf);
+  border-radius: 8px;
+  box-shadow: var(--shadow, 0 1px 3px rgba(0,0,0,0.04), 0 4px 14px rgba(0,0,0,0.05));
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: none;
+  z-index: 500;
+  transform: translate(12px, 12px);
+  white-space: normal;
+  word-wrap: break-word;
+}
+
+.robotics-graph .robotics-edge-tip.is-visible { display: block; }
+
+.robotics-graph .robotics-edge-tip .robotics-tip-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--text, #1c1917);
+}
+
+.robotics-graph .robotics-edge-tip .robotics-tip-meta {
+  color: var(--text-secondary, #57534e);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+
+.robotics-graph .robotics-edge-tip .robotics-tip-mech {
+  color: var(--text, #1c1917);
+  margin-bottom: 4px;
+}
+
+.robotics-graph .robotics-edge-tip .robotics-tip-cites {
+  color: var(--text-muted, #a8a29e);
+  font-size: 11px;
+}
+
+.robotics-graph .robotics-graph-legend {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 10px 12px;
+  background: rgba(253, 252, 250, 0.88);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid var(--border, #ddd8cf);
+  border-radius: 10px;
+  box-shadow: var(--shadow, 0 1px 3px rgba(0,0,0,0.04), 0 4px 14px rgba(0,0,0,0.05));
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary, #57534e);
+  z-index: 400;
+  pointer-events: none;
+  user-select: none;
+  max-width: 220px;
+}
+
+.robotics-graph .robotics-graph-legend .robotics-legend-title {
+  font-weight: 600;
+  color: var(--text, #1c1917);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 4px;
+}
+
+.robotics-graph .robotics-graph-legend .robotics-legend-section + .robotics-legend-section {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border, #ddd8cf);
+}
+
+.robotics-graph .robotics-graph-legend .robotics-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.robotics-graph .robotics-graph-legend .robotics-legend-swatch {
+  width: 28px;
+  height: 0;
+  border-top: 3px solid currentColor;
+  flex-shrink: 0;
+}
+
+.robotics-graph .robotics-graph-legend .robotics-legend-swatch.is-dashed {
+  border-top-style: dashed;
+}
+
+.robotics-graph .robotics-graph-legend .robotics-legend-check {
+  color: var(--accent-contract, #10b981);
+  font-size: 11px;
+  font-weight: 700;
+  margin-left: -20px;
+  margin-right: 6px;
+  padding: 0 2px;
+  background: rgba(253, 252, 250, 0.92);
+  line-height: 1;
+}
+
+.robotics-graph .robotics-graph-legend .robotics-legend-label {
+  color: var(--text, #1c1917);
+}
+
+.robotics-graph .robotics-graph-legend {
+  max-width: 240px;
+}
+
+.robotics-graph .robotics-graph-legend .robotics-legend-heatrow {
+  gap: 6px;
+  margin-top: 2px;
+}
+.robotics-graph .robotics-graph-legend .robotics-legend-heatlabel {
+  font-size: 10px;
+  color: var(--text-muted, #a8a29e);
+  font-family: 'IBM Plex Mono', monospace;
+}
+.robotics-graph .robotics-graph-legend .robotics-legend-gradient {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border, #ddd8cf);
+}
+.robotics-graph .robotics-graph-legend .robotics-legend-caption {
+  font-size: 10px;
+  color: var(--text-muted, #a8a29e);
+  margin: 4px 0 6px;
+  line-height: 1.35;
+}
+.robotics-graph .robotics-graph-legend .robotics-legend-sizerow {
+  gap: 4px;
+  align-items: center;
+}
+.robotics-graph .robotics-graph-legend .robotics-legend-dot {
+  display: inline-block;
+  border-radius: 50%;
+  background: var(--text-muted, #a8a29e);
+  border: 1px solid var(--border, #ddd8cf);
+  flex-shrink: 0;
+}
+.robotics-graph .robotics-graph-legend .robotics-legend-dot-sm { width: 6px; height: 6px; }
+.robotics-graph .robotics-graph-legend .robotics-legend-dot-md { width: 10px; height: 10px; }
+.robotics-graph .robotics-graph-legend .robotics-legend-dot-lg { width: 16px; height: 16px; }

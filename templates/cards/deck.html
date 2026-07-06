@@ -1,0 +1,1268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<title>Robotics module · Arboryx</title>
+<style>
+/* ================================================================
+   Robotics module — Deck UI
+   Light, clean, focused single-card view with ASCII background.
+   ================================================================ */
+
+:root {
+  --bg: #f8f9fc;
+  --bg-card: #ffffff;
+  --bg-detail: #f1f3f8;
+  --border: #e2e6ef;
+  --border-hover: #c7cdd9;
+  --text: #1a1f2e;
+  --text-secondary: #5a6178;
+  --text-muted: #8b92a8;
+  --accent-robotics: #0ea5e9;
+  --accent-deal: #8b5cf6;
+  --accent-contract: #10b981;
+  --accent-regulatory: #f59e0b;
+  --accent-product: #3b82f6;
+  --accent-talent: #ec4899;
+  --accent-competition: #ef4444;
+  --up: #10b981;
+  --down: #ef4444;
+  --confidence-high: #10b981;
+  --confidence-mid: #f59e0b;
+  --confidence-low: #ef4444;
+  --radius: 16px;
+  --shadow-card: 0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.06);
+  --shadow-card-hover: 0 2px 8px rgba(0,0,0,0.06), 0 8px 32px rgba(0,0,0,0.1);
+  --shadow-expanded: 0 8px 40px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.06);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', -apple-system, sans-serif;
+  overflow: hidden;
+  height: 100vh;
+  user-select: none;
+}
+
+/* ── ASCII Background ── */
+.ascii-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0.035;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text);
+  white-space: pre;
+  padding: 20px;
+}
+
+/* ── Top Bar (reserved for future menu) ── */
+.topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 32px;
+  background: rgba(248, 249, 252, 0.85);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text);
+  letter-spacing: -0.3px;
+}
+
+.topbar-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-robotics);
+  box-shadow: 0 0 10px rgba(14, 165, 233, 0.4);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { box-shadow: 0 0 10px rgba(14, 165, 233, 0.4); }
+  50% { box-shadow: 0 0 18px rgba(14, 165, 233, 0.7); }
+}
+
+/* ── Center Console (filters + sort above card) ── */
+.center-console {
+  position: fixed;
+  z-index: 50;
+  left: 50%;
+  top: 80px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.04);
+}
+
+.sort-btn, .filter-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sort-btn:hover, .filter-btn:hover {
+  border-color: var(--border-hover);
+  color: var(--text);
+  background: var(--bg-detail);
+}
+
+.sort-btn.active, .filter-btn.active {
+  border-color: var(--accent-robotics);
+  color: var(--accent-robotics);
+  background: rgba(14, 165, 233, 0.05);
+}
+
+.filter-pills {
+  display: flex;
+  gap: 6px;
+}
+
+.filter-pill {
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.filter-pill:hover { border-color: var(--border-hover); color: var(--text-secondary); }
+.filter-pill.active { border-color: var(--accent-robotics); color: var(--accent-robotics); background: rgba(14, 165, 233, 0.05); }
+
+/* ── Card Counter (below card, not at page bottom) ── */
+.card-counter {
+  position: fixed;
+  z-index: 50;
+  left: 50%;
+  bottom: calc(50% - 260px);
+  transform: translateX(-50%);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.card-counter span { color: var(--text); font-weight: 600; }
+
+.card-counter .sound-inline {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-muted);
+  transition: all 0.15s;
+}
+
+.card-counter .sound-inline:hover { border-color: var(--border-hover); color: var(--text); }
+.card-counter .sound-inline.on { color: var(--accent-robotics); border-color: var(--accent-robotics); }
+
+/* ── Nav Arrows — bold, close to card ── */
+.nav-arrow {
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 50;
+  width: 52px;
+  height: 52px;
+  border: 2px solid var(--border-hover);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.nav-arrow:hover {
+  border-color: var(--accent-robotics);
+  color: var(--accent-robotics);
+  box-shadow: 0 2px 12px rgba(14, 165, 233, 0.15);
+}
+
+.nav-arrow:active { transform: translateY(-50%) scale(0.93); }
+
+/* Positioned relative to center — close to the card edges */
+.nav-arrow.left { left: calc(50% - 268px); }
+.nav-arrow.right { right: calc(50% - 268px); }
+.nav-arrow.disabled { opacity: 0.25; cursor: default; pointer-events: none; }
+
+/* ── Keyboard hint (tucked under counter) ── */
+.key-hint {
+  position: fixed;
+  z-index: 50;
+  left: 50%;
+  bottom: calc(50% - 290px);
+  transform: translateX(-50%);
+  font-size: 10px;
+  color: var(--text-muted);
+  display: flex;
+  gap: 12px;
+  opacity: 0.6;
+}
+
+.key-hint kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-card);
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-right: 3px;
+}
+
+/* ── Card Stage (center) ── */
+.card-stage {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 120px;
+}
+
+/* ── Compact Card (default state) ── */
+.sp-card {
+  position: absolute;
+  width: 420px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  opacity: 0;
+  transform: scale(0.92) translateX(60px);
+  pointer-events: none;
+}
+
+.sp-card.active {
+  opacity: 1;
+  transform: scale(1) translateX(0);
+  pointer-events: auto;
+}
+
+.sp-card.active:hover {
+  box-shadow: var(--shadow-card-hover);
+  transform: scale(1.01);
+}
+
+.sp-card.exiting-left {
+  opacity: 0;
+  transform: scale(0.92) translateX(-80px);
+}
+
+.sp-card.exiting-right {
+  opacity: 0;
+  transform: scale(0.92) translateX(80px);
+}
+
+/* Accent top line */
+.sp-card::before {
+  content: '';
+  display: block;
+  height: 3px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--card-accent, var(--accent-robotics));
+}
+
+.card-body {
+  padding: 24px;
+}
+
+/* ── Compact view ── */
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.card-tags { display: flex; gap: 6px; }
+
+.tag {
+  padding: 3px 9px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.tag-sector {
+  background: rgba(14, 165, 233, 0.08);
+  color: var(--accent-robotics);
+  border: 1px solid rgba(14, 165, 233, 0.2);
+}
+
+.tag-type {
+  background: color-mix(in srgb, var(--type-color, var(--accent-robotics)) 8%, transparent);
+  color: var(--type-color, var(--accent-robotics));
+  border: 1px solid color-mix(in srgb, var(--type-color, var(--accent-robotics)) 20%, transparent);
+}
+
+.card-date { font-size: 12px; color: var(--text-muted); }
+
+.card-headline {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text);
+  letter-spacing: -0.2px;
+  margin-bottom: 10px;
+}
+
+.card-entities {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.entity-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  background: var(--bg-detail);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  transition: border-color 0.15s;
+}
+
+.entity-pill:hover { border-color: var(--border-hover); }
+.entity-ticker { font-weight: 600; color: var(--text); }
+.entity-name { color: var(--text-secondary); font-size: 12px; }
+.entity-arrow { color: var(--text-muted); font-size: 14px; }
+
+.confidence-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.confidence-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 500;
+}
+
+.confidence-dots { display: flex; gap: 4px; }
+.conf-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: background 0.2s;
+}
+.conf-dot.on { background: var(--confidence-high); }
+.conf-dot.on.mid { background: var(--confidence-mid); }
+.conf-dot.on.low { background: var(--confidence-low); }
+
+.card-compact-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.velocity-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.vel-arrow { font-weight: 700; }
+.vel-arrow.up { color: var(--up); }
+.vel-arrow.down { color: var(--down); }
+.vel-value { font-weight: 600; }
+.vel-value.up { color: var(--up); }
+.vel-value.down { color: var(--down); }
+
+.brand-mark {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+.brand-mark .dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--card-accent, var(--accent-robotics));
+}
+
+/* Click hint */
+.click-hint {
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 12px;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+.sp-card.active:hover .click-hint { opacity: 1; }
+
+/* ── Expanded Overlay ── */
+.expanded-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(248, 249, 252, 0.7);
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+
+.expanded-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.expanded-card {
+  width: 560px;
+  max-height: 80vh;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-expanded);
+  transform: scale(0.95) translateY(10px);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.expanded-overlay.open .expanded-card {
+  transform: scale(1) translateY(0);
+}
+
+.expanded-card::before {
+  content: '';
+  display: block;
+  height: 3px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--card-accent, var(--accent-robotics));
+}
+
+.expanded-body { padding: 28px; }
+
+.expanded-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--text-muted);
+  transition: all 0.15s;
+  z-index: 10;
+}
+
+.expanded-close:hover { border-color: var(--border-hover); color: var(--text); }
+
+.expanded-subtitle {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+
+.detail-section {
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+}
+
+.detail-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.related-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.related-chip {
+  padding: 4px 10px;
+  background: var(--bg-detail);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Insight bars in expanded view */
+.insight-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--bg-detail);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.insight-entity { font-weight: 600; color: var(--text); }
+.insight-metric { font-weight: 500; }
+.insight-metric.growing { color: var(--up); }
+
+/* Stat grid for summary cards */
+.stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.stat-box {
+  background: var(--bg-detail);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1;
+  margin-bottom: 3px;
+}
+
+.stat-value.up { color: var(--up); }
+.stat-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Track record bars */
+.track-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  background: var(--bg-detail);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 6px;
+}
+
+.track-ticker { font-weight: 600; color: var(--text); min-width: 50px; }
+.track-change { font-size: 18px; font-weight: 700; }
+.track-change.pos { color: var(--up); }
+.track-change.neg { color: var(--down); }
+.track-days { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px; }
+
+/* ── Bottom Bar (reserved for future menu) ── */
+.bottombar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  padding: 12px 32px;
+  background: rgba(248, 249, 252, 0.85);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ── Responsive ── */
+@media (max-width: 700px) {
+  .sp-card { width: calc(100vw - 120px); }
+  .expanded-card { width: calc(100vw - 32px); }
+  .nav-arrow.left { left: 8px; }
+  .nav-arrow.right { right: 8px; }
+  .card-stage { padding: 80px 60px; }
+  .topbar { padding: 12px 16px; }
+  .center-console { flex-wrap: wrap; padding: 6px 10px; gap: 6px; }
+  .center-console .filter-pills { display: none; }
+  .card-counter { bottom: calc(50% - 240px); }
+  .key-hint { display: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- ASCII background -->
+<div class="ascii-bg" id="asciiBg"></div>
+
+<!-- Top bar (reserved for future nav menu) -->
+<div class="topbar">
+  <div class="topbar-brand">
+    <div class="topbar-dot"></div>
+    robotics
+  </div>
+  <div style="padding:4px 12px;background:#d97706;color:#fff;font-size:11px;font-weight:600;border-radius:6px;letter-spacing:0.5px;text-transform:uppercase;">Sample Data — Not Real</div>
+</div>
+
+<!-- Center console — filters + sort, hovering above card -->
+<div class="center-console">
+  <div class="filter-pills">
+    <button class="filter-pill active" data-filter="all">All</button>
+    <button class="filter-pill" data-filter="partnership">Partnership</button>
+    <button class="filter-pill" data-filter="acquisition">Deal</button>
+    <button class="filter-pill" data-filter="contract">Contract</button>
+    <button class="filter-pill" data-filter="regulatory">Regulatory</button>
+    <button class="filter-pill" data-filter="product">Product</button>
+    <button class="filter-pill" data-filter="talent">Talent</button>
+    <button class="filter-pill" data-filter="summary">Summary</button>
+    <button class="filter-pill" data-filter="chokepoint">Insight</button>
+  </div>
+  <button class="sort-btn" id="sortBtn" title="Toggle sort">
+    <span id="sortIcon">↓</span>
+    <span id="sortLabel">Date</span>
+  </button>
+</div>
+
+<!-- Nav arrows — bold, close to card -->
+<div class="nav-arrow left" id="navLeft">‹</div>
+<div class="nav-arrow right" id="navRight">›</div>
+
+<!-- Card stage -->
+<div class="card-stage" id="cardStage"></div>
+
+<!-- Expanded overlay -->
+<div class="expanded-overlay" id="expandedOverlay">
+  <div class="expanded-card" id="expandedCard" style="position:relative;">
+    <button class="expanded-close" id="expandedClose">✕</button>
+    <div class="expanded-body" id="expandedBody"></div>
+  </div>
+</div>
+
+<!-- Counter + sound toggle (below card, grouped) -->
+<div class="card-counter" id="cardCounter">
+  <span>1</span> / 9
+  <div class="sound-inline on" id="soundToggle" title="Toggle sound">♪</div>
+</div>
+
+<!-- Keyboard hint (just below counter) -->
+<div class="key-hint">
+  <span><kbd>←</kbd><kbd>→</kbd> navigate</span>
+  <span><kbd>Enter</kbd> expand</span>
+  <span><kbd>Esc</kbd> close</span>
+</div>
+
+<!-- Bottom bar (reserved for future menu) -->
+<div class="bottombar">
+  Robotics sector &middot; powered by Arboryx
+</div>
+
+<script>
+// ── Sample data ──
+const CARDS = [
+  {
+    id: 1, type: "partnership", sector: "Robotics", date: "Apr 16 '26",
+    headline: "Boston Dynamics + Hyundai expand warehouse automation JV",
+    subtitle: "Joint venture targeting 50 new logistics centers by 2027. Amazon and Symbotic named as early integration partners for BD's Stretch platform.",
+    entityA: { name: "Boston Dynamics" }, entityB: { name: "Hyundai Motor", ticker: "HYMTF" },
+    confidence: 0.95, related: ["AMZN", "SYM", "Berkshire Grey"],
+    velocity: { dir: "up", label: "partnerships", val: "+40%" },
+    accent: "#0ea5e9", typeColor: "#0ea5e9", typeLabel: "Partnership",
+    sortDate: 20260416, sortConf: 0.95
+  },
+  {
+    id: 2, type: "acquisition", sector: "Robotics", date: "Apr 15 '26",
+    headline: "NVIDIA acquires Covariant's AI model portfolio for ~$700M",
+    subtitle: "Covariant's foundation models for robotic manipulation will be integrated into NVIDIA Isaac platform. Deal positions NVIDIA as the dominant compute layer for robotics AI.",
+    entityA: { name: "NVIDIA", ticker: "NVDA" }, entityB: { name: "Covariant" },
+    confidence: 0.85, related: ["Google DeepMind", "Osaro", "Intrinsic"],
+    velocity: { dir: "up", label: "acquisitions", val: "+120%" },
+    accent: "#0ea5e9", typeColor: "#8b5cf6", typeLabel: "Acquisition",
+    sortDate: 20260415, sortConf: 0.85
+  },
+  {
+    id: 3, type: "contract", sector: "Robotics", date: "Apr 14 '26",
+    headline: "Anduril wins $480M DoD contract for autonomous perimeter drones",
+    subtitle: "US Department of Defense awards multi-year contract for Anduril's Altius family of autonomous systems across 12 military installations. Largest autonomous defense contract to date.",
+    entityA: { name: "Anduril Industries" }, entityB: { name: "US DoD" },
+    confidence: 1.0, related: ["Shield AI", "L3Harris", "Northrop Grumman"],
+    velocity: { dir: "up", label: "defense contracts", val: "+65%" },
+    accent: "#0ea5e9", typeColor: "#10b981", typeLabel: "Contract",
+    sortDate: 20260414, sortConf: 1.0
+  },
+  {
+    id: 4, type: "regulatory", sector: "Robotics", date: "Apr 13 '26",
+    headline: "FAA grants Zipline expanded BVLOS waiver for 14 states",
+    subtitle: "Beyond-visual-line-of-sight authorization expands Zipline's autonomous delivery network to cover 38% of US population. Clears path for commercial-scale drone delivery.",
+    entityA: { name: "FAA" }, entityB: { name: "Zipline" },
+    confidence: 1.0, related: ["Wing (Alphabet)", "Amazon Prime Air", "Joby Aviation"],
+    velocity: { dir: "up", label: "regulatory approvals", val: "+200%" },
+    accent: "#0ea5e9", typeColor: "#f59e0b", typeLabel: "Regulatory",
+    sortDate: 20260413, sortConf: 1.0
+  },
+  {
+    id: 5, type: "product", sector: "Robotics", date: "Apr 12 '26",
+    headline: "Figure AI unveils Figure 03 — first humanoid with on-device reasoning",
+    subtitle: "Third-gen humanoid features 48-hour battery life and runs multimodal AI models locally. Priced for commercial warehouse deployment at ~$85K per unit.",
+    entityA: { name: "Figure AI" }, entityB: null,
+    confidence: 0.95, related: ["OpenAI", "NVDA", "BMW", "1X Technologies"],
+    velocity: { dir: "up", label: "product launches", val: "+85%" },
+    accent: "#0ea5e9", typeColor: "#3b82f6", typeLabel: "Product Launch",
+    sortDate: 20260412, sortConf: 0.95
+  },
+  {
+    id: 6, type: "talent", sector: "Robotics", date: "Apr 11 '26",
+    headline: "Tesla Optimus lead engineer departs to join 1X Technologies",
+    subtitle: "Third senior robotics hire from Tesla in 6 months. 1X's NEO humanoid team now includes ex-leads from Tesla, Boston Dynamics, and Google DeepMind.",
+    entityA: { name: "1X Technologies" }, entityB: { name: "Tesla", ticker: "TSLA" },
+    confidence: 0.65, related: ["Figure AI", "Agility Robotics"],
+    velocity: { dir: "flat", label: "talent moves", val: "steady" },
+    accent: "#0ea5e9", typeColor: "#ec4899", typeLabel: "Talent Move",
+    sortDate: 20260411, sortConf: 0.65
+  },
+  {
+    id: 7, type: "summary", sector: "Robotics", date: "Apr 7–13 '26",
+    headline: "Robotics sector heating up — partnership activity surges",
+    subtitle: "23 catalysts tracked across 38 active entities. Partnership and contract activity at 6-month highs. NVIDIA dominance growing as a compute dependency.",
+    entityA: null, entityB: null,
+    confidence: null, related: [],
+    velocity: { dir: "up", label: "catalyst velocity", val: "+42%" },
+    accent: "#0ea5e9", typeColor: "#5a6178", typeLabel: "Weekly Pulse",
+    sortDate: 20260413.5, sortConf: 0,
+    stats: { catalysts: 23, relationships: 14, entities: 38, velocity: "+42%" },
+    movers: [
+      { name: "NVIDIA", ticker: "NVDA", count: 7 },
+      { name: "Boston Dynamics", count: 5 },
+      { name: "Figure AI", count: 4 }
+    ]
+  },
+  {
+    id: 8, type: "chokepoint", sector: "Robotics", date: "Apr 13 '26",
+    headline: "NVIDIA is becoming a structural dependency in Robotics",
+    subtitle: "7 companies now depend on or partner with NVIDIA for robotics compute — in-degree growth of 3.5x in 30 days.",
+    entityA: { name: "NVIDIA", ticker: "NVDA" }, entityB: null,
+    confidence: 0.9, related: [],
+    velocity: { dir: "up", label: "in-degree growth", val: "3.5x" },
+    accent: "#0ea5e9", typeColor: "#f59e0b", typeLabel: "Chokepoint Alert",
+    sortDate: 20260413.1, sortConf: 0.9,
+    dependents: [
+      { name: "Boston Dynamics", rel: "integrates_with" },
+      { name: "Figure AI", rel: "depends_on" },
+      { name: "Agility Robotics", rel: "partners_with" },
+      { name: "Covariant", rel: "acquired by NVDA" }
+    ]
+  },
+  {
+    id: 9, type: "track_record", sector: "Robotics", date: "Flagged Mar 15 '26",
+    headline: "BD + Hyundai JV expansion — 30-day outcome",
+    subtitle: "The Robotics module flagged this partnership expansion 30 days ago. Here's how related tickers moved since.",
+    entityA: null, entityB: null,
+    confidence: null, related: [],
+    velocity: null,
+    accent: "#0ea5e9", typeColor: "#5a6178", typeLabel: "Track Record",
+    sortDate: 20260315, sortConf: 0,
+    outcomes: [
+      { ticker: "HYMTF", change: +12.4, days: 30 },
+      { ticker: "SYM", change: +8.1, days: 30 },
+      { ticker: "AMZN", change: +2.3, days: 30 }
+    ]
+  }
+];
+
+// ── State ──
+let filteredCards = [...CARDS];
+let currentIndex = 0;
+let sortMode = "date"; // date | confidence
+let sortAsc = false;
+let soundOn = true;
+let audioCtx = null;
+
+// ── Audio ──
+function initAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+
+function playTick() {
+  if (!soundOn) return;
+  initAudio();
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.frequency.value = 600 + Math.random() * 200;
+  osc.type = "sine";
+  gain.gain.setValueAtTime(0.06, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.08);
+  osc.start(audioCtx.currentTime);
+  osc.stop(audioCtx.currentTime + 0.08);
+}
+
+function playExpand() {
+  if (!soundOn) return;
+  initAudio();
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.frequency.setValueAtTime(400, audioCtx.currentTime);
+  osc.frequency.linearRampToValueAtTime(800, audioCtx.currentTime + 0.12);
+  osc.type = "sine";
+  gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+  osc.start(audioCtx.currentTime);
+  osc.stop(audioCtx.currentTime + 0.15);
+}
+
+// ── ASCII Art ──
+function generateAscii() {
+  const patterns = [
+    "  ╔══╗     ┌─┐  ",
+    "  ║▓▓║───┤ │◉│  ",
+    "  ╚══╝  │ └─┘  ",
+    "   ││    │      ",
+    "  ┌┴┴┐   ▼      ",
+    "  │██│  ╭──╮    ",
+    "  └┬┬┘  │AI│    ",
+    "   ││   ╰──╯    ",
+    "  ╱  ╲          ",
+    " ╱    ╲   ⚙     ",
+    "                 ",
+    "    ┌───┐  ╔═╗  ",
+    " ◁──┤ R ├──╢ ╟─▷",
+    "    └───┘  ╚═╝  ",
+    "     ▲    ┌┐    ",
+    "     │    ││    ",
+    "   ╔═╧═╗ └┘    ",
+    "   ║ Σ ║  │     ",
+    "   ╚═══╝  ▼     ",
+    "         ◉      ",
+    "    ╭────╮      ",
+    "    │ >> │──┐   ",
+    "    ╰────╯  │   ",
+    "        ╔═══╧══╗",
+    "        ║ NODE ║",
+    "        ╚══════╝",
+    "  ┌──┐   ┌──┐   ",
+    "  │▒▒├───┤▒▒│   ",
+    "  └──┘   └──┘   ",
+    "   ⚡     ◉  ⚙  ",
+  ];
+  const el = document.getElementById('asciiBg');
+  let out = '';
+  const rows = Math.ceil(window.innerHeight / 15);
+  const cols = Math.ceil(window.innerWidth / 160);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const p = patterns[(r + c * 3) % patterns.length];
+      out += p + '   ';
+    }
+    out += '\n';
+  }
+  el.textContent = out;
+}
+
+// ── Render compact card HTML ──
+function renderCompact(card) {
+  const confDots = card.confidence !== null ? (() => {
+    const n = Math.round(card.confidence * 5);
+    const lv = card.confidence < 0.5 ? ' low' : card.confidence < 0.8 ? ' mid' : '';
+    return `<div class="confidence-row">
+      <span class="confidence-label">Confidence</span>
+      <div class="confidence-dots">
+        ${[0,1,2,3,4].map(i => `<div class="conf-dot${i < n ? ' on' + lv : ''}"></div>`).join('')}
+      </div>
+    </div>`;
+  })() : '';
+
+  const entities = card.entityA ? `
+    <div class="card-entities">
+      <div class="entity-pill">
+        ${card.entityA.ticker ? `<span class="entity-ticker">${card.entityA.ticker}</span>` : ''}
+        <span class="entity-name">${card.entityA.name}</span>
+      </div>
+      ${card.entityB ? `
+        <span class="entity-arrow">${card.type === 'talent' ? '←' : '→'}</span>
+        <div class="entity-pill">
+          ${card.entityB.ticker ? `<span class="entity-ticker">${card.entityB.ticker}</span>` : ''}
+          <span class="entity-name">${card.entityB.name}</span>
+        </div>
+      ` : ''}
+    </div>` : '';
+
+  const vel = card.velocity ? `
+    <div class="velocity-row">
+      <span class="vel-arrow ${card.velocity.dir}">${card.velocity.dir === 'up' ? '▲' : card.velocity.dir === 'down' ? '▼' : '—'}</span>
+      <span>${card.sector} ${card.velocity.label}:</span>
+      <span class="vel-value ${card.velocity.dir}">${card.velocity.val}</span>
+    </div>` : '<div></div>';
+
+  return `
+    <div class="card-body">
+      <div class="card-header">
+        <div class="card-tags">
+          <span class="tag tag-sector">${card.sector}</span>
+          <span class="tag tag-type" style="--type-color: ${card.typeColor}">${card.typeLabel}</span>
+        </div>
+        <span class="card-date">${card.date}</span>
+      </div>
+      <h2 class="card-headline">${card.headline}</h2>
+      ${entities}
+      ${confDots}
+      <div class="card-compact-footer">
+        ${vel}
+        <div class="brand-mark"><span class="dot" style="background:${card.accent}"></span> robotics</div>
+      </div>
+      <div class="click-hint">click to expand</div>
+    </div>`;
+}
+
+// ── Render expanded content ──
+function renderExpanded(card) {
+  let extra = '';
+
+  if (card.related && card.related.length > 0) {
+    extra += `<div class="detail-section">
+      <div class="detail-label">Also mentioned</div>
+      <div class="related-chips">${card.related.map(r => `<span class="related-chip">${r}</span>`).join('')}</div>
+    </div>`;
+  }
+
+  if (card.stats) {
+    extra += `<div class="detail-section">
+      <div class="detail-label">Week at a glance</div>
+      <div class="stat-grid">
+        <div class="stat-box"><div class="stat-value">${card.stats.catalysts}</div><div class="stat-label">Catalysts</div></div>
+        <div class="stat-box"><div class="stat-value">${card.stats.relationships}</div><div class="stat-label">New Relationships</div></div>
+        <div class="stat-box"><div class="stat-value">${card.stats.entities}</div><div class="stat-label">Active Entities</div></div>
+        <div class="stat-box"><div class="stat-value up">${card.stats.velocity}</div><div class="stat-label">Catalyst Velocity</div></div>
+      </div>
+    </div>`;
+  }
+
+  if (card.movers) {
+    extra += `<div class="detail-section">
+      <div class="detail-label">Top movers</div>
+      ${card.movers.map(m => `<div class="insight-bar">
+        <span class="insight-entity">${m.name}${m.ticker ? ` (${m.ticker})` : ''}</span>
+        <span class="insight-metric growing">${m.count} catalysts ▲</span>
+      </div>`).join('')}
+    </div>`;
+  }
+
+  if (card.dependents) {
+    extra += `<div class="detail-section">
+      <div class="detail-label">Dependent entities</div>
+      ${card.dependents.map(d => `<div class="insight-bar">
+        <span class="insight-entity">${d.name}</span>
+        <span class="insight-metric growing">${d.rel}</span>
+      </div>`).join('')}
+    </div>`;
+  }
+
+  if (card.outcomes) {
+    extra += `<div class="detail-section">
+      <div class="detail-label">Price outcomes</div>
+      ${card.outcomes.map(o => `<div class="track-bar">
+        <span class="track-ticker">${o.ticker}</span>
+        <span class="track-change ${o.change > 0 ? 'pos' : 'neg'}">${o.change > 0 ? '+' : ''}${o.change}%</span>
+        <span class="track-days">${o.days}d after</span>
+      </div>`).join('')}
+    </div>`;
+  }
+
+  const entities = card.entityA ? `
+    <div class="card-entities" style="margin-bottom:20px">
+      <div class="entity-pill">
+        ${card.entityA.ticker ? `<span class="entity-ticker">${card.entityA.ticker}</span>` : ''}
+        <span class="entity-name">${card.entityA.name}</span>
+      </div>
+      ${card.entityB ? `
+        <span class="entity-arrow">${card.type === 'talent' ? '←' : '→'}</span>
+        <div class="entity-pill">
+          ${card.entityB.ticker ? `<span class="entity-ticker">${card.entityB.ticker}</span>` : ''}
+          <span class="entity-name">${card.entityB.name}</span>
+        </div>
+      ` : ''}
+    </div>` : '';
+
+  const confDots = card.confidence !== null ? (() => {
+    const n = Math.round(card.confidence * 5);
+    const lv = card.confidence < 0.5 ? ' low' : card.confidence < 0.8 ? ' mid' : '';
+    return `<div class="confidence-row" style="margin-bottom:20px">
+      <span class="confidence-label">Confidence</span>
+      <div class="confidence-dots">
+        ${[0,1,2,3,4].map(i => `<div class="conf-dot${i < n ? ' on' + lv : ''}"></div>`).join('')}
+      </div>
+    </div>`;
+  })() : '';
+
+  return `
+    <div class="card-header">
+      <div class="card-tags">
+        <span class="tag tag-sector">${card.sector}</span>
+        <span class="tag tag-type" style="--type-color: ${card.typeColor}">${card.typeLabel}</span>
+      </div>
+      <span class="card-date">${card.date}</span>
+    </div>
+    <h2 class="card-headline" style="font-size:20px; margin-bottom:12px;">${card.headline}</h2>
+    <p class="expanded-subtitle">${card.subtitle}</p>
+    ${entities}
+    ${confDots}
+    ${extra}
+    <div class="card-compact-footer" style="margin-top:16px">
+      ${card.velocity ? `<div class="velocity-row">
+        <span class="vel-arrow ${card.velocity.dir}">${card.velocity.dir === 'up' ? '▲' : card.velocity.dir === 'down' ? '▼' : '—'}</span>
+        <span>${card.sector} ${card.velocity.label}:</span>
+        <span class="vel-value ${card.velocity.dir}">${card.velocity.val}</span>
+      </div>` : '<div></div>'}
+      <div class="brand-mark"><span class="dot" style="background:${card.accent}"></span> robotics</div>
+    </div>`;
+}
+
+// ── Navigation ──
+function showCard(index, direction) {
+  const stage = document.getElementById('cardStage');
+  const existing = stage.querySelector('.sp-card.active');
+
+  if (existing) {
+    existing.classList.remove('active');
+    existing.classList.add(direction === 'left' ? 'exiting-left' : 'exiting-right');
+    setTimeout(() => existing.remove(), 350);
+  }
+
+  if (filteredCards.length === 0) {
+    const counter = document.getElementById('cardCounter');
+    counter.innerHTML = '<span>0</span> / 0 <div class="sound-inline ' + (soundOn ? 'on' : '') + '" id="soundToggle" title="Toggle sound">♪</div>';
+    counter.querySelector('.sound-inline').addEventListener('click', toggleSound);
+    return;
+  }
+
+  currentIndex = Math.max(0, Math.min(index, filteredCards.length - 1));
+  const card = filteredCards[currentIndex];
+
+  const el = document.createElement('div');
+  el.className = 'sp-card';
+  el.style.setProperty('--card-accent', card.accent);
+  el.innerHTML = renderCompact(card);
+  el.dataset.id = card.id;
+
+  if (direction === 'left') {
+    el.style.transform = 'scale(0.92) translateX(-60px)';
+  }
+
+  stage.appendChild(el);
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('active')));
+
+  el.addEventListener('click', () => expandCard(card));
+
+  const counter = document.getElementById('cardCounter');
+  const soundEl = counter.querySelector('.sound-inline');
+  const soundState = soundEl ? soundEl.classList.contains('on') : soundOn;
+  counter.innerHTML =
+    `<span>${currentIndex + 1}</span> / ${filteredCards.length}
+     <div class="sound-inline ${soundState ? 'on' : ''}" id="soundToggle" title="Toggle sound">♪</div>`;
+  counter.querySelector('.sound-inline').addEventListener('click', toggleSound);
+
+  document.getElementById('navLeft').classList.toggle('disabled', currentIndex === 0);
+  document.getElementById('navRight').classList.toggle('disabled', currentIndex === filteredCards.length - 1);
+
+  playTick();
+}
+
+function goLeft() {
+  if (currentIndex > 0) showCard(currentIndex - 1, 'left');
+}
+
+function goRight() {
+  if (currentIndex < filteredCards.length - 1) showCard(currentIndex + 1, 'right');
+}
+
+// ── Expand ──
+function expandCard(card) {
+  const overlay = document.getElementById('expandedOverlay');
+  const body = document.getElementById('expandedBody');
+  const ec = document.getElementById('expandedCard');
+  ec.style.setProperty('--card-accent', card.accent);
+  body.innerHTML = renderExpanded(card);
+  overlay.classList.add('open');
+  playExpand();
+}
+
+function closeExpanded() {
+  document.getElementById('expandedOverlay').classList.remove('open');
+  playTick();
+}
+
+// ── Filter ──
+function applyFilter(type) {
+  document.querySelectorAll('.filter-pill').forEach(p => p.classList.toggle('active', p.dataset.filter === type));
+  filteredCards = type === 'all' ? [...CARDS] : CARDS.filter(c => c.type === type || (type === 'acquisition' && c.type === 'acquisition'));
+  applySorting();
+  currentIndex = 0;
+  document.getElementById('cardStage').innerHTML = '';
+  showCard(0, 'right');
+}
+
+// ── Sort ──
+const sortModes = [
+  { key: "date", label: "Date", field: "sortDate" },
+  { key: "confidence", label: "Confidence", field: "sortConf" }
+];
+let sortModeIndex = 0;
+
+function applySorting() {
+  const mode = sortModes[sortModeIndex];
+  filteredCards.sort((a, b) => sortAsc ? a[mode.field] - b[mode.field] : b[mode.field] - a[mode.field]);
+}
+
+function toggleSort() {
+  if (sortAsc) {
+    sortAsc = false;
+    sortModeIndex = (sortModeIndex + 1) % sortModes.length;
+  } else {
+    sortAsc = true;
+  }
+  const mode = sortModes[sortModeIndex];
+  document.getElementById('sortLabel').textContent = mode.label;
+  document.getElementById('sortIcon').textContent = sortAsc ? '↑' : '↓';
+  applySorting();
+  currentIndex = 0;
+  document.getElementById('cardStage').innerHTML = '';
+  showCard(0, 'right');
+  playTick();
+}
+
+// ── Sound toggle ──
+function toggleSound() {
+  soundOn = !soundOn;
+  document.querySelectorAll('.sound-inline, #soundToggle').forEach(el => {
+    el.classList.toggle('on', soundOn);
+  });
+  if (soundOn) { initAudio(); playTick(); }
+}
+
+// ── Init ──
+document.getElementById('navLeft').addEventListener('click', goLeft);
+document.getElementById('navRight').addEventListener('click', goRight);
+document.getElementById('expandedClose').addEventListener('click', closeExpanded);
+document.getElementById('expandedOverlay').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeExpanded();
+});
+document.getElementById('sortBtn').addEventListener('click', toggleSort);
+document.getElementById('soundToggle').addEventListener('click', toggleSound);
+document.querySelectorAll('.filter-pill').forEach(p => {
+  p.addEventListener('click', () => applyFilter(p.dataset.filter));
+});
+
+document.addEventListener('keydown', (e) => {
+  if (document.getElementById('expandedOverlay').classList.contains('open')) {
+    if (e.key === 'Escape') closeExpanded();
+    return;
+  }
+  if (e.key === 'ArrowLeft') goLeft();
+  if (e.key === 'ArrowRight') goRight();
+  if (e.key === 'Enter') {
+    if (filteredCards[currentIndex]) expandCard(filteredCards[currentIndex]);
+  }
+});
+
+generateAscii();
+window.addEventListener('resize', generateAscii);
+
+// Sound on by default — init audio context on first user gesture
+document.addEventListener('click', function initOnGesture() {
+  initAudio();
+  document.removeEventListener('click', initOnGesture);
+}, { once: true });
+
+applySorting();
+showCard(0, 'right');
+</script>
+</body>
+</html>

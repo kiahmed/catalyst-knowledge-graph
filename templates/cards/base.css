@@ -1,0 +1,437 @@
+/* ================================================================
+   Robotics module — Card Design System
+   Dark theme, finance/tech aesthetic. Reusable across web app.
+   ================================================================ */
+
+:root {
+  /* Core palette */
+  --bg-primary: #0a0e17;
+  --bg-card: #111827;
+  --bg-card-hover: #1a2332;
+  --bg-elevated: #1f2937;
+  --border-subtle: #1e293b;
+  --border-accent: #334155;
+
+  /* Text */
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --text-accent: #e2e8f0;
+
+  /* Sector colors */
+  --sector-robotics: #06b6d4;
+  --sector-crypto: #a78bfa;
+  --sector-ai-stack: #f472b6;
+  --sector-space-defense: #fb923c;
+  --sector-power-energy: #4ade80;
+  --sector-strategic-minerals: #fbbf24;
+
+  /* Relationship type colors */
+  --rel-partnership: #06b6d4;
+  --rel-deal: #a78bfa;
+  --rel-contract: #4ade80;
+  --rel-talent: #f472b6;
+  --rel-regulatory: #fb923c;
+  --rel-competition: #ef4444;
+  --rel-exit: #64748b;
+  --rel-product: #38bdf8;
+
+  /* Confidence */
+  --confidence-high: #4ade80;
+  --confidence-mid: #fbbf24;
+  --confidence-low: #f87171;
+
+  /* Velocity */
+  --velocity-up: #4ade80;
+  --velocity-down: #f87171;
+  --velocity-flat: #64748b;
+
+  /* Layout */
+  --card-radius: 12px;
+  --card-padding: 24px;
+  --card-width: 480px;
+  --card-max-width: 100%;
+}
+
+/* ── Reset ── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body.sp-cards {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Card Shell ── */
+.sp-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--card-radius);
+  width: var(--card-width);
+  max-width: var(--card-max-width);
+  overflow: hidden;
+  position: relative;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.sp-card:hover {
+  border-color: var(--border-accent);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+}
+
+/* Top accent bar — colored by sector */
+.sp-card::before {
+  content: '';
+  display: block;
+  height: 3px;
+  width: 100%;
+  background: var(--accent-color, var(--sector-robotics));
+}
+
+.sp-card-body {
+  padding: var(--card-padding);
+}
+
+/* ── Card Header ── */
+.sp-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.sp-card-tags {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sp-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.sp-tag-sector {
+  background: color-mix(in srgb, var(--accent-color, var(--sector-robotics)) 15%, transparent);
+  color: var(--accent-color, var(--sector-robotics));
+  border: 1px solid color-mix(in srgb, var(--accent-color, var(--sector-robotics)) 30%, transparent);
+}
+
+.sp-tag-type {
+  background: color-mix(in srgb, var(--rel-color, var(--rel-partnership)) 15%, transparent);
+  color: var(--rel-color, var(--rel-partnership));
+  border: 1px solid color-mix(in srgb, var(--rel-color, var(--rel-partnership)) 30%, transparent);
+}
+
+.sp-card-date {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ── Card Title / Headline ── */
+.sp-card-headline {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.3;
+  margin-bottom: 8px;
+}
+
+.sp-card-subtitle {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+
+/* ── Entity Pills ── */
+.sp-entities {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.sp-entity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-accent);
+  transition: border-color 0.15s ease;
+}
+
+.sp-entity:hover {
+  border-color: var(--border-accent);
+}
+
+.sp-entity-ticker {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.sp-entity-name {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.sp-entity-connector {
+  color: var(--text-muted);
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+}
+
+/* ── Confidence Bar ── */
+.sp-confidence {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.sp-confidence-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.sp-confidence-dots {
+  display: flex;
+  gap: 4px;
+}
+
+.sp-confidence-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border-subtle);
+}
+
+.sp-confidence-dot.filled {
+  background: var(--confidence-high);
+}
+
+.sp-confidence-dot.filled.mid {
+  background: var(--confidence-mid);
+}
+
+.sp-confidence-dot.filled.low {
+  background: var(--confidence-low);
+}
+
+/* ── Related Entities ── */
+.sp-related {
+  padding: 12px 0;
+  border-top: 1px solid var(--border-subtle);
+  margin-bottom: 12px;
+}
+
+.sp-related-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.sp-related-list {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sp-related-chip {
+  padding: 3px 8px;
+  background: var(--bg-elevated);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+/* ── Card Footer ── */
+.sp-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.sp-velocity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.sp-velocity-arrow {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.sp-velocity-arrow.up { color: var(--velocity-up); }
+.sp-velocity-arrow.down { color: var(--velocity-down); }
+.sp-velocity-arrow.flat { color: var(--velocity-flat); }
+
+.sp-velocity-text {
+  color: var(--text-secondary);
+}
+
+.sp-velocity-value {
+  font-weight: 600;
+}
+
+.sp-velocity-value.up { color: var(--velocity-up); }
+.sp-velocity-value.down { color: var(--velocity-down); }
+
+.sp-brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.sp-brand-mark {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-color, var(--sector-robotics));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent-color, var(--sector-robotics)) 50%, transparent);
+}
+
+/* ── Robotics Summary Card ── */
+.sp-card-summary .sp-card-body {
+  padding: var(--card-padding);
+}
+
+.sp-summary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.sp-stat-block {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+
+.sp-stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1;
+  margin-bottom: 4px;
+}
+
+.sp-stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ── Insight / Chokepoint Card ── */
+.sp-insight-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.sp-insight-entity {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.sp-insight-metric {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sp-insight-metric.growing { color: var(--velocity-up); }
+.sp-insight-metric.declining { color: var(--velocity-down); }
+
+/* ── Track Record Card ── */
+.sp-track-outcome {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg-elevated);
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  margin-bottom: 12px;
+}
+
+.sp-track-days {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+.sp-track-change {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.sp-track-change.positive { color: var(--velocity-up); }
+.sp-track-change.negative { color: var(--velocity-down); }
+
+.sp-track-ticker {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* ── Card Grid (for gallery / static site) ── */
+.sp-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+  gap: 20px;
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* ── Responsive ── */
+@media (max-width: 520px) {
+  :root {
+    --card-width: 100%;
+    --card-padding: 16px;
+  }
+
+  .sp-card-headline { font-size: 16px; }
+  .sp-summary-grid { grid-template-columns: 1fr; }
+  .sp-card-grid { grid-template-columns: 1fr; padding: 12px; }
+}

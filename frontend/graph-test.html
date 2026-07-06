@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Robotics Graph — Test Harness</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f3f1ed;
+  --bg-card: #fdfcfa;
+  --border: #ddd8cf;
+  --text: #1c1917;
+  --text-secondary: #57534e;
+  --text-muted: #a8a29e;
+  --accent: #0ea5e9;
+  --accent-contract: #10b981;
+  --accent-regulatory: #d97706;
+  --accent-competition: #ef4444;
+  --shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 14px rgba(0,0,0,0.05);
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 100%; height: 100%; }
+body {
+  font-family: 'Inter', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+#graphRoot { width: 100vw; height: 100vh; }
+.error-banner {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 16px;
+  background: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  z-index: 9999;
+  display: none;
+  font-size: 13px;
+}
+.error-banner.is-visible { display: block; }
+</style>
+<link rel="stylesheet" href="assets/graph.css">
+</head>
+<body>
+<div id="graphRoot"></div>
+<div id="errorBanner" class="error-banner"></div>
+
+<script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+<script src="https://unpkg.com/cytoscape-cose-bilkent@4.1.0/cytoscape-cose-bilkent.js"></script>
+<script src="assets/graph.js"></script>
+<script>
+(async function () {
+  const banner = document.getElementById('errorBanner');
+  const showError = (msg) => {
+    banner.textContent = msg;
+    banner.classList.add('is-visible');
+  };
+
+  try {
+    const res = await fetch('cards.json', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`fetch cards.json failed: ${res.status}`);
+    const payload = await res.json();
+
+    const root = document.getElementById('graphRoot');
+    window.RoboticsGraph.init(root, {
+      onNodeClick: (data) => console.info('[graph-test] node click', data),
+      onEdgeClick: (data) => console.info('[graph-test] edge click', data),
+    });
+    window.RoboticsGraph.render(payload, {
+      timeWindowDays: 90,
+      minConfidence: 0.0,
+      showInvalidated: false,
+      evidenceTypes: ['direct', 'inferred', 'web_grounded', 'speculative'],
+    });
+  } catch (err) {
+    console.error(err);
+    showError('Graph failed to load: ' + err.message);
+  }
+})();
+</script>
+</body>
+</html>

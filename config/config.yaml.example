@@ -1,0 +1,159 @@
+# Catalyst knowledge-graph runtime config. Used by src/ modules.
+# Environment variables override keyed values where noted.
+
+sector: Robotics  # env: SECTOR — must match an enabled module below
+
+# ── Modules ───────────────────────────────────────────────────────
+# The catalyst graph is organized as a set of sector modules that
+# share a common pipeline. Only enabled modules are ingested /
+# extracted / rendered. Flip `enabled: true` to activate a module.
+# Five additional modules (Crypto, AI Stack, Space & Defense, Power
+# & Energy, Strategic Minerals) will land as they are wired up.
+modules:
+  Robotics:
+    enabled: true
+
+# ── Extraction ────────────────────────────────────────────────────
+extraction:
+  model: gemini-2.5-flash  # env: GEMINI_MODEL
+  temperature: 0.2         # low — we want determinism for the closed vocab
+  prompt_version: v2       # v2 = inference-first (direct + inferred edges,
+                           # significance gate, mechanism × impact decomp)
+
+  # ── Output token budget (§2.2) ──────────────────────────────────
+  # Enum maps to concrete token caps. Overridable by max_output_tokens
+  # below if you need a custom value (explicit wins).
+  #   low    = 4096   — tight, fastest, risks mid-CoT cutoff on busy catalysts
+  #   medium = 8192   — default; fits 4-10 edges w/ mechanism + reasoning
+  #   high   = 16384  — dense catalysts, rich reasoning, larger vocab runs
+  thinking_budget: medium
+  # max_output_tokens: 8192   # explicit override; comment out to use thinking_budget
+
+  confidence:
+    # Below `drop`: don't write the triple at all.
+    # Between `drop` and `write`: write with a "flagged" marker for review.
+    # At/above `write`: write confidently.
+    drop: 0.30
+    write: 0.60
+
+  # ── Catalyst-level significance gate (§2.2) ─────────────────────
+  # LLM assigns a 0..1 significance_score per catalyst. If it falls
+  # below min_for_inference the LLM is instructed to emit ONLY direct
+  # edges and skip the inferred-edge block entirely — keeps low-signal
+  # filler events from flooding the graph with speculative noise.
+  significance:
+    min_for_inference: 0.5
+
+  # ── Per-edge citation traceability (§2.2) ───────────────────────
+  # When enabled, the LLM populates `source_refs: list[int]` on each
+  # edge — 1-based indices into the catalyst's research_sources /
+  # enrichment citations. An inferred edge with empty refs gets
+  # auto-downgraded to `speculative` when downgrade_inferred_without_refs
+  # is true. Leave the toggle off to A/B-compare extraction with vs
+  # without forced citation grounding.
+  source_refs:
+    enabled: true
+    downgrade_inferred_without_refs: true
+
+  # ── Pass-1 enrichment: Google-search grounding (§2.2) ───────────
+  # On Gemini 2.5 Flash, tools + response_schema cannot coexist in
+  # one call → grounding runs as a separate call that returns free
+  # text + citations, which Pass 2 extraction receives as context.
+  grounding:
+    enabled: true
+    # always | missing_source_url | never
+    # missing_source_url: grounding fires only when entry.source_url
+    #   is empty — complements url_fetch below.
+    when: missing_source_url
+    model: gemini-2.5-flash  # Gemini 3 would allow single-pass but preview + per-search billing
+    max_results_hint: 5
+
+  # ── Pass-1 enrichment: URL article fetch (§2.2) ─────────────────
+  # When source_url IS present, fetch + extract main article text via
+  # trafilatura and feed it into Pass 2. Cheaper and more reliable
+  # than grounded search when the URL is available.
+  url_fetch:
+    enabled: true
+    timeout_s: 10
+    max_chars: 20000         # trim before feeding to extraction prompt
+    user_agent: "CatalystGraphBot/1.0 (+https://arboryx.ai)"
+
+# ── Graph rendering (§2.5) ────────────────────────────────────────
+# Filters applied at export time to shape the frontend payload.
+# Consumers (future graph UI) also respect these as render hints.
+graph:
+  time_window_days: 90      # catalysts/edges older than N days are excluded
+                            # from the default graph payload. 0 = no cap.
+  min_edge_confidence: 0.0  # drop edges below this confidence from default view.
+                            # Lets zoom-outs on dense entities (MSFT/GOOGL) cut noise.
+  show_invalidated: false   # when true, invalidated edges (status='invalidated')
+                            # are emitted as dashed/grey historical overlays. Default
+                            # false hides them to keep the live graph clean.
+
+# ── Edge lifecycle (Phase 2) ──────────────────────────────────────
+# Event-driven validation: when a new edge is inserted for an
+# (entity_a, entity_b) pair, a job re-evaluates existing edges on that
+# pair against the new catalyst, asking "does this confirm, invalidate,
+# or ignore the mechanism?" Confirm boosts the weight; invalidate
+# penalizes it and flips status → 'invalidated'. Spec §2.6.
+lifecycle:
+  enabled: false                      # Phase 2 toggle — no-op in MVP
+  event_driven: true                  # true = trigger on new edge; false = nightly batch
+  confirm_weight_boost: 0.15          # add to confidence on confirm (clamped ≤ 1.0)
+  invalidate_weight_penalty: 0.30     # subtract on invalidate (clamped ≥ 0.0)
+  validator_model: gemini-2.5-flash
+
+# ── Entity resolution ─────────────────────────────────────────────
+resolution:
+  fuzzy_threshold: 88      # thefuzz ratio; above = same entity, below = staged
+  # Tier 3 (unresolved) entities are auto-created with type=unknown and staged
+  # into unresolved_entities for later review. They still get an entity_id so
+  # relationships can be written referring to them.
+
+# ── DuckDB ────────────────────────────────────────────────────────
+duckdb:
+  path: /data/robotics.duckdb  # env: DUCKDB_PATH (compose volume mount)
+
+# ── Firestore source (Arboryx sibling — findings/{entry_id}) ──────
+# Replaced the GCS master log on 2026-05-10. Arboryx writes each finding
+# as its own doc in `findings/{entry_id}`; we filter by category and walk
+# (timestamp, entry_id) with start_after for pagination.
+firestore:
+  project: sample-gcp-project-id  # env: GCP_PROJECT
+  database: "(default)"           # env: FIRESTORE_DATABASE — Arboryx uses default DB
+  collection: findings            # env: FIRESTORE_COLLECTION
+
+# ── Firestore export (Robotics module → CKG-Robotics collection) ──
+# Where this module publishes catalysts + graph projection for the
+# Firebase-hosted frontend to read. Lives alongside Arboryx's findings
+# in the same (default) database — convention is collection prefix
+# `CKG-<Sector>` so future sectors get sibling collections without
+# DB-level overhead.
+#
+# Disabled by default for local dev (cards.json + nginx is the local
+# read path). Flip enabled=true in prod once Firebase frontend is live.
+firestore_export:
+  enabled: false                  # env: FIRESTORE_EXPORT_ENABLED
+  collection: CKG-Robotics        # env: FIRESTORE_EXPORT_COLLECTION
+  catalysts_subpath: catalysts    # env: FIRESTORE_EXPORT_CATALYSTS_SUBPATH
+  graph_subpath: graph            # env: FIRESTORE_EXPORT_GRAPH_SUBPATH
+
+# ── Firebase Storage (card PNGs) ──────────────────────────────────
+# PNGs land at gs://{bucket}/{cards_prefix}/{entry_id}.png. The bucket is
+# private — render writes via its service account; the frontend reads via
+# the Firebase Storage SDK gated by tools/frontend-deploy/storage.rules.
+storage:
+  enabled: false                  # env: STORAGE_UPLOAD_ENABLED
+  bucket: ""                      # env: STORAGE_BUCKET (set in prod, e.g. "robotics-cards")
+  cards_prefix: cards             # env: STORAGE_CARDS_PREFIX
+
+# ── Local export (cards.json — kept for local nginx flow) ─────────
+export:
+  cards_json_path: /data/exports/cards.json  # env: CARDS_JSON_PATH
+  schema_version: 1
+  card_limit: 200           # most recent N cards in the grid
+  public_base_url: "/"      # frontend relative base; prod = https://robotics.arboryx.ai/
+
+# ── Backtest / dev-utils ──────────────────────────────────────────
+backtest:
+  output_dir: /data/exports/backtests

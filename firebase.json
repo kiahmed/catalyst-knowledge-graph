@@ -1,0 +1,52 @@
+{
+  "hosting": {
+    "public": "frontend",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**",
+      "**/*.example",
+      "graph-test.html",
+      "cards.json"
+    ],
+    "cleanUrls": true,
+    "trailingSlash": false,
+    "rewrites": [
+      {
+        "source": "/card/**",
+        "run": { "serviceId": "robotics-og", "region": "us-central1" }
+      },
+      {
+        "source": "/card-img/**",
+        "run": { "serviceId": "robotics-og", "region": "us-central1" }
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ],
+    "headers": [
+      {
+        "source": "assets/**",
+        "headers": [
+          { "key": "Cache-Control", "value": "public, max-age=300, must-revalidate" }
+        ]
+      },
+      {
+        "source": "**/*.html",
+        "headers": [
+          { "key": "Cache-Control", "value": "public, max-age=60, must-revalidate" }
+        ]
+      }
+    ]
+  },
+  "firestore": {
+    "rules": "tools/frontend-deploy/firestore.rules"
+  },
+  "storage": [
+    {
+      "bucket": "robotics-cards",
+      "rules": "tools/frontend-deploy/storage.rules"
+    }
+  ]
+}

@@ -1,0 +1,160 @@
+/* Firebase Authentication sign-in gate — matches the catalyst-graph theme.
+   Used only by the deployed frontend (auth.js injects this markup). */
+
+.rauth-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  /* Light scrim, NO blur: the real preview cards stay clearly visible under
+     the modal — a genuine peek, not a frosted wall. The scrim only dims
+     enough to lift the modal off the page. */
+  background: rgba(28, 25, 23, 0.12);
+  font-family: 'Inter', -apple-system, sans-serif;
+}
+.rauth-gate[hidden] { display: none; }
+
+.rauth-card {
+  width: 100%;
+  max-width: 384px;
+  background: var(--bg-card, #fdfcfa);
+  border: 1px solid var(--border, #ddd8cf);
+  border-radius: var(--radius, 14px);
+  box-shadow: var(--shadow-expanded, 0 8px 40px rgba(0,0,0,0.14));
+  padding: 32px 30px;
+}
+
+.rauth-brand {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 600; letter-spacing: -0.01em;
+  color: var(--text, #1c1917);
+}
+.rauth-brand-sub { color: var(--text-muted, #a8a29e); font-weight: 500; }
+.rauth-logo {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 6px;
+  background: var(--accent, #0ea5e9); color: #fff; font-size: 11px;
+}
+
+.rauth-title {
+  margin-top: 22px;
+  font-size: 21px; font-weight: 700; letter-spacing: -0.02em;
+  color: var(--text, #1c1917);
+}
+.rauth-sub {
+  margin: 5px 0 22px;
+  font-size: 13.5px; color: var(--text-secondary, #57534e);
+}
+
+.rauth-providers { display: flex; flex-direction: column; gap: 9px; }
+.rauth-provider {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  width: 100%; padding: 10px 14px;
+  background: #fff;
+  border: 1px solid var(--border, #ddd8cf);
+  border-radius: 10px;
+  font: inherit; font-size: 13.5px; font-weight: 500;
+  color: var(--text, #1c1917);
+  cursor: pointer;
+  transition: border-color .12s, background .12s, transform .04s;
+}
+.rauth-provider:hover {
+  border-color: var(--border-hover, #c4bfb5);
+  background: var(--bg-warm, #eae7e0);
+}
+.rauth-provider:active { transform: scale(0.992); }
+.rauth-provider svg { width: 17px; height: 17px; flex: none; }
+
+.rauth-divider {
+  display: flex; align-items: center; gap: 12px;
+  margin: 18px 0;
+  color: var(--text-muted, #a8a29e);
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+}
+.rauth-divider::before, .rauth-divider::after {
+  content: ""; flex: 1; height: 1px; background: var(--border, #ddd8cf);
+}
+
+.rauth-form { display: flex; flex-direction: column; gap: 9px; }
+/* Field groups (email / phone / code) — stacked inputs, swapped by mode. */
+#rauthEmailFields, #rauthPhoneFields, #rauthCodeFields {
+  display: flex; flex-direction: column; gap: 9px;
+}
+#rauthEmailFields[hidden], #rauthPhoneFields[hidden], #rauthCodeFields[hidden] {
+  display: none;
+}
+.rauth-form input {
+  width: 100%; padding: 10px 13px;
+  background: var(--bg-input, #fdfcfa);
+  border: 1px solid var(--border, #ddd8cf);
+  border-radius: 10px;
+  font: inherit; font-size: 13.5px; color: var(--text, #1c1917);
+}
+.rauth-form input:focus {
+  outline: none;
+  border-color: var(--border-focus, #0ea5e9);
+  box-shadow: 0 0 0 3px rgba(14,165,233,0.12);
+}
+.rauth-submit {
+  margin-top: 3px; padding: 10px 14px;
+  background: var(--accent, #0ea5e9); color: #fff;
+  border: none; border-radius: 10px;
+  font: inherit; font-size: 13.5px; font-weight: 600;
+  cursor: pointer;
+  transition: filter .12s, transform .04s;
+}
+.rauth-submit:hover { filter: brightness(1.05); }
+.rauth-submit:active { transform: scale(0.992); }
+
+.rauth-provider:disabled, .rauth-submit:disabled { opacity: .6; cursor: progress; }
+
+.rauth-msg {
+  min-height: 17px; margin-top: 12px;
+  font-size: 12.5px; line-height: 1.4;
+}
+.rauth-msg.error { color: var(--down, #dc2626); }
+.rauth-msg.info  { color: var(--text-secondary, #57534e); }
+
+.rauth-links {
+  display: flex; justify-content: space-between; gap: 12px;
+  margin-top: 14px;
+}
+.rauth-links.single { justify-content: center; }
+.rauth-links + .rauth-links { margin-top: 8px; }
+.rauth-links[hidden] { display: none; }
+.rauth-link {
+  background: none; border: none; padding: 0;
+  font: inherit; font-size: 12.5px; color: var(--accent, #0ea5e9);
+  cursor: pointer;
+}
+.rauth-link:hover { text-decoration: underline; }
+.rauth-link[hidden] { display: none; }
+
+/* Signed-in chip — bottom-right, clear of the centered bottombar text. */
+.rauth-userchip {
+  position: fixed; bottom: 9px; right: 18px; z-index: 250;
+  display: flex; align-items: center; gap: 9px;
+  padding: 5px 6px 5px 13px;
+  background: var(--bg-card, #fdfcfa);
+  border: 1px solid var(--border, #ddd8cf);
+  border-radius: 999px;
+  box-shadow: var(--shadow, 0 1px 3px rgba(0,0,0,0.06));
+  font-family: 'Inter', -apple-system, sans-serif; font-size: 12px;
+}
+.rauth-userchip[hidden] { display: none; }
+.rauth-userchip-name {
+  color: var(--text-secondary, #57534e);
+  max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rauth-signout {
+  padding: 4px 11px;
+  background: var(--bg-warm, #eae7e0);
+  border: 1px solid var(--border, #ddd8cf);
+  border-radius: 999px;
+  font: inherit; font-size: 11.5px; color: var(--text, #1c1917);
+  cursor: pointer;
+}
+.rauth-signout:hover { border-color: var(--border-hover, #c4bfb5); }

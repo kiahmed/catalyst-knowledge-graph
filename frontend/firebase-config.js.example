@@ -1,0 +1,41 @@
+// Firebase client config for direct Firestore reads + Storage image fetches.
+//
+// USAGE
+//   1. Copy this file to `frontend/firebase-config.js` (gitignored).
+//   2. Fill in the values from Firebase Console → Project Settings → Your apps.
+//   3. Set `FRONTEND_DATA_SOURCE=firestore` in `.env` and rebuild.
+//
+// SECURITY
+//   These values are public by design — the Firebase Web SDK ships them to
+//   every browser. Real access control lives in Firestore + Storage Security
+//   Rules, not in this file. The frontend signs in with anonymous Firebase
+//   Auth; the rules require `request.auth != null` to read. Keep
+//   `CKG-Robotics/*` and the card bucket read-only for clients (no writes).
+//
+// READ SHAPE (what the frontend actually fetches)
+//   - Graph payload: collection("CKG-Robotics").doc("graph")
+//                      .collection("sectors").doc("Robotics")
+//   - One catalyst : collection("CKG-Robotics").doc("catalysts")
+//                      .collection("items").doc(entryId)
+//   - Card PNG     : Firebase Storage SDK — storageRef(`cards/${entryId}.png`)
+//                    then getDownloadURL(). Bucket is PRIVATE; reads are
+//                    gated by tools/frontend-deploy/storage.rules.
+
+window.FIREBASE_CONFIG = {
+  // Firebase Web SDK boilerplate
+  projectId: "sample-gcp-project-id",
+  apiKey: "REPLACE_ME",
+  authDomain: "sample-gcp-project-id.firebaseapp.com",
+  appId: "REPLACE_ME",
+
+  // Firestore
+  databaseId: "(default)",
+  collection: "CKG-Robotics",
+  catalystsSubpath: "catalysts",   // → CKG-Robotics/catalysts/items/{entryId}
+  graphSubpath: "graph",           // → CKG-Robotics/graph/sectors/{sector}
+  sector: "Robotics",
+
+  // Firebase Storage (= GCS) for card PNGs
+  cardsBucket: "robotics-cards",
+  cardsPrefix: "cards",
+};

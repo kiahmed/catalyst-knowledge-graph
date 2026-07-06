@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="base.css">
+  <title>{{ headline }} — Robotics module</title>
+</head>
+<body class="sp-cards">
+
+{# ── CATALYST CARD (partnership, deal, contract, regulatory, talent, competition, product, exit) ── #}
+{% if card_type == "catalyst" %}
+<div class="sp-card" style="--accent-color: var(--sector-{{ sector_key }}); --rel-color: var(--rel-{{ rel_group }});">
+  <div class="sp-card-body">
+    <div class="sp-card-header">
+      <div class="sp-card-tags">
+        <span class="sp-tag sp-tag-sector">{{ sector }}</span>
+        <span class="sp-tag sp-tag-type">{{ rel_type_label }}</span>
+      </div>
+      <span class="sp-card-date">{{ date }}</span>
+    </div>
+
+    <h2 class="sp-card-headline">{{ headline }}</h2>
+    <p class="sp-card-subtitle">{{ subtitle }}</p>
+
+    {# Entity pair with connector #}
+    {% if entity_a and entity_b %}
+    <div class="sp-entities">
+      <div class="sp-entity">
+        {% if entity_a.ticker %}<span class="sp-entity-ticker">{{ entity_a.ticker }}</span>{% endif %}
+        <span class="sp-entity-name">{{ entity_a.name }}</span>
+      </div>
+      <span class="sp-entity-connector">→</span>
+      <div class="sp-entity">
+        {% if entity_b.ticker %}<span class="sp-entity-ticker">{{ entity_b.ticker }}</span>{% endif %}
+        <span class="sp-entity-name">{{ entity_b.name }}</span>
+      </div>
+    </div>
+    {% endif %}
+
+    {# Confidence #}
+    {% if confidence is defined %}
+    <div class="sp-confidence">
+      <span class="sp-confidence-label">Confidence</span>
+      <div class="sp-confidence-dots">
+        {% set filled = (confidence * 5) | round | int %}
+        {% set level = "low" if confidence < 0.5 else ("mid" if confidence < 0.8 else "") %}
+        {% for i in range(5) %}
+        <div class="sp-confidence-dot {{ 'filled ' + level if i < filled else '' }}"></div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {# Related entities #}
+    {% if related and related | length > 0 %}
+    <div class="sp-related">
+      <div class="sp-related-label">Also mentioned</div>
+      <div class="sp-related-list">
+        {% for r in related %}
+        <span class="sp-related-chip">{{ r }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="sp-card-footer">
+      {% if velocity %}
+      <div class="sp-velocity">
+        <span class="sp-velocity-arrow {{ velocity.direction }}">{{ "▲" if velocity.direction == "up" else ("▼" if velocity.direction == "down" else "—") }}</span>
+        <span class="sp-velocity-text">{{ sector }} {{ rel_type_label | lower }}s:</span>
+        <span class="sp-velocity-value {{ velocity.direction }}">{{ velocity.change }}</span>
+        <span class="sp-velocity-text">in 30d</span>
+      </div>
+      {% else %}
+      <div></div>
+      {% endif %}
+      <div class="sp-brand">
+        <span class="sp-brand-mark"></span>
+        <span>robotics</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── SECTOR SUMMARY CARD (weekly pulse) ── #}
+{% elif card_type == "summary" %}
+<div class="sp-card sp-card-summary" style="--accent-color: var(--sector-{{ sector_key }});">
+  <div class="sp-card-body">
+    <div class="sp-card-header">
+      <div class="sp-card-tags">
+        <span class="sp-tag sp-tag-sector">{{ sector }}</span>
+        <span class="sp-tag sp-tag-type" style="--rel-color: var(--text-muted);">Weekly Pulse</span>
+      </div>
+      <span class="sp-card-date">{{ date_range }}</span>
+    </div>
+
+    <h2 class="sp-card-headline">{{ headline }}</h2>
+
+    <div class="sp-summary-grid">
+      <div class="sp-stat-block">
+        <div class="sp-stat-value">{{ stats.total_catalysts }}</div>
+        <div class="sp-stat-label">Catalysts</div>
+      </div>
+      <div class="sp-stat-block">
+        <div class="sp-stat-value">{{ stats.new_relationships }}</div>
+        <div class="sp-stat-label">New Relationships</div>
+      </div>
+      <div class="sp-stat-block">
+        <div class="sp-stat-value">{{ stats.active_entities }}</div>
+        <div class="sp-stat-label">Active Entities</div>
+      </div>
+      <div class="sp-stat-block">
+        <div class="sp-stat-value {{ 'up' if stats.velocity_direction == 'up' else ('down' if stats.velocity_direction == 'down' else '') }}" style="color: var(--velocity-{{ stats.velocity_direction }});">
+          {{ stats.velocity_change }}
+        </div>
+        <div class="sp-stat-label">Catalyst Velocity</div>
+      </div>
+    </div>
+
+    {# Top movers #}
+    {% if top_movers and top_movers | length > 0 %}
+    <div class="sp-related">
+      <div class="sp-related-label">Top movers this week</div>
+      {% for mover in top_movers %}
+      <div class="sp-insight-bar">
+        <span class="sp-insight-entity">{{ mover.name }}{% if mover.ticker %} ({{ mover.ticker }}){% endif %}</span>
+        <span class="sp-insight-metric {{ mover.direction }}">{{ mover.catalyst_count }} catalysts {{ "▲" if mover.direction == "growing" else "▼" }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="sp-card-footer">
+      <div></div>
+      <div class="sp-brand">
+        <span class="sp-brand-mark"></span>
+        <span>robotics</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── CHOKEPOINT / INSIGHT CARD ── #}
+{% elif card_type == "chokepoint" %}
+<div class="sp-card" style="--accent-color: var(--sector-{{ sector_key }}); --rel-color: var(--rel-contract);">
+  <div class="sp-card-body">
+    <div class="sp-card-header">
+      <div class="sp-card-tags">
+        <span class="sp-tag sp-tag-sector">{{ sector }}</span>
+        <span class="sp-tag sp-tag-type" style="--rel-color: var(--confidence-mid);">Chokepoint Alert</span>
+      </div>
+      <span class="sp-card-date">{{ date }}</span>
+    </div>
+
+    <h2 class="sp-card-headline">{{ entity.name }}{% if entity.ticker %} ({{ entity.ticker }}){% endif %} is becoming a structural dependency</h2>
+    <p class="sp-card-subtitle">{{ dependent_count }} companies now depend on or partner with this entity — up {{ growth_ratio }} in 30 days.</p>
+
+    {% for dep in dependents %}
+    <div class="sp-insight-bar">
+      <span class="sp-insight-entity">{{ dep.name }}{% if dep.ticker %} ({{ dep.ticker }}){% endif %}</span>
+      <span class="sp-insight-metric growing">{{ dep.rel_type }}</span>
+    </div>
+    {% endfor %}
+
+    <div class="sp-card-footer" style="margin-top: 16px;">
+      <div class="sp-velocity">
+        <span class="sp-velocity-arrow up">▲</span>
+        <span class="sp-velocity-text">In-degree growth:</span>
+        <span class="sp-velocity-value up">{{ growth_ratio }}</span>
+      </div>
+      <div class="sp-brand">
+        <span class="sp-brand-mark"></span>
+        <span>robotics</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── TRACK RECORD CARD ── #}
+{% elif card_type == "track_record" %}
+<div class="sp-card" style="--accent-color: var(--sector-{{ sector_key }});">
+  <div class="sp-card-body">
+    <div class="sp-card-header">
+      <div class="sp-card-tags">
+        <span class="sp-tag sp-tag-sector">{{ sector }}</span>
+        <span class="sp-tag sp-tag-type" style="--rel-color: var(--text-muted);">Track Record</span>
+      </div>
+      <span class="sp-card-date">Flagged {{ flagged_date }}</span>
+    </div>
+
+    <h2 class="sp-card-headline">{{ headline }}</h2>
+    <p class="sp-card-subtitle">{{ subtitle }}</p>
+
+    {% for outcome in outcomes %}
+    <div class="sp-track-outcome">
+      <span class="sp-track-ticker">{{ outcome.ticker }}</span>
+      <span class="sp-track-change {{ 'positive' if outcome.change > 0 else 'negative' }}">{{ "+" if outcome.change > 0 else "" }}{{ outcome.change }}%</span>
+      <span class="sp-track-days">{{ outcome.days }}d after</span>
+    </div>
+    {% endfor %}
+
+    <div class="sp-card-footer">
+      <div></div>
+      <div class="sp-brand">
+        <span class="sp-brand-mark"></span>
+        <span>robotics</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endif %}
+
+</body>
+</html>

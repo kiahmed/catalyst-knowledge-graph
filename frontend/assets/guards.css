@@ -1,0 +1,204 @@
+/* Catalyst Knowledge Graph (Robotics module) — guards.css (ticket 1.13f)
+   Styling for banner, empty-state, and loading overlay.
+   Uses design tokens from :root in frontend/index.html. */
+
+/* ── Banner ────────────────────────────────────────────────── */
+.robotics-guards-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px 10px 14px;
+  font-family: 'Inter', -apple-system, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text, #1c1917);
+  border-bottom: 1px solid var(--border, #ddd8cf);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  animation: robotics-guards-slide-down 180ms ease-out;
+}
+
+.robotics-guards-banner--error {
+  background: #fdecec;
+  border-left: 4px solid var(--down, #dc2626);
+}
+
+.robotics-guards-banner--warn {
+  background: #fdf4e7;
+  border-left: 4px solid var(--accent-regulatory, #d97706);
+}
+
+.robotics-guards-banner--info {
+  background: #e7f5fd;
+  border-left: 4px solid var(--accent, #0ea5e9);
+}
+
+.robotics-guards-banner__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.robotics-guards-banner--error .robotics-guards-banner__icon { background: var(--down, #dc2626); }
+.robotics-guards-banner--warn .robotics-guards-banner__icon { background: var(--accent-regulatory, #d97706); }
+.robotics-guards-banner--info .robotics-guards-banner__icon { background: var(--accent, #0ea5e9); }
+
+.robotics-guards-banner__msg { flex: 1; min-width: 0; }
+
+.robotics-guards-banner__close {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--text-secondary, #57534e);
+  padding: 2px 8px;
+  border-radius: 4px;
+  transition: background 120ms ease, color 120ms ease;
+}
+.robotics-guards-banner__close:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text, #1c1917);
+}
+
+@keyframes robotics-guards-slide-down {
+  from { transform: translateY(-100%); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+
+/* ── Empty state ──────────────────────────────────────────── */
+.robotics-guards-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 12px;
+  padding: 48px 24px;
+  min-height: 240px;
+  width: 100%;
+  height: 100%;
+  color: var(--text-secondary, #57534e);
+  font-family: 'Inter', -apple-system, sans-serif;
+}
+
+.robotics-guards-empty-icon {
+  color: var(--text-muted, #a8a29e);
+  opacity: 0.7;
+  animation: robotics-guards-spin 24s linear infinite;
+}
+
+.robotics-guards-empty__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text, #1c1917);
+  letter-spacing: -0.01em;
+}
+
+.robotics-guards-empty__helper {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-muted, #a8a29e);
+  max-width: 360px;
+  line-height: 1.5;
+}
+
+.robotics-guards-empty__cta {
+  margin-top: 6px;
+  padding: 8px 16px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--text, #1c1917);
+  background: var(--bg-card, #fdfcfa);
+  border: 1px solid var(--border, #ddd8cf);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+}
+.robotics-guards-empty__cta:hover {
+  border-color: var(--border-focus, #0ea5e9);
+  background: #fff;
+}
+.robotics-guards-empty__cta:active { transform: translateY(1px); }
+
+@keyframes robotics-guards-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ── Loading overlay ──────────────────────────────────────── */
+.robotics-guards-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(243, 241, 237, 0.75);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  opacity: 0;
+  transition: opacity 150ms ease-out;
+  pointer-events: all;
+}
+
+.robotics-guards-loading--hiding {
+  transition: opacity 200ms ease-out;
+  pointer-events: none;
+}
+
+.robotics-guards-loading__inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 20px 28px;
+  background: var(--bg-card, #fdfcfa);
+  border: 1px solid var(--border, #ddd8cf);
+  border-radius: var(--radius, 14px);
+  box-shadow: var(--shadow, 0 1px 3px rgba(0,0,0,0.04), 0 4px 14px rgba(0,0,0,0.05));
+  min-width: 200px;
+}
+
+.robotics-guards-loading__glyph {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--accent, #0ea5e9);
+  letter-spacing: 0.05em;
+  user-select: none;
+}
+
+.robotics-guards-loading__msg {
+  font-family: 'Inter', -apple-system, sans-serif;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-secondary, #57534e);
+}
+
+/* ── Reduced motion ───────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .robotics-guards-banner,
+  .robotics-guards-empty-icon,
+  .robotics-guards-loading,
+  .robotics-guards-loading--hiding {
+    animation: none !important;
+    transition: none !important;
+  }
+}

@@ -1,0 +1,37 @@
+rules_version = '2';
+
+// Firestore Security Rules for the (default) database in sample-gcp-project-id.
+//
+// SCOPE: this database also holds Arboryx's `findings` collection, and
+// deploying replaces the WHOLE database ruleset — so these rules are
+// deliberately deny-by-default. That's safe: `findings` is touched only by
+// backend service accounts (the Arboryx pipeline, robotics-ingest), and the
+// Admin SDK BYPASSES security rules entirely. Rules only ever gate browser
+// clients — and the only browser client here is the robotics frontend.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default: deny all client (browser) access.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Catalyst data — the frontend requires sign-in, so any authenticated
+    // user may read CKG-<sector> (e.g. CKG-Robotics). Writes stay server-side.
+    match /{collection}/{doc=**} {
+      allow read: if request.auth != null
+                  && collection.matches('CKG-.*');
+    }
+
+    // User profiles — written by the frontend on each sign-in, one doc per
+    // user. Each user may read and write only their own doc; the stored
+    // `uid` field must match the authenticated uid. No client deletes.
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null
+                            && request.auth.uid == uid
+                            && request.resource.data.uid == uid;
+      allow delete: if false;
+    }
+  }
+}

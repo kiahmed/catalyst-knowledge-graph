@@ -1,0 +1,161 @@
+# Robotics module — Closed 15-type relationship vocabulary (Phase 1).
+#
+# The extractor MUST pick one of these 15 `rel_type` values for every triple.
+# Anything that doesn't fit cleanly should not be extracted (return fewer
+# triples rather than inventing types). Vocabulary is intentionally small:
+# closed vocab is the single most important correctness lever per MVP plan.
+#
+# Each entry:
+#   description  — what the relationship means in plain English
+#   directional  — true: (a rel b) ≠ (b rel a); false: symmetric
+#   examples     — canonical example sentence fragments for few-shot prompting
+#
+# When adding a type: update the schema enum in src/extract.py too.
+
+prompt_version: v1
+
+vocabulary:
+
+  # ── Commercial / structural ────────────────────────────────────────
+  - name: partners_with
+    description: >
+      Two entities form a joint venture, strategic partnership, co-development,
+      or alliance. Symmetric — no direction implied.
+    directional: false
+    examples:
+      - "Boston Dynamics and Hyundai expand warehouse JV"
+      - "NVIDIA announces strategic partnership with Figure"
+
+  - name: acquires
+    description: >
+      Entity A acquires (or plans to acquire) Entity B — M&A, takeover,
+      majority stake. Direction: A is the acquirer.
+    directional: true
+    examples:
+      - "Amazon to acquire iRobot for $1.7B"
+      - "Symbotic completed tender offer for Walmart Advanced Systems"
+
+  - name: invests_in
+    description: >
+      Entity A leads or participates in a funding round for Entity B, or
+      takes a material equity stake short of acquisition. Direction: A is
+      the investor.
+    directional: true
+    examples:
+      - "Microsoft led Series C in Figure"
+      - "ARK Invest increased stake in Tesla robotics unit"
+
+  - name: supplies
+    description: >
+      Entity A supplies components, hardware, software, or services to
+      Entity B. Direction: A → B (supplier → buyer).
+    directional: true
+    examples:
+      - "NVIDIA supplies Jetson Thor to Agility Robotics"
+      - "TSMC supplies AI accelerators to Figure's humanoid stack"
+
+  - name: integrates_with
+    description: >
+      Entity A integrates Entity B's product/platform into its own stack,
+      or vice versa. Weaker than partners_with — more tactical.
+    directional: true
+    examples:
+      - "Amazon warehouses integrate Symbotic picking arms"
+      - "Boston Dynamics Atlas integrates OpenAI foundation models"
+
+  # ── Competitive ────────────────────────────────────────────────────
+  - name: competes_with
+    description: >
+      Two entities compete for the same market, customer, or technology
+      position. Symmetric.
+    directional: false
+    examples:
+      - "Figure and 1X race to ship humanoids to automotive OEMs"
+      - "Symbotic vs AutoStore in grocery warehouse automation"
+
+  - name: displaces
+    description: >
+      Entity A is displacing Entity B as an incumbent, or threatens to.
+      Direction: A is the challenger/new entrant displacing B.
+    directional: true
+    examples:
+      - "Humanoid robots displacing AGVs in BMW plant pilots"
+      - "Symbotic displacing conventional DC staff at Walmart"
+
+  # ── Deployment / customer ──────────────────────────────────────────
+  - name: deploys
+    description: >
+      Entity A deploys Entity B's product into production use. Weaker than
+      acquires — no equity. Direction: A = customer, B = vendor.
+    directional: true
+    examples:
+      - "Mercedes deploys Apptronik Apollo humanoids in Alabama plant"
+      - "Amazon deploys 500 Digit units across US fulfillment centers"
+
+  - name: pilots
+    description: >
+      Entity A runs a pilot / trial / proof-of-concept of Entity B's product.
+      Weaker than deploys — pre-production. Direction: A = pilot customer,
+      B = vendor being piloted.
+    directional: true
+    examples:
+      - "BMW pilots Figure 02 in Spartanburg plant"
+      - "Hyundai pilots Boston Dynamics Atlas in automotive assembly"
+
+  # ── Talent / organizational ────────────────────────────────────────
+  - name: hires_from
+    description: >
+      Entity A hires key personnel (executive, research lead, engineering
+      team) from Entity B. Direction: A = new employer, B = prior employer.
+    directional: true
+    examples:
+      - "Figure hires former Tesla Optimus lead"
+      - "1X recruits senior roboticist from Boston Dynamics"
+
+  - name: spins_out_from
+    description: >
+      Entity A is spun out of Entity B (academic lab, corporate parent,
+      research institute). Direction: A = spinout, B = parent.
+    directional: true
+    examples:
+      - "Physical Intelligence spun out of Stanford"
+      - "Cobalt Robotics spun out of Stanford AI lab"
+
+  # ── Technical / scientific ─────────────────────────────────────────
+  - name: built_on
+    description: >
+      Entity A's product is built on top of Entity B's platform, model,
+      or infrastructure. Direction: A = application layer, B = substrate.
+    directional: true
+    examples:
+      - "Figure 02 built on OpenAI foundation models"
+      - "Covariant Brain built on NVIDIA Isaac platform"
+
+  - name: benchmarks_against
+    description: >
+      Entity A publicly benchmarks, compares, or is measured against
+      Entity B on a capability, product, or metric. Symmetric.
+    directional: false
+    examples:
+      - "1X Neo benchmarked against Figure 02 in home tasks"
+      - "OpenAI o1 benchmarks against Google DeepMind Gemini"
+
+  # ── Regulatory / governance ────────────────────────────────────────
+  - name: regulates
+    description: >
+      Entity A (government, agency, standards body) regulates, investigates,
+      approves, or blocks Entity B's operations/products. Direction: A
+      regulates B.
+    directional: true
+    examples:
+      - "FTC investigates Amazon iRobot deal"
+      - "EU AI Act regulates foundation-model providers including OpenAI"
+
+  - name: litigates_against
+    description: >
+      Entity A sues, files a complaint against, or is in active legal
+      dispute with Entity B. Direction: A = plaintiff (or initiator).
+    directional: true
+    examples:
+      - "Musk litigates against OpenAI over governance"
+      - "Apptronik files patent suit against rival humanoid startup"

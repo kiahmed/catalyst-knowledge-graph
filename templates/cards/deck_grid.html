@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<title>Robotics module · Arboryx</title>
+<style>
+:root {
+  --bg: #f3f1ed;
+  --bg-warm: #eae7e0;
+  --bg-card: #fdfcfa;
+  --bg-detail: #f0ede7;
+  --bg-input: #fdfcfa;
+  --border: #ddd8cf;
+  --border-hover: #c4bfb5;
+  --border-focus: #0ea5e9;
+  --text: #1c1917;
+  --text-secondary: #57534e;
+  --text-muted: #a8a29e;
+  --accent: #0ea5e9;
+  --accent-deal: #8b5cf6;
+  --accent-contract: #10b981;
+  --accent-regulatory: #d97706;
+  --accent-product: #3b82f6;
+  --accent-talent: #ec4899;
+  --accent-competition: #ef4444;
+  --up: #16a34a;
+  --down: #dc2626;
+  --conf-high: #16a34a;
+  --conf-mid: #d97706;
+  --conf-low: #dc2626;
+  --radius: 14px;
+  --shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 14px rgba(0,0,0,0.05);
+  --shadow-hover: 0 2px 8px rgba(0,0,0,0.06), 0 8px 28px rgba(0,0,0,0.09);
+  --shadow-expanded: 0 8px 40px rgba(0,0,0,0.14);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', -apple-system, sans-serif;
+  overflow: hidden;
+  height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ══ ASCII Art — scattered decorative blocks ══ */
+.ascii-spot {
+  position: fixed;
+  z-index: 0;
+  pointer-events: none;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 15px;
+  line-height: 1.4;
+  color: #b8cad9;
+  white-space: pre;
+}
+.ascii-spot.tl { top: 70px; left: 20px; }
+.ascii-spot.tr { top: 70px; right: 20px; text-align: right; }
+.ascii-spot.bl { bottom: 60px; left: 20px; }
+.ascii-spot.br { bottom: 60px; right: 20px; text-align: right; }
+.ascii-spot.ml { top: 50%; left: 14px; transform: translateY(-50%); }
+.ascii-spot.mr { top: 50%; right: 14px; transform: translateY(-50%); text-align: right; }
+
+/* ══ Top Bar ══ */
+.topbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 28px;
+  background: rgba(243,241,237,0.88);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+.topbar-brand {
+  display: flex; align-items: center; gap: 10px;
+  font-weight: 600; font-size: 15px; color: var(--text); letter-spacing: -0.3px;
+}
+.topbar-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 10px rgba(14,165,233,0.4);
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%,100% { box-shadow: 0 0 10px rgba(14,165,233,0.4); }
+  50% { box-shadow: 0 0 18px rgba(14,165,233,0.7); }
+}
+
+/* ══ Control Group — stacked rows, centered ══ */
+.control-group {
+  position: fixed; z-index: 150;
+  top: 96px;
+  left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center;
+  gap: 8px;
+}
+
+/* Row 1: filter pills */
+.filter-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 14px;
+  background: rgba(253,252,250,0.88);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.03);
+}
+.filter-pill {
+  padding: 4px 10px; border: 1px solid transparent; border-radius: 16px;
+  background: transparent; font-family: inherit; font-size: 11px;
+  font-weight: 500; color: var(--text-muted); cursor: pointer;
+  transition: all 0.15s; text-transform: uppercase; letter-spacing: 0.3px;
+}
+.filter-pill:hover { color: var(--text-secondary); background: var(--bg-detail); }
+.filter-pill.active { border-color: var(--accent); color: var(--accent); background: rgba(14,165,233,0.06); }
+
+/* Row 2: date + confidence side by side */
+.refine-row {
+  display: flex; align-items: center; gap: 20px;
+  padding: 6px 14px;
+  background: rgba(253,252,250,0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.03);
+}
+.date-controls, .conf-controls {
+  display: flex; align-items: center; gap: 6px;
+}
+.refine-divider {
+  width: 1px; height: 22px; background: var(--border);
+}
+.ctrl-label {
+  font-size: 10px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.5px; margin-right: 2px;
+}
+.ctrl-btn {
+  padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-input); font-family: inherit; font-size: 11px;
+  font-weight: 500; color: var(--text-secondary); cursor: pointer;
+  transition: all 0.15s;
+}
+.ctrl-btn:hover { border-color: var(--border-hover); color: var(--text); }
+.ctrl-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(14,165,233,0.05); }
+input[type="date"] {
+  padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-input); font-family: inherit; font-size: 11px;
+  color: var(--text-secondary); outline: none; transition: border-color 0.15s;
+}
+input[type="date"]:focus { border-color: var(--border-focus); }
+.conf-slider-wrap { display: flex; align-items: center; gap: 6px; }
+.conf-slider-wrap input[type="range"] {
+  width: 90px; height: 4px; -webkit-appearance: none; appearance: none;
+  background: var(--border); border-radius: 2px; outline: none;
+}
+.conf-slider-wrap input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--bg-card); cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+}
+.conf-value {
+  font-size: 11px; font-weight: 600; color: var(--text-secondary);
+  min-width: 28px; text-align: center;
+}
+
+/* Row 3: search */
+.search-row {
+  width: 320px;
+}
+.search-wrap { position: relative; }
+.search-wrap input {
+  width: 100%; padding: 7px 12px 7px 32px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--bg-input); font-family: inherit;
+  font-size: 12px; color: var(--text); outline: none; transition: all 0.15s;
+}
+.search-wrap input:focus { border-color: var(--border-focus); box-shadow: 0 0 0 3px rgba(14,165,233,0.1); }
+.search-wrap input::placeholder { color: var(--text-muted); }
+.search-icon {
+  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  font-size: 13px; color: var(--text-muted); pointer-events: none;
+}
+
+/* ══ Card Grid Area ══ */
+.grid-stage {
+  position: fixed;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  width: 780px;
+  margin-top: 50px;
+}
+
+/* ══ Nav Arrows ══ */
+.nav-arrow {
+  position: fixed; top: 50%; transform: translateY(-50%);
+  z-index: 50; width: 48px; height: 48px;
+  border: 2px solid var(--border-hover); border-radius: 50%;
+  background: rgba(253,252,250,0.95); backdrop-filter: blur(6px);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: all 0.15s;
+  font-size: 24px; font-weight: 700; color: var(--text-secondary);
+  margin-top: 50px;
+}
+.nav-arrow:hover { border-color: var(--accent); color: var(--accent); box-shadow: 0 2px 12px rgba(14,165,233,0.15); }
+.nav-arrow:active { transform: translateY(-50%) scale(0.93); margin-top: 50px; }
+.nav-arrow.left { left: calc(50% - 420px); }
+.nav-arrow.right { right: calc(50% - 420px); }
+.nav-arrow.disabled { opacity: 0.2; cursor: default; pointer-events: none; }
+
+/* ══ Compact Card ══ */
+.sp-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4,0,0.2,1);
+  opacity: 0;
+  transform: translateY(8px);
+  overflow: hidden;
+}
+.sp-card.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.sp-card:hover {
+  box-shadow: var(--shadow-hover);
+  transform: translateY(-2px);
+}
+.sp-card::before {
+  content: ''; display: block; height: 3px;
+  background: var(--card-accent, var(--accent));
+}
+.card-body { padding: 18px 20px; }
+
+.card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.card-tags { display: flex; gap: 6px; }
+.tag {
+  padding: 3px 9px; border-radius: 4px;
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 0.4px; text-transform: uppercase;
+}
+.tag-sector {
+  background: rgba(14,165,233,0.08); color: var(--accent);
+  border: 1px solid rgba(14,165,233,0.18);
+}
+.tag-type {
+  background: color-mix(in srgb, var(--type-color, var(--accent)) 8%, transparent);
+  color: var(--type-color, var(--accent));
+  border: 1px solid color-mix(in srgb, var(--type-color, var(--accent)) 18%, transparent);
+}
+.card-date { font-size: 11px; color: var(--text-muted); }
+
+.card-headline {
+  font-size: 15px; font-weight: 600; line-height: 1.35;
+  color: var(--text); letter-spacing: -0.15px; margin-bottom: 8px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.card-entities {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 10px;
+}
+.entity-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 10px; background: var(--bg-detail);
+  border: 1px solid var(--border); border-radius: 6px; font-size: 12px;
+}
+.entity-ticker { font-weight: 600; color: var(--text); }
+.entity-name { color: var(--text-secondary); font-size: 11px; }
+.entity-arrow { color: var(--text-muted); font-size: 13px; }
+
+.confidence-row {
+  display: flex; align-items: center; gap: 7px; margin-bottom: 10px;
+}
+.confidence-label {
+  font-size: 9px; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: 0.4px; font-weight: 500;
+}
+.confidence-dots { display: flex; gap: 3px; }
+.conf-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--border); transition: background 0.2s;
+}
+.conf-dot.on { background: var(--conf-high); }
+.conf-dot.on.mid { background: var(--conf-mid); }
+.conf-dot.on.low { background: var(--conf-low); }
+
+.card-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-top: 10px; border-top: 1px solid var(--border);
+}
+.vel-row { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-secondary); }
+.vel-arrow { font-weight: 700; }
+.vel-arrow.up { color: var(--up); }
+.vel-arrow.down { color: var(--down); }
+.vel-val { font-weight: 600; }
+.vel-val.up { color: var(--up); }
+.vel-val.down { color: var(--down); }
+.brand { display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--text-muted); font-weight: 500; letter-spacing: 0.2px; }
+.brand .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--card-accent, var(--accent)); }
+
+/* ══ Page Info — below grid ══ */
+.page-info {
+  position: fixed; z-index: 50;
+  left: 50%; transform: translateX(-50%);
+  bottom: calc(50% - 310px);
+  display: flex; align-items: center; gap: 14px;
+  font-size: 12px; font-weight: 500; color: var(--text-muted);
+}
+.page-info span { color: var(--text); font-weight: 600; }
+.sound-btn {
+  width: 26px; height: 26px; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--bg-card);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; font-size: 12px; color: var(--text-muted); transition: all 0.15s;
+}
+.sound-btn:hover { border-color: var(--border-hover); color: var(--text); }
+.sound-btn.on { color: var(--accent); border-color: var(--accent); }
+
+/* ══ Keyboard hint ══ */
+.key-hint {
+  position: fixed; z-index: 50;
+  left: 50%; transform: translateX(-50%);
+  bottom: calc(50% - 335px);
+  font-size: 10px; color: var(--text-muted);
+  display: flex; gap: 12px; opacity: 0.5;
+}
+.key-hint kbd {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px; padding: 0 3px;
+  border: 1px solid var(--border); border-radius: 3px;
+  background: var(--bg-card); font-family: inherit; font-size: 9px;
+  font-weight: 600; color: var(--text-secondary); margin-right: 2px;
+}
+
+/* ══ Bottom Bar ══ */
+.bottombar {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 200;
+  padding: 10px 28px;
+  background: rgba(243,241,237,0.88);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; color: var(--text-muted);
+}
+
+/* ══ Expanded Overlay ══ */
+.expanded-overlay {
+  position: fixed; inset: 0; z-index: 300;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(243,241,237,0.7);
+  backdrop-filter: blur(6px);
+  opacity: 0; pointer-events: none; transition: opacity 0.25s;
+}
+.expanded-overlay.open { opacity: 1; pointer-events: auto; }
+.expanded-card {
+  width: 560px; max-height: 80vh; overflow-y: auto;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow-expanded);
+  transform: scale(0.95) translateY(10px); transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
+  position: relative;
+}
+.expanded-overlay.open .expanded-card { transform: scale(1) translateY(0); }
+.expanded-card::before { content:''; display:block; height:3px; border-radius: var(--radius) var(--radius) 0 0; background: var(--card-accent, var(--accent)); }
+.expanded-body { padding: 24px; }
+.expanded-close {
+  position: absolute; top: 14px; right: 14px;
+  width: 30px; height: 30px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--bg-card);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; font-size: 15px; color: var(--text-muted);
+  transition: all 0.15s; z-index: 10;
+}
+.expanded-close:hover { border-color: var(--border-hover); color: var(--text); }
+.exp-subtitle { font-size: 14px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 18px; }
+.detail-section { padding: 14px 0; border-top: 1px solid var(--border); }
+.detail-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; margin-bottom: 8px; }
+.related-chips { display: flex; gap: 5px; flex-wrap: wrap; }
+.related-chip { padding: 3px 9px; background: var(--bg-detail); border: 1px solid var(--border); border-radius: 5px; font-size: 12px; color: var(--text-secondary); }
+.insight-bar { display: flex; align-items: center; justify-content: space-between; padding: 9px 13px; background: var(--bg-detail); border: 1px solid var(--border); border-radius: 7px; margin-bottom: 5px; font-size: 13px; }
+.insight-entity { font-weight: 600; color: var(--text); }
+.insight-metric { font-weight: 500; }
+.insight-metric.growing { color: var(--up); }
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+.stat-box { background: var(--bg-detail); border: 1px solid var(--border); border-radius: 9px; padding: 12px 14px; }
+.stat-value { font-size: 20px; font-weight: 700; color: var(--text); line-height: 1; margin-bottom: 3px; }
+.stat-value.up { color: var(--up); }
+.stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; }
+.track-bar { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--bg-detail); border: 1px solid var(--border); border-radius: 7px; margin-bottom: 5px; }
+.track-ticker { font-weight: 600; color: var(--text); min-width: 45px; }
+.track-change { font-size: 17px; font-weight: 700; }
+.track-change.pos { color: var(--up); }
+.track-change.neg { color: var(--down); }
+.track-days { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px; }
+.exp-card-footer { display: flex; align-items: center; justify-content: space-between; padding-top: 14px; border-top: 1px solid var(--border); margin-top: 14px; }
+
+/* ══ Responsive ══ */
+@media (max-width: 860px) {
+  .grid-stage { width: calc(100vw - 120px); grid-template-columns: 1fr; }
+  .nav-arrow.left { left: 12px; }
+  .nav-arrow.right { right: 12px; }
+  .refine-row { flex-wrap: wrap; justify-content: center; }
+  .refine-divider { display: none; }
+  .search-row { width: 260px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ASCII art — scattered in corners and margins -->
+<!-- Walking humanoid robot — top left area -->
+<div class="ascii-spot" style="top:80px; left:24px;">
+      ╔═══╗
+      ║ ◉ ║
+      ╚═╤═╝
+    ┌───┼───┐
+    │   │   │
+   ─┤  ███  ├─
+    │  ███  │
+    └───┬───┘
+       ┌┴┐
+      ┌┘ └┐
+     ─┘   └─
+     ╱       ╲
+    ╱         ╲</div>
+
+<!-- Delivery drone — top right, offset down -->
+<div class="ascii-spot" style="top:130px; right:30px;">
+       ╱╲
+    ──╱──╲──
+   ◉╱ ╔══╗ ╲◉
+   ╱  ║▒▒║  ╲
+  ╱   ╚══╝   ╲
+ ═══╗      ╔═══
+    ╚══════╝
+      ┊  ┊
+     [PARCEL]</div>
+
+<!-- Self-driving car — bottom left, pushed right a bit -->
+<div class="ascii-spot" style="bottom:70px; left:50px;">
+        ┌──────────┐
+   ┌────┤  ◉    ◉  ├────┐
+   │░░░░│          │░░░░│
+   │░░░░│  SENSOR  │░░░░│
+   ├────┴──────────┴────┤
+   │  ┌──┐  AUTO  ┌──┐  │
+   │  │▓▓│  ════  │▓▓│  │
+   └──┴──┴────────┴──┴──┘
+      ◎              ◎</div>
+
+<!-- Robotic arm picking — right side, mid-low -->
+<div class="ascii-spot" style="bottom:180px; right:20px;">
+   ╔════╗
+   ║BASE║
+   ╚══╤═╝
+      │╲
+      │  ╲
+      │    ╲───┐
+      │        │
+      │     ┌──┴──┐
+      │     │GRIP │
+            ├──┬──┤
+            │◉◉◉◉◉│
+            └─────┘
+              ▼
+          ┌───────┐
+          │ █████ │
+          └───────┘</div>
+
+<!-- Delivery bot — left side, middle -->
+<div class="ascii-spot" style="top:50%; left:18px; transform:translateY(-50%);">
+     ┌─────────┐
+     │  ◉   ◉  │
+     │  SCOUT  │
+     ├─────────┤
+     │ ┌─────┐ │
+     │ │ BOX │ │
+     │ └─────┘ │
+     └────┬────┘
+      ◎═══╪═══◎
+          │</div>
+
+<!-- Warehouse bot — bottom right corner, offset -->
+<div class="ascii-spot" style="bottom:55px; right:130px;">
+   ┌──┐
+   │◉◉│
+   ├──┤╲
+   │▓▓│─╲────┐
+   │▓▓│  ╲   │
+   └┬─┘   ▓▓▓│
+    ◎══════◎──┘</div>
+
+<!-- Satellite / comms — top area, off-center left -->
+<div class="ascii-spot" style="top:75px; left:45%;">
+  ╱───╲
+ ╱ ◉◉◉ ╲
+ ╲ SAT ╱
+  ╲───╱
+    │
+ ───┼───
+    ▼</div>
+
+<!-- Top Bar -->
+<div class="topbar">
+  <div class="topbar-brand"><div class="topbar-dot"></div> robotics</div>
+  <div style="padding:4px 12px;background:#d97706;color:#fff;font-size:11px;font-weight:600;border-radius:6px;letter-spacing:0.5px;text-transform:uppercase;">Sample Data — Not Real</div>
+</div>
+
+<!-- Control group — 3 stacked rows -->
+<div class="control-group">
+  <!-- Row 1: Card type filters -->
+  <div class="filter-row">
+    <button class="filter-pill active" data-filter="all">All</button>
+    <button class="filter-pill" data-filter="partnership">Partnership</button>
+    <button class="filter-pill" data-filter="acquisition">Deal</button>
+    <button class="filter-pill" data-filter="contract">Contract</button>
+    <button class="filter-pill" data-filter="regulatory">Regulatory</button>
+    <button class="filter-pill" data-filter="product">Product</button>
+    <button class="filter-pill" data-filter="talent">Talent</button>
+    <button class="filter-pill" data-filter="summary">Summary</button>
+    <button class="filter-pill" data-filter="chokepoint">Insight</button>
+  </div>
+
+  <!-- Row 2: Date controls + Confidence slider -->
+  <div class="refine-row">
+    <div class="date-controls">
+      <span class="ctrl-label">Date</span>
+      <button class="ctrl-btn active" data-date="all">All</button>
+      <button class="ctrl-btn" data-date="today">Today</button>
+      <button class="ctrl-btn" data-date="yesterday">Yesterday</button>
+      <input type="date" id="dateFrom" title="From">
+      <span style="font-size:11px;color:var(--text-muted);">–</span>
+      <input type="date" id="dateTo" title="To">
+    </div>
+    <div class="refine-divider"></div>
+    <div class="conf-controls">
+      <span class="ctrl-label">Confidence</span>
+      <div class="conf-slider-wrap">
+        <span class="conf-value" id="confMinLabel">0%</span>
+        <input type="range" min="0" max="100" value="0" id="confSlider">
+        <span class="conf-value" id="confMaxLabel">100%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 3: Search -->
+  <div class="search-row">
+    <div class="search-wrap">
+      <span class="search-icon">⌕</span>
+      <input type="text" id="searchBox" placeholder="Search catalysts, tickers, entities...">
+    </div>
+  </div>
+</div>
+
+<!-- Nav arrows -->
+<div class="nav-arrow left" id="navLeft">‹</div>
+<div class="nav-arrow right" id="navRight">›</div>
+
+<!-- Card grid -->
+<div class="grid-stage" id="gridStage"></div>
+
+<!-- Page info + sound -->
+<div class="page-info" id="pageInfo">
+  Page <span id="pageNum">1</span> / <span id="pageTotal">1</span>
+  <div class="sound-btn on" id="soundToggle" title="Toggle sound">♪</div>
+</div>
+
+<!-- Keyboard hint -->
+<div class="key-hint">
+  <span><kbd>←</kbd><kbd>→</kbd> page</span>
+  <span><kbd>Enter</kbd> expand first</span>
+  <span><kbd>Esc</kbd> close</span>
+</div>
+
+<!-- Expanded overlay -->
+<div class="expanded-overlay" id="expandedOverlay">
+  <div class="expanded-card" id="expandedCard">
+    <button class="expanded-close" id="expandedClose">✕</button>
+    <div class="expanded-body" id="expandedBody"></div>
+  </div>
+</div>
+
+<!-- Bottom bar -->
+<div class="bottombar">Robotics sector &middot; powered by Arboryx</div>
+
+<script>
+// ══ Data ══
+const CARDS = [
+  {
+    id:1, type:"partnership", sector:"Robotics", date:"Apr 16 '26",
+    headline:"Boston Dynamics + Hyundai expand warehouse automation JV",
+    subtitle:"Joint venture targeting 50 new logistics centers by 2027. Amazon and Symbotic named as early integration partners for BD's Stretch platform.",
+    entityA:{name:"Boston Dynamics"}, entityB:{name:"Hyundai Motor",ticker:"HYMTF"},
+    confidence:0.95, related:["AMZN","SYM","Berkshire Grey"],
+    velocity:{dir:"up",label:"partnerships",val:"+40%"},
+    accent:"#0ea5e9", typeColor:"#0ea5e9", typeLabel:"Partnership",
+    sortDate:20260416, isoDate:"2026-04-16"
+  },
+  {
+    id:2, type:"acquisition", sector:"Robotics", date:"Apr 15 '26",
+    headline:"NVIDIA acquires Covariant's AI model portfolio for ~$700M",
+    subtitle:"Covariant's foundation models for robotic manipulation integrated into NVIDIA Isaac platform. Positions NVIDIA as dominant robotics compute layer.",
+    entityA:{name:"NVIDIA",ticker:"NVDA"}, entityB:{name:"Covariant"},
+    confidence:0.85, related:["Google DeepMind","Osaro","Intrinsic"],
+    velocity:{dir:"up",label:"acquisitions",val:"+120%"},
+    accent:"#0ea5e9", typeColor:"#8b5cf6", typeLabel:"Acquisition",
+    sortDate:20260415, isoDate:"2026-04-15"
+  },
+  {
+    id:3, type:"contract", sector:"Robotics", date:"Apr 14 '26",
+    headline:"Anduril wins $480M DoD contract for autonomous perimeter drones",
+    subtitle:"US Department of Defense awards multi-year contract for Anduril's Altius autonomous systems across 12 military installations.",
+    entityA:{name:"Anduril Industries"}, entityB:{name:"US DoD"},
+    confidence:1.0, related:["Shield AI","L3Harris","Northrop Grumman"],
+    velocity:{dir:"up",label:"defense contracts",val:"+65%"},
+    accent:"#0ea5e9", typeColor:"#10b981", typeLabel:"Contract",
+    sortDate:20260414, isoDate:"2026-04-14"
+  },
+  {
+    id:4, type:"regulatory", sector:"Robotics", date:"Apr 13 '26",
+    headline:"FAA grants Zipline expanded BVLOS waiver for 14 states",
+    subtitle:"Beyond-visual-line-of-sight authorization covers 38% of US population. Clears path for commercial-scale autonomous drone delivery.",
+    entityA:{name:"FAA"}, entityB:{name:"Zipline"},
+    confidence:1.0, related:["Wing (Alphabet)","Amazon Prime Air","Joby Aviation"],
+    velocity:{dir:"up",label:"regulatory approvals",val:"+200%"},
+    accent:"#0ea5e9", typeColor:"#d97706", typeLabel:"Regulatory",
+    sortDate:20260413, isoDate:"2026-04-13"
+  },
+  {
+    id:5, type:"product", sector:"Robotics", date:"Apr 12 '26",
+    headline:"Figure AI unveils Figure 03 — first humanoid with on-device reasoning",
+    subtitle:"Third-gen humanoid: 48-hour battery, local multimodal AI, priced at ~$85K for commercial warehouse deployment.",
+    entityA:{name:"Figure AI"}, entityB:null,
+    confidence:0.95, related:["OpenAI","NVDA","BMW","1X Technologies"],
+    velocity:{dir:"up",label:"product launches",val:"+85%"},
+    accent:"#0ea5e9", typeColor:"#3b82f6", typeLabel:"Product Launch",
+    sortDate:20260412, isoDate:"2026-04-12"
+  },
+  {
+    id:6, type:"talent", sector:"Robotics", date:"Apr 11 '26",
+    headline:"Tesla Optimus lead engineer departs to join 1X Technologies",
+    subtitle:"Third senior robotics hire from Tesla in 6 months. 1X NEO humanoid team now has ex-leads from Tesla, BD, and Google DeepMind.",
+    entityA:{name:"1X Technologies"}, entityB:{name:"Tesla",ticker:"TSLA"},
+    confidence:0.65, related:["Figure AI","Agility Robotics"],
+    velocity:{dir:"flat",label:"talent moves",val:"steady"},
+    accent:"#0ea5e9", typeColor:"#ec4899", typeLabel:"Talent Move",
+    sortDate:20260411, isoDate:"2026-04-11"
+  },
+  {
+    id:7, type:"summary", sector:"Robotics", date:"Apr 7–13 '26",
+    headline:"Robotics sector heating up — partnership activity surges",
+    subtitle:"23 catalysts across 38 entities. Partnership and contract activity at 6-month highs. NVIDIA dominance growing as compute dependency.",
+    entityA:null, entityB:null, confidence:null, related:[],
+    velocity:{dir:"up",label:"catalyst velocity",val:"+42%"},
+    accent:"#0ea5e9", typeColor:"#57534e", typeLabel:"Weekly Pulse",
+    sortDate:20260413.5, isoDate:"2026-04-13",
+    stats:{catalysts:23,relationships:14,entities:38,velocity:"+42%"},
+    movers:[{name:"NVIDIA",ticker:"NVDA",count:7},{name:"Boston Dynamics",count:5},{name:"Figure AI",count:4}]
+  },
+  {
+    id:8, type:"chokepoint", sector:"Robotics", date:"Apr 13 '26",
+    headline:"NVIDIA is becoming a structural dependency in Robotics",
+    subtitle:"7 companies depend on or partner with NVIDIA for robotics compute — in-degree growth 3.5x in 30 days.",
+    entityA:{name:"NVIDIA",ticker:"NVDA"}, entityB:null,
+    confidence:0.9, related:[],
+    velocity:{dir:"up",label:"in-degree growth",val:"3.5x"},
+    accent:"#0ea5e9", typeColor:"#d97706", typeLabel:"Chokepoint",
+    sortDate:20260413.1, isoDate:"2026-04-13",
+    dependents:[{name:"Boston Dynamics",rel:"integrates_with"},{name:"Figure AI",rel:"depends_on"},{name:"Agility Robotics",rel:"partners_with"},{name:"Covariant",rel:"acquired"}]
+  },
+  {
+    id:9, type:"track_record", sector:"Robotics", date:"Flagged Mar 15 '26",
+    headline:"BD + Hyundai JV expansion — 30-day outcome",
+    subtitle:"Flagged this partnership 30 days ago. Here's how related tickers moved.",
+    entityA:null, entityB:null, confidence:null, related:[],
+    velocity:null,
+    accent:"#0ea5e9", typeColor:"#57534e", typeLabel:"Track Record",
+    sortDate:20260315, isoDate:"2026-03-15",
+    outcomes:[{ticker:"HYMTF",change:12.4,days:30},{ticker:"SYM",change:8.1,days:30},{ticker:"AMZN",change:2.3,days:30}]
+  }
+];
+
+const PAGE_SIZE = 4;
+let filtered = [...CARDS];
+let page = 0;
+let soundOn = true;
+let audioCtx = null;
+let confMin = 0;
+
+// ══ Audio ══
+function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }
+function playTick() {
+  if (!soundOn) return; initAudio();
+  const o=audioCtx.createOscillator(), g=audioCtx.createGain();
+  o.connect(g); g.connect(audioCtx.destination);
+  o.frequency.value=600+Math.random()*200; o.type="sine";
+  g.gain.setValueAtTime(0.06,audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.08);
+  o.start(audioCtx.currentTime); o.stop(audioCtx.currentTime+0.08);
+}
+function playExpand() {
+  if (!soundOn) return; initAudio();
+  const o=audioCtx.createOscillator(), g=audioCtx.createGain();
+  o.connect(g); g.connect(audioCtx.destination);
+  o.frequency.setValueAtTime(400,audioCtx.currentTime);
+  o.frequency.linearRampToValueAtTime(800,audioCtx.currentTime+0.12);
+  o.type="sine";
+  g.gain.setValueAtTime(0.05,audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.15);
+  o.start(audioCtx.currentTime); o.stop(audioCtx.currentTime+0.15);
+}
+
+// ══ Render compact card ══
+function renderCompact(card) {
+  const dots = card.confidence !== null ? (()=>{
+    const n=Math.round(card.confidence*5);
+    const lv=card.confidence<0.5?' low':card.confidence<0.8?' mid':'';
+    return `<div class="confidence-row"><span class="confidence-label">Confidence</span><div class="confidence-dots">${[0,1,2,3,4].map(i=>`<div class="conf-dot${i<n?' on'+lv:''}"></div>`).join('')}</div></div>`;
+  })() : '';
+
+  const ent = card.entityA ? `<div class="card-entities">
+    <div class="entity-pill">${card.entityA.ticker?`<span class="entity-ticker">${card.entityA.ticker}</span>`:''}<span class="entity-name">${card.entityA.name}</span></div>
+    ${card.entityB?`<span class="entity-arrow">${card.type==='talent'?'←':'→'}</span><div class="entity-pill">${card.entityB.ticker?`<span class="entity-ticker">${card.entityB.ticker}</span>`:''}<span class="entity-name">${card.entityB.name}</span></div>`:''}</div>` : '';
+
+  const vel = card.velocity ? `<div class="vel-row"><span class="vel-arrow ${card.velocity.dir}">${card.velocity.dir==='up'?'▲':card.velocity.dir==='down'?'▼':'—'}</span><span class="vel-val ${card.velocity.dir}">${card.velocity.val}</span></div>` : '<div></div>';
+
+  return `<div class="card-body">
+    <div class="card-header"><div class="card-tags"><span class="tag tag-sector">${card.sector}</span><span class="tag tag-type" style="--type-color:${card.typeColor}">${card.typeLabel}</span></div><span class="card-date">${card.date}</span></div>
+    <h2 class="card-headline">${card.headline}</h2>
+    ${ent}${dots}
+    <div class="card-footer">${vel}<div class="brand"><span class="dot" style="background:${card.accent}"></span>robotics</div></div>
+  </div>`;
+}
+
+// ══ Render expanded ══
+function renderExpanded(card) {
+  let extra = '';
+  if (card.related && card.related.length) extra += `<div class="detail-section"><div class="detail-label">Also mentioned</div><div class="related-chips">${card.related.map(r=>`<span class="related-chip">${r}</span>`).join('')}</div></div>`;
+  if (card.stats) extra += `<div class="detail-section"><div class="detail-label">Week at a glance</div><div class="stat-grid"><div class="stat-box"><div class="stat-value">${card.stats.catalysts}</div><div class="stat-label">Catalysts</div></div><div class="stat-box"><div class="stat-value">${card.stats.relationships}</div><div class="stat-label">New Relationships</div></div><div class="stat-box"><div class="stat-value">${card.stats.entities}</div><div class="stat-label">Active Entities</div></div><div class="stat-box"><div class="stat-value up">${card.stats.velocity}</div><div class="stat-label">Velocity</div></div></div></div>`;
+  if (card.movers) extra += `<div class="detail-section"><div class="detail-label">Top movers</div>${card.movers.map(m=>`<div class="insight-bar"><span class="insight-entity">${m.name}${m.ticker?' ('+m.ticker+')':''}</span><span class="insight-metric growing">${m.count} catalysts ▲</span></div>`).join('')}</div>`;
+  if (card.dependents) extra += `<div class="detail-section"><div class="detail-label">Dependent entities</div>${card.dependents.map(d=>`<div class="insight-bar"><span class="insight-entity">${d.name}</span><span class="insight-metric growing">${d.rel}</span></div>`).join('')}</div>`;
+  if (card.outcomes) extra += `<div class="detail-section"><div class="detail-label">Price outcomes</div>${card.outcomes.map(o=>`<div class="track-bar"><span class="track-ticker">${o.ticker}</span><span class="track-change ${o.change>0?'pos':'neg'}">${o.change>0?'+':''}${o.change}%</span><span class="track-days">${o.days}d after</span></div>`).join('')}</div>`;
+
+  const ent = card.entityA ? `<div class="card-entities" style="margin-bottom:16px"><div class="entity-pill">${card.entityA.ticker?`<span class="entity-ticker">${card.entityA.ticker}</span>`:''}<span class="entity-name">${card.entityA.name}</span></div>${card.entityB?`<span class="entity-arrow">${card.type==='talent'?'←':'→'}</span><div class="entity-pill">${card.entityB.ticker?`<span class="entity-ticker">${card.entityB.ticker}</span>`:''}<span class="entity-name">${card.entityB.name}</span></div>`:''}</div>` : '';
+  const dots = card.confidence !== null ? (()=>{const n=Math.round(card.confidence*5);const lv=card.confidence<0.5?' low':card.confidence<0.8?' mid':'';return `<div class="confidence-row" style="margin-bottom:16px"><span class="confidence-label">Confidence</span><div class="confidence-dots">${[0,1,2,3,4].map(i=>`<div class="conf-dot${i<n?' on'+lv:''}"></div>`).join('')}</div></div>`;})() : '';
+  const vel = card.velocity ? `<div class="vel-row"><span class="vel-arrow ${card.velocity.dir}">${card.velocity.dir==='up'?'▲':card.velocity.dir==='down'?'▼':'—'}</span><span>${card.sector} ${card.velocity.label}:</span><span class="vel-val ${card.velocity.dir}">${card.velocity.val}</span></div>` : '<div></div>';
+
+  return `<div class="card-header"><div class="card-tags"><span class="tag tag-sector">${card.sector}</span><span class="tag tag-type" style="--type-color:${card.typeColor}">${card.typeLabel}</span></div><span class="card-date">${card.date}</span></div>
+  <h2 class="card-headline" style="font-size:19px;margin-bottom:10px;-webkit-line-clamp:unset">${card.headline}</h2>
+  <p class="exp-subtitle">${card.subtitle}</p>
+  ${ent}${dots}${extra}
+  <div class="exp-card-footer">${vel}<div class="brand"><span class="dot" style="background:${card.accent}"></span>robotics</div></div>`;
+}
+
+// ══ Pagination ══
+function totalPages() { return Math.max(1, Math.ceil(filtered.length / PAGE_SIZE)); }
+
+function renderPage() {
+  const stage = document.getElementById('gridStage');
+  stage.innerHTML = '';
+  const start = page * PAGE_SIZE;
+  const batch = filtered.slice(start, start + PAGE_SIZE);
+
+  batch.forEach((card, i) => {
+    const el = document.createElement('div');
+    el.className = 'sp-card';
+    el.style.setProperty('--card-accent', card.accent);
+    el.innerHTML = renderCompact(card);
+    el.addEventListener('click', () => { expandCard(card); });
+    stage.appendChild(el);
+    setTimeout(() => el.classList.add('visible'), 40 + i * 60);
+  });
+
+  document.getElementById('pageNum').textContent = page + 1;
+  document.getElementById('pageTotal').textContent = totalPages();
+  document.getElementById('navLeft').classList.toggle('disabled', page === 0);
+  document.getElementById('navRight').classList.toggle('disabled', page >= totalPages() - 1);
+  playTick();
+}
+
+function goLeft() { if (page > 0) { page--; renderPage(); } }
+function goRight() { if (page < totalPages() - 1) { page++; renderPage(); } }
+
+// ══ Expand / close ══
+function expandCard(card) {
+  const ec = document.getElementById('expandedCard');
+  ec.style.setProperty('--card-accent', card.accent);
+  document.getElementById('expandedBody').innerHTML = renderExpanded(card);
+  document.getElementById('expandedOverlay').classList.add('open');
+  playExpand();
+}
+function closeExpanded() {
+  document.getElementById('expandedOverlay').classList.remove('open');
+  playTick();
+}
+
+// ══ Filtering ══
+function applyAllFilters() {
+  const activeType = document.querySelector('.filter-pill.active')?.dataset.filter || 'all';
+  const activeDate = document.querySelector('.date-controls .ctrl-btn.active')?.dataset.date || 'all';
+  const fromDate = document.getElementById('dateFrom').value;
+  const toDate = document.getElementById('dateTo').value;
+  const search = document.getElementById('searchBox').value.toLowerCase().trim();
+
+  filtered = CARDS.filter(c => {
+    if (activeType !== 'all' && c.type !== activeType) return false;
+    if (confMin > 0 && (c.confidence === null || c.confidence < confMin / 100)) return false;
+    if (activeDate === 'today' && c.isoDate !== '2026-04-16') return false;
+    if (activeDate === 'yesterday' && c.isoDate !== '2026-04-15') return false;
+    if (fromDate && c.isoDate < fromDate) return false;
+    if (toDate && c.isoDate > toDate) return false;
+    if (search) {
+      const blob = (c.headline + ' ' + c.subtitle + ' ' + (c.entityA?.name||'') + ' ' + (c.entityA?.ticker||'') + ' ' + (c.entityB?.name||'') + ' ' + (c.entityB?.ticker||'') + ' ' + (c.related||[]).join(' ')).toLowerCase();
+      if (!blob.includes(search)) return false;
+    }
+    return true;
+  });
+
+  filtered.sort((a, b) => b.sortDate - a.sortDate);
+  page = 0;
+  renderPage();
+}
+
+// ══ Event wiring ══
+document.getElementById('navLeft').addEventListener('click', goLeft);
+document.getElementById('navRight').addEventListener('click', goRight);
+document.getElementById('expandedClose').addEventListener('click', closeExpanded);
+document.getElementById('expandedOverlay').addEventListener('click', e => { if (e.target === e.currentTarget) closeExpanded(); });
+
+document.querySelectorAll('.filter-pill').forEach(p => {
+  p.addEventListener('click', () => {
+    document.querySelectorAll('.filter-pill').forEach(x => x.classList.remove('active'));
+    p.classList.add('active');
+    applyAllFilters();
+  });
+});
+
+document.querySelectorAll('.date-controls .ctrl-btn').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('.date-controls .ctrl-btn').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    if (b.dataset.date !== 'range') {
+      document.getElementById('dateFrom').value = '';
+      document.getElementById('dateTo').value = '';
+    }
+    applyAllFilters();
+  });
+});
+
+document.getElementById('dateFrom').addEventListener('change', () => {
+  document.querySelectorAll('.date-controls .ctrl-btn').forEach(x => x.classList.remove('active'));
+  applyAllFilters();
+});
+document.getElementById('dateTo').addEventListener('change', () => {
+  document.querySelectorAll('.date-controls .ctrl-btn').forEach(x => x.classList.remove('active'));
+  applyAllFilters();
+});
+
+document.getElementById('confSlider').addEventListener('input', e => {
+  confMin = parseInt(e.target.value);
+  document.getElementById('confMinLabel').textContent = confMin + '%';
+  applyAllFilters();
+});
+
+document.getElementById('searchBox').addEventListener('input', applyAllFilters);
+
+document.getElementById('soundToggle').addEventListener('click', () => {
+  soundOn = !soundOn;
+  document.getElementById('soundToggle').classList.toggle('on', soundOn);
+  if (soundOn) { initAudio(); playTick(); }
+});
+
+document.addEventListener('keydown', e => {
+  if (document.getElementById('expandedOverlay').classList.contains('open')) {
+    if (e.key === 'Escape') closeExpanded();
+    return;
+  }
+  if (e.key === 'ArrowLeft') goLeft();
+  if (e.key === 'ArrowRight') goRight();
+  if (e.key === 'Enter' && filtered.length) expandCard(filtered[page * PAGE_SIZE]);
+});
+
+document.addEventListener('click', function init() { initAudio(); document.removeEventListener('click', init); }, { once: true });
+
+applyAllFilters();
+</script>
+</body>
+</html>

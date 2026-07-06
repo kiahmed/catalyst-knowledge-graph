@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="base.css">
+  <title>Robotics module — Card Preview</title>
+  <style>
+    .preview-section {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 40px 24px;
+    }
+    .preview-title {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 8px;
+    }
+    .preview-subtitle {
+      font-size: 14px;
+      color: var(--text-muted);
+      margin-bottom: 40px;
+    }
+    .preview-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .preview-group {
+      margin-bottom: 48px;
+    }
+    .sp-card-grid {
+      gap: 24px;
+    }
+  </style>
+</head>
+<body class="sp-cards">
+<div class="preview-section">
+
+  <h1 class="preview-title">Robotics module — Card System</h1>
+  <p class="preview-subtitle">All card types rendered with sample Robotics sector data. Dark theme, finance-grade aesthetic.</p>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- CATALYST CARDS — one per relationship group             -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <div class="preview-group">
+    <div class="preview-label">Catalyst Cards — by relationship type</div>
+    <div class="sp-card-grid">
+
+      <!-- PARTNERSHIP -->
+      <div class="sp-card" style="--accent-color: var(--sector-robotics); --rel-color: var(--rel-partnership);">
+        <div class="sp-card-body">
+          <div class="sp-card-header">
+            <div class="sp-card-tags">
+              <span class="sp-tag sp-tag-sector">Robotics</span>
+              <span class="sp-tag sp-tag-type">Partnership</span>
+            </div>
+            <span class="sp-card-date">Apr 16 '26</span>
+          </div>
+          <h2 class="sp-card-headline">Boston Dynamics + Hyundai expand warehouse automation JV</h2>
+          <p class="sp-card-subtitle">Joint venture targeting 50 new logistics centers by 2027. Amazon and Symbotic named as early integration partners.</p>
+          <div class="sp-entities">
+            <div class="sp-entity">
+              <span class="sp-entity-name">Boston Dynamics</span>
+            </div>
+            <span class="sp-entity-connector">→</span>
+            <div class="sp-entity">
+              <span class="sp-entity-ticker">HYMTF</span>
+              <span class="sp-entity-name">Hyundai Motor</span>
+            </div>
+          </div>
+          <div class="sp-confidence">
+            <span class="sp-confidence-label">Confidence</span>
+            <div class="sp-confidence-dots">
+              <div class="sp-confidence-dot filled"></div>
+              <div class="sp-confidence-dot filled"></div>
+              <div class="sp-confidence-dot filled"></div>
+              <div class="sp-confidence-dot filled"></div>
+              <div class="sp-confidence-dot filled"></div>
+            </div>
+          </div>
+          <div class="sp-related">
+            <div class="sp-related-label">Also mentioned</div>
+            <div class="sp-related-list">
+              <span class="sp-related-chip">AMZN</span>
+              <span class="sp-related-chip">SYM</span>
+              <span class="sp-related-chip">Berkshire Grey</span>
+            </div>
+          </div>
+          <div class="sp-card-footer">
+            <div class="sp-velocity">
+              <span class="sp-velocity-arrow up">▲</span>
+              <span class="sp-velocity-text">Robotics partnerships:</span>
+              <span class="sp-velocity-value up">+40%</span>
+              <span class="sp-velocity-text">in 30d</span>
+            </div>
+            <div class="sp-brand"><span class="sp-brand-mark"></span><span>robotics</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- DEAL / ACQUISITION -->
+      <div class="sp-card" style="--accent-color: var(--sector-robotics); --rel-color: var(--rel-deal);">
+        <div class="sp-card-body">
+          <div class="sp-card-header">
+            <div class="sp-card-tags">
+              <span class="sp-tag sp-tag-sector">Robotics</span>
+              <span class="sp-tag sp-tag-type">Acquisition</span>
+            </div>
+            <span class="sp-card-date">Apr 14 '26</span>
+          </div>
+          <h2 class="sp-card-headline">NVIDIA acquires Covariant's AI model portfolio</h2>
+          <p class="sp-card-subtitle">Deal valued at ~$700M. Covariant's foundation models for robotic manipulation will be integrated into NVIDIA Isaac platform.</p>
+          <div class="sp-entities">
+            <div class="sp-entity">
+              <span class="sp-entity-ticker">NVDA</span>
+              <span class="sp-entity-name">NVIDIA</span>
+            </div>
+            <span class="sp-entity-connector">→</span>
+            <div class="sp-entity">
+              <span class="sp-entity-name">Covariant</span>
+            </div>
+          </div>
+          <div class="sp-confidence">
+            <span class="sp-confidence-label">Confidence</span>
+            <div class="sp-confidence-dots">
+              <div class="sp-confidence-dot filled"></div>
+              <div class="sp-confidence-dot filled"></div>
+              <div class="sp-confidence-dot filled"></div>
+              <div class="sp-confidence-dot filled"></div>
+              <div class="sp-confidence-dot"></div>
+            </div>
+          </div>
+          <div class="sp-related">
+            <div class="sp-related-label">Also mentioned</div>
+            <div class="sp-related-list">
+              <span class="sp-related-chip">Google DeepMind</span>
+              <span class="sp-related-chip">Osaro</span>
+            </div>
+          </div>
+          <div class="sp-card-footer">
+            <div class="sp-velocity">
+              <span class="sp-velocity-arrow up">▲</span>
+              <span class="sp-velocity-text">Robotics acquisitions:</span>
+              <span class="sp-velocity-value up">+120%</span>
+              <span class="sp-velocity-text">in 30d</span>
+            </div>
+            <div class="sp-brand"><span class="sp-brand-mark"></span><span>robotics</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CONTRACT -->
+      <div class="sp-card" style="--accent-color: var(--sector-robotics); --rel-color: var(--rel-contract);">
+        <div class="sp-card-body">
+          <div class="sp-card-header">
+            <div class="sp-card-tags">
+              <span class="sp-tag sp-tag-sector">Robotics</span>
+              <span class="sp-tag sp-tag-type">Contract</span>
+            </div>
+            <span class="sp-card-date">Apr 13 '26</span>
+          </div>
+          <h2 class="sp-card-headline">Anduril wins $480M DoD contract for autonomous perimeter drones</h2>
+          <p class="sp-card-subtitle">US Department of Defense awards multi-year contract for Anduril's Altius family of autonomous systems across 12 bases.</p>
+          <div class="sp-entities">
+            <div class="sp-entity">
+              <span class="sp-entity-name">Anduril Industries</span>
+            </div>
+            <span class="sp-entity-connector">→</span>
+            <div class="sp-entity">
+              <span class="sp-entity-name">US DoD</span>
+            </div>
+          </div>
+          <div class="sp-confidence">
+            <span class="sp-confidence-label">Confidence</span>
+            <div class="sp-confidence-dots">
+              <div class="sp-confidence-dot filled"></div>
+              <div class="sp-confidence-dot filled"></div>
+              <div class="sp-confidence-dot filled"></div>
+              <div class="sp-confidence-dot filled"></div>
+              <div class="sp-confidence-dot filled"></div>
+            </div>
+          </div>
+          <div class="sp-card-footer">
+            <div class="sp-velocity">
+              <span class="sp-velocity-arrow up">▲</span>
+              <span class="sp-velocity-text">Defense contracts:</span>
+              <span class="sp-velocity-value up">+65%</span>
+              <span class="sp-velocity-text">in 30d</span>
+            </div>
+            <div class="sp-brand"><span class="sp-brand-mark"></span><span>robotics</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- REGULATORY -->
+      <div class="sp-card" style="--accent-color: var(--sector-robotics); --rel-color: var(--rel-regulatory);">
+        <div class="sp-card-body">
+          <div class="sp-card-header">
+            <div class="sp-card-tags">
+              <span class="sp-tag sp-tag-sector">Robotics</span>
+              <span class="sp-tag sp-tag-type">Regulatory</span>
+            </div>
+            <span class="sp-card-date">Apr 12 '26</span>
+          </div>
+          <h2 class="sp-card-headline">FAA grants Zipline expanded BVLOS waiver for 14 states</h2>
+          <p class="sp-card-subtitle">Beyond-visual-line-of-sight authorization expands Zipline's autonomous delivery network to cover 38% of US population.</p>
+          <div class="sp-entities">
+            <div class="sp-entity">
+              <span class="sp-entity-name">FAA</span>
+            </div>
+            <span class="sp-entity-connector">→</span>
+            <div class="sp-entity">
+              <span class="sp-entity-name">Zipline</span>
+            </div>
+          </div>
+          <div class="sp-confidence">
+            <span class="sp-confidence-label">Confidence</span>
+            <div class="sp-confidence-dots">
+              <div class="sp-confidence-dot filled"></div>
+              <div class="sp-confidence-dot filled"></div>
+              <div class="sp-confidence-dot filled"></div>
+              <div class="sp-confidence-dot filled"></div>
+              <div class="sp-confidence-dot filled"></div>
+            </div>
+          </div>
+          <div class="sp-related">
+            <div class="sp-related-label">Also mentioned</div>
+            <div class="sp-related-list">
+              <span class="sp-related-chip">Wing (Alphabet)</span>
+              <span class="sp-related-chip">Amazon Prime Air</span>
+            </div>
+          </div>
+          <div class="sp-card-footer">
+            <div class="sp-velocity">
+              <span class="sp-velocity-arrow up">▲</span>
+              <span class="sp-velocity-text">Regulatory approvals:</span>
+              <span class="sp-velocity-value up">+200%</span>
+              <span class="sp-velocity-text">in 30d</span>
+            </div>
+            <div class="sp-brand"><span class="sp-brand-mark"></span><span>robotics</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PRODUCT / FEATURE RELEASE -->
+      <div class="sp-card" style="--accent-color: var(--sector-robotics); --rel-color: var(--rel-product);">
+        <div class="sp-card-body">
+          <div class="sp-card-header">
+            <div class="sp-card-tags">
+              <span class="sp-tag sp-tag-sector">Robotics</span>
+              <span class="sp-tag sp-tag-type">Product Launch</span>
+            </div>
+            <span class="sp-card-date">Apr 15 '26</span>
+          </div>
+          <h2 class="sp-card-headline">Figure AI unveils Figure 03 — first humanoid robot with on-device reasoning</h2>
+          <p class="sp-card-subtitle">Third-gen humanoid features 48-hour battery life and runs multimodal AI models locally. Priced for commercial warehouse deployment.</p>
+          <div class="sp-entities">
+            <div class="sp-entity">
+              <span class="sp-entity-name">Figure AI</span>
+            </div>
+          </div>
+          <div class="sp-confidence">
+            <span class="sp-confidence-label">Confidence</span>
+            <div class="sp-confidence-dots">
+              <div class="sp-confidence-dot filled"></div>
+              <div class="sp-confidence-dot filled"></div>
+              <div class="sp-confidence-dot filled"></div>
+              <div class="sp-confidence-dot filled"></div>
+              <div class="sp-confidence-dot filled"></div>
+            </div>
+          </div>
+          <div class="sp-related">
+            <div class="sp-related-label">Also mentioned</div>
+            <div class="sp-related-list">
+              <span class="sp-related-chip">OpenAI</span>
+              <span class="sp-related-chip">NVDA</span>
+              <span class="sp-related-chip">BMW</span>
+            </div>
+          </div>
+          <div class="sp-card-footer">
+            <div class="sp-velocity">
+              <span class="sp-velocity-arrow up">▲</span>
+              <span class="sp-velocity-text">Product launches:</span>
+              <span class="sp-velocity-value up">+85%</span>
+              <span class="sp-velocity-text">in 30d</span>
+            </div>
+            <div class="sp-brand"><span class="sp-brand-mark"></span><span>robotics</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TALENT / HIRES -->
+      <div class="sp-card" style="--accent-color: var(--sector-robotics); --rel-color: var(--rel-talent);">
+        <div class="sp-card-body">
+          <div class="sp-card-header">
+            <div class="sp-card-tags">
+              <span class="sp-tag sp-tag-sector">Robotics</span>
+              <span class="sp-tag sp-tag-type">Talent Move</span>
+            </div>
+            <span class="sp-card-date">Apr 11 '26</span>
+          </div>
+          <h2 class="sp-card-headline">Tesla Optimus lead engineer departs to join 1X Technologies</h2>
+          <p class="sp-card-subtitle">Third senior robotics hire from Tesla in 6 months. 1X's NEO humanoid now has ex-leads from Tesla, Boston Dynamics, and Google DeepMind.</p>
+          <div class="sp-entities">
+            <div class="sp-entity">
+              <span class="sp-entity-name">1X Technologies</span>
+            </div>
+            <span class="sp-entity-connector">←</span>
+            <div class="sp-entity">
+              <span class="sp-entity-ticker">TSLA</span>
+              <span class="sp-entity-name">Tesla</span>
+            </div>
+          </div>
+          <div class="sp-confidence">
+            <span class="sp-confidence-label">Confidence</span>
+            <div class="sp-confidence-dots">
+              <div class="sp-confidence-dot filled mid"></div>
+              <div class="sp-confidence-dot filled mid"></div>
+              <div class="sp-confidence-dot filled mid"></div>
+              <div class="sp-confidence-dot"></div>
+              <div class="sp-confidence-dot"></div>
+            </div>
+          </div>
+          <div class="sp-card-footer">
+            <div class="sp-velocity">
+              <span class="sp-velocity-arrow flat">—</span>
+              <span class="sp-velocity-text">Talent moves:</span>
+              <span class="sp-velocity-value">steady</span>
+            </div>
+            <div class="sp-brand"><span class="sp-brand-mark"></span><span>robotics</span></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- SUMMARY + INSIGHT + TRACK RECORD CARDS                  -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <div class="preview-group">
+    <div class="preview-label">Special Cards — summary, chokepoint, track record</div>
+    <div class="sp-card-grid">
+
+      <!-- WEEKLY SUMMARY -->
+      <div class="sp-card sp-card-summary" style="--accent-color: var(--sector-robotics);">
+        <div class="sp-card-body">
+          <div class="sp-card-header">
+            <div class="sp-card-tags">
+              <span class="sp-tag sp-tag-sector">Robotics</span>
+              <span class="sp-tag sp-tag-type" style="--rel-color: var(--text-muted);">Weekly Pulse</span>
+            </div>
+            <span class="sp-card-date">Apr 7 – 13 '26</span>
+          </div>
+          <h2 class="sp-card-headline">Robotics sector heating up — partnership activity surges</h2>
+          <div class="sp-summary-grid">
+            <div class="sp-stat-block">
+              <div class="sp-stat-value">23</div>
+              <div class="sp-stat-label">Catalysts</div>
+            </div>
+            <div class="sp-stat-block">
+              <div class="sp-stat-value">14</div>
+              <div class="sp-stat-label">New Relationships</div>
+            </div>
+            <div class="sp-stat-block">
+              <div class="sp-stat-value">38</div>
+              <div class="sp-stat-label">Active Entities</div>
+            </div>
+            <div class="sp-stat-block">
+              <div class="sp-stat-value" style="color: var(--velocity-up);">+42%</div>
+              <div class="sp-stat-label">Catalyst Velocity</div>
+            </div>
+          </div>
+          <div class="sp-related">
+            <div class="sp-related-label">Top movers this week</div>
+            <div class="sp-insight-bar">
+              <span class="sp-insight-entity">NVIDIA (NVDA)</span>
+              <span class="sp-insight-metric growing">7 catalysts ▲</span>
+            </div>
+            <div class="sp-insight-bar">
+              <span class="sp-insight-entity">Boston Dynamics</span>
+              <span class="sp-insight-metric growing">5 catalysts ▲</span>
+            </div>
+            <div class="sp-insight-bar">
+              <span class="sp-insight-entity">Figure AI</span>
+              <span class="sp-insight-metric growing">4 catalysts ▲</span>
+            </div>
+          </div>
+          <div class="sp-card-footer">
+            <div></div>
+            <div class="sp-brand"><span class="sp-brand-mark"></span><span>robotics</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CHOKEPOINT ALERT -->
+      <div class="sp-card" style="--accent-color: var(--sector-robotics); --rel-color: var(--rel-contract);">
+        <div class="sp-card-body">
+          <div class="sp-card-header">
+            <div class="sp-card-tags">
+              <span class="sp-tag sp-tag-sector">Robotics</span>
+              <span class="sp-tag sp-tag-type" style="--rel-color: var(--confidence-mid);">Chokepoint Alert</span>
+            </div>
+            <span class="sp-card-date">Apr 13 '26</span>
+          </div>
+          <h2 class="sp-card-headline">NVIDIA is becoming a structural dependency in Robotics</h2>
+          <p class="sp-card-subtitle">7 companies now depend on or partner with NVIDIA for robotics compute — up 3.5x in 30 days.</p>
+          <div class="sp-insight-bar">
+            <span class="sp-insight-entity">Boston Dynamics</span>
+            <span class="sp-insight-metric growing">integrates_with</span>
+          </div>
+          <div class="sp-insight-bar">
+            <span class="sp-insight-entity">Figure AI</span>
+            <span class="sp-insight-metric growing">depends_on</span>
+          </div>
+          <div class="sp-insight-bar">
+            <span class="sp-insight-entity">Agility Robotics</span>
+            <span class="sp-insight-metric growing">partners_with</span>
+          </div>
+          <div class="sp-insight-bar">
+            <span class="sp-insight-entity">Covariant</span>
+            <span class="sp-insight-metric growing">acquires (NVDA)</span>
+          </div>
+          <div class="sp-card-footer" style="margin-top: 16px;">
+            <div class="sp-velocity">
+              <span class="sp-velocity-arrow up">▲</span>
+              <span class="sp-velocity-text">In-degree growth:</span>
+              <span class="sp-velocity-value up">3.5x</span>
+            </div>
+            <div class="sp-brand"><span class="sp-brand-mark"></span><span>robotics</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TRACK RECORD -->
+      <div class="sp-card" style="--accent-color: var(--sector-robotics);">
+        <div class="sp-card-body">
+          <div class="sp-card-header">
+            <div class="sp-card-tags">
+              <span class="sp-tag sp-tag-sector">Robotics</span>
+              <span class="sp-tag sp-tag-type" style="--rel-color: var(--text-muted);">Track Record</span>
+            </div>
+            <span class="sp-card-date">Flagged Mar 15 '26</span>
+          </div>
+          <h2 class="sp-card-headline">BD + Hyundai JV expansion — what happened after</h2>
+          <p class="sp-card-subtitle">The Robotics module flagged this partnership expansion 30 days ago. Here's how related tickers moved.</p>
+          <div class="sp-track-outcome">
+            <span class="sp-track-ticker">HYMTF</span>
+            <span class="sp-track-change positive">+12.4%</span>
+            <span class="sp-track-days">30d after</span>
+          </div>
+          <div class="sp-track-outcome">
+            <span class="sp-track-ticker">SYM</span>
+            <span class="sp-track-change positive">+8.1%</span>
+            <span class="sp-track-days">30d after</span>
+          </div>
+          <div class="sp-track-outcome">
+            <span class="sp-track-ticker">AMZN</span>
+            <span class="sp-track-change positive">+2.3%</span>
+            <span class="sp-track-days">30d after</span>
+          </div>
+          <div class="sp-card-footer">
+            <div></div>
+            <div class="sp-brand"><span class="sp-brand-mark"></span><span>robotics</span></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

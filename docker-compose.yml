@@ -1,0 +1,139 @@
+# Catalyst knowledge-graph — local dev stack (Robotics module).
+# See docs/infra_spec.md §2 for architecture, tools/README.md for tool index.
+#
+# Usage:
+#   cp .env.example .env         # fill in keys
+#   docker compose up -d         # start all services
+#   make ingest                  # trigger a pipeline run
+#   docker compose down          # stop (keeps volume)
+#   docker compose down -v       # stop + wipe (fresh start)
+
+name: robotics
+
+services:
+  # ─────────────────────────────────────────────────────────────────
+  # DuckDB — owns the data volume, provides an interactive CLI
+  # ─────────────────────────────────────────────────────────────────
+  duckdb:
+    build:
+      context: ./tools/duckdb
+    container_name: robotics-duckdb
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "test", "-f", "/data/robotics.duckdb"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ─────────────────────────────────────────────────────────────────
+  # robotics-ingest — Cloud Function target, runs via functions-framework
+  # ─────────────────────────────────────────────────────────────────
+  robotics-ingest:
+    build:
+      context: .
+      dockerfile: ./tools/robotics-ingest/Dockerfile
+    container_name: robotics-ingest
+    # Override the image's functions-framework CMD with gunicorn directly so
+    # we can set a request timeout. Without --timeout, a wedged LLM call holds
+    # the DuckDB write lock indefinitely (only `docker compose restart` clears
+    # it). 600s = a worker hung longer than that gets killed + respawned, and
+    # the DB lock is auto-released. workers=1 matches the single-writer DB.
+    command: >
+      gunicorn --bind 0.0.0.0:8080 --workers 1 --threads 1
+      --worker-class sync --timeout 600
+      'functions_framework:create_app(target="run_ingest")'
+    depends_on:
+      duckdb:
+        condition: service_healthy
+    environment:
+      SECTOR: ${SECTOR:-Robotics}
+      GCP_PROJECT: ${GCP_PROJECT:?set GCP_PROJECT in .env}
+      FIRESTORE_DATABASE: ${FIRESTORE_DATABASE:-(default)}
+      FIRESTORE_COLLECTION: ${FIRESTORE_COLLECTION:-findings}
+      # Robotics-module export destinations (off in local by default; flip in prod)
+      FIRESTORE_EXPORT_ENABLED: ${FIRESTORE_EXPORT_ENABLED:-false}
+      FIRESTORE_EXPORT_COLLECTION: ${FIRESTORE_EXPORT_COLLECTION:-CKG-Robotics}
+      STORAGE_UPLOAD_ENABLED: ${STORAGE_UPLOAD_ENABLED:-false}
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-}
+      STORAGE_CARDS_PREFIX: ${STORAGE_CARDS_PREFIX:-cards}
+      DUCKDB_PATH: /data/robotics.duckdb
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcs-sa.json
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./data:/data
+      - ${GOOGLE_APPLICATION_CREDENTIALS}:/secrets/gcs-sa.json:ro
+      # Dev-only: bind-mount dev-utils so reextract/backtest CLIs work
+      # via `docker compose exec robotics-ingest python /app/dev-utils/...`.
+      # Not included in the built image, so prod deploys stay minimal.
+      - ./dev-utils:/app/dev-utils:ro
+    ports:
+      - "${INGEST_PORT:-8080}:8080"
+    restart: unless-stopped
+    healthcheck:
+      # python3 ships with the slim image; curl doesn't. TCP-only probe —
+      # the functions-framework process owns the port, so if it accepts a
+      # connection the container is alive. Keeps the check cheap and
+      # avoids having to expect a specific HTTP status from an endpoint
+      # that only serves POST.
+      test: ["CMD", "python3", "-c", "import socket,sys; s=socket.socket(); s.settimeout(3); s.connect(('localhost',8080)); s.close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ─────────────────────────────────────────────────────────────────
+  # robotics-render — Cloud Run target, Playwright + Chromium
+  # ─────────────────────────────────────────────────────────────────
+  robotics-render:
+    build:
+      context: ./tools/robotics-render
+    container_name: robotics-render
+    depends_on:
+      duckdb:
+        condition: service_healthy
+    environment:
+      DUCKDB_PATH: /data/robotics.duckdb
+      CARD_IMAGES_DIR: /data/exports/card_images
+      TEMPLATES_DIR: /templates
+      VIEWPORT_WIDTH: "1200"
+      VIEWPORT_HEIGHT: "630"
+      # Firebase Storage upload — off in local by default; flip in prod.
+      STORAGE_UPLOAD_ENABLED: ${STORAGE_UPLOAD_ENABLED:-false}
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-}
+      STORAGE_CARDS_PREFIX: ${STORAGE_CARDS_PREFIX:-cards}
+      STORAGE_PUBLIC_READ: ${STORAGE_PUBLIC_READ:-true}
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcs-sa.json
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PORT: "8081"
+    volumes:
+      - ./data:/data
+      - ./templates/cards:/templates:ro
+      - ${GOOGLE_APPLICATION_CREDENTIALS}:/secrets/gcs-sa.json:ro
+    ports:
+      - "${RENDER_PORT:-8081}:8081"
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────────
+  # frontend-dev — nginx serving frontend/ for local browsing
+  # ─────────────────────────────────────────────────────────────────
+  frontend-dev:
+    image: nginx:alpine
+    container_name: robotics-frontend-dev
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./data:/data:ro
+      # ^ nginx reads-only; only robotics-ingest/render write.
+      # Mount exports into the served path so cards.json + card_images/
+      # are accessible at the same relative URLs as in prod.
+      - ./tools/nginx-dev.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "${FRONTEND_PORT:-8000}:80"
+    restart: unless-stopped
+
+# No named volume — ./data is bind-mounted so the DuckDB file, exports,
+# and backtests are visible to the host under the repo root. Prod uses
+# gs://robotics-data/robotics.duckdb (single-writer), so the bind mount
+# is a dev-only concern.
