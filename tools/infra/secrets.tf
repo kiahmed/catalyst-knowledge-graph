@@ -24,3 +24,11 @@ resource "google_secret_manager_secret" "serper_api_key" {
   }
   depends_on = [google_project_service.required]
 }
+
+resource "google_secret_manager_secret" "brave_api_key" {
+  secret_id = "BRAVE_API_KEY"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.required]
+}

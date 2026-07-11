@@ -254,6 +254,99 @@ class TestSerpResolution(unittest.TestCase):
             r = handles.resolve_channel(channel, "Figure AI", client=client, search=CSE)
             self.assertEqual(r.source, handles.SOURCE_BLOCKED)
 
+    def test_linkedin_ambiguous_slugs_abstain(self):
+        # Two DIFFERENT slugs both matching the name → abstain, don't guess.
+        client = FakeClient(cse={
+            'site:linkedin.com/company "FANUC"': _cse_items(
+                ("FANUC | LinkedIn", "https://www.linkedin.com/company/fanuc"),
+                ("FANUC America Corporation | LinkedIn",
+                 "https://www.linkedin.com/company/fanuc-america-corporation"),
+            )
+        })
+        r = handles.resolve_channel(
+            "linkedin", "FANUC", ["FANUC America"], client=client, search=CSE)
+        self.assertIsNone(r.handle)
+        self.assertIn("ambiguous", r.comment)
+
+    def test_linkedin_same_slug_twice_still_verifies(self):
+        # Same page appearing twice (e.g. /about subpage) is NOT ambiguity.
+        client = FakeClient(cse={
+            'site:linkedin.com/company "Figure AI"': _cse_items(
+                ("Figure | LinkedIn", "https://www.linkedin.com/company/figure-ai"),
+                ("Figure | LinkedIn", "https://www.linkedin.com/company/figure-ai/about"),
+            )
+        })
+        r = handles.resolve_channel("linkedin", "Figure AI", client=client, search=CSE)
+        self.assertEqual(r.handle, "@figure-ai")
+
+    def test_x_ambiguous_profiles_abstain_and_casing_kept(self):
+        client = FakeClient(cse={
+            'site:x.com "Acme"': _cse_items(
+                ("Acme (@AcmeCorp) / X", "https://x.com/AcmeCorp"),
+                ("Acme (@Acme_Official) / X", "https://x.com/Acme_Official"),
+            ),
+            'site:x.com "Figure AI"': _cse_items(
+                ("Figure (@Figure_robot) / X", "https://x.com/Figure_robot"),
+            ),
+        })
+        r = handles.resolve_channel("x", "Acme", client=client, search=CSE)
+        self.assertIsNone(r.handle)
+        self.assertIn("ambiguous", r.comment)
+        r = handles.resolve_channel("x", "Figure AI", client=client, search=CSE)
+        self.assertEqual(r.handle, "@Figure_robot")   # original casing preserved
+
+    def test_context_breaks_name_tie(self):
+        # Two same-named companies; the snippet mentioning robotics/partners
+        # wins because of the entity's card context.
+        ctx = handles.context_terms_from(
+            "Robotics robot robots", ["Figure", "Unitree"],
+            ["Spirit AI unveils humanoid robot platform"])
+        client = FakeClient(cse={
+            'site:linkedin.com/company "Spirit AI"': FakeResponse(200, json_data={"items": [
+                {"title": "Spirit AI | LinkedIn",
+                 "link": "https://www.linkedin.com/company/spirit-ai",
+                 "snippet": "Conversational game dialogue and character AI tools."},
+                {"title": "Spirit AI | LinkedIn",
+                 "link": "https://www.linkedin.com/company/spiritai-robotics",
+                 "snippet": "We build general-purpose humanoid robots."},
+            ]})
+        })
+        r = handles.resolve_channel(
+            "linkedin", "Spirit AI", client=client, search=CSE, context=ctx)
+        self.assertEqual(r.handle, "@spiritai-robotics")
+        self.assertIn("won on context", r.comment)
+
+    def test_context_tie_still_abstains(self):
+        ctx = handles.context_terms_from("Robotics", [], [])
+        client = FakeClient(cse={
+            'site:linkedin.com/company "Acme"': FakeResponse(200, json_data={"items": [
+                {"title": "Acme | LinkedIn",
+                 "link": "https://www.linkedin.com/company/acme",
+                 "snippet": "Industrial robotics."},
+                {"title": "Acme | LinkedIn",
+                 "link": "https://www.linkedin.com/company/acme-global",
+                 "snippet": "Robotics and automation."},
+            ]})
+        })
+        r = handles.resolve_channel("linkedin", "Acme", client=client, search=CSE, context=ctx)
+        self.assertIsNone(r.handle)   # both hit 'robotics' — no strict winner
+        self.assertIn("ambiguous", r.comment)
+
+    def test_single_match_zero_context_flags_review(self):
+        ctx = handles.context_terms_from("Robotics robot robots", ["Figure"], [])
+        client = FakeClient(cse={
+            'site:linkedin.com/company "Spirit AI"': FakeResponse(200, json_data={"items": [
+                {"title": "Spirit AI | LinkedIn",
+                 "link": "https://www.linkedin.com/company/spirit-ai",
+                 "snippet": "Conversational game dialogue tools."},
+            ]})
+        })
+        r = handles.resolve_channel(
+            "linkedin", "Spirit AI", client=client, search=CSE, context=ctx)
+        self.assertEqual(r.handle, "@spirit-ai")     # still stored...
+        self.assertEqual(r.confidence, 0.75)          # ...but flagged
+        self.assertIn("industry unconfirmed", r.comment)
+
     def test_serper_provider_linkedin_and_x(self):
         client = FakeClient(cse={
             'site:linkedin.com/company "Figure AI"': FakeResponse(
@@ -273,6 +366,26 @@ class TestSerpResolution(unittest.TestCase):
         self.assertEqual((r.handle, r.source), ("@figure-ai", handles.SOURCE_LINKEDIN_SERP))
         r = handles.resolve_channel("x", "Figure AI", client=client, search=SERPER)
         self.assertEqual((r.handle, r.source), ("@Figure_robot", handles.SOURCE_X_SERP))
+
+    def test_brave_provider(self):
+        brave = handles.BraveConfig("test-key")
+        client = FakeClient()
+        real_get = client.get
+        def get(url, params=None, headers=None):
+            if "api.search.brave.com" in url:
+                q = (params or {}).get("q", "")
+                client.calls.append(f"brave:{q}")
+                if q == 'site:linkedin.com/company "Figure AI"':
+                    return FakeResponse(200, json_data={"web": {"results": [
+                        {"title": "Figure | LinkedIn",
+                         "url": "https://www.linkedin.com/company/figure-ai",
+                         "description": "General purpose humanoid robots."},
+                    ]}})
+                return FakeResponse(200, json_data={"web": {"results": []}})
+            return real_get(url, params)
+        client.get = get
+        r = handles.resolve_channel("linkedin", "Figure AI", client=client, search=brave)
+        self.assertEqual((r.handle, r.source), ("@figure-ai", handles.SOURCE_LINKEDIN_SERP))
 
     def test_serper_quota_maps_to_blocked(self):
         client = FakeClient(cse={
@@ -321,8 +434,9 @@ class TestCacheTable(unittest.TestCase):
                          handles.SOURCE_LINKEDIN)
         db.upsert_handle(self.con, "figure ai", "x", None, 0.0, handles.SOURCE_ABSTAIN)
         got = db.get_handles(self.con, ["figure ai"])
-        self.assertEqual(got[("figure ai", "linkedin")], ("@figure-ai", handles.SOURCE_LINKEDIN))
-        self.assertEqual(got[("figure ai", "x")], (None, handles.SOURCE_ABSTAIN))
+        self.assertEqual(got[("figure ai", "linkedin")],
+                         ("@figure-ai", handles.SOURCE_LINKEDIN, 1.0))
+        self.assertEqual(got[("figure ai", "x")], (None, handles.SOURCE_ABSTAIN, 0.0))
 
     def test_upsert_overwrites(self):
         db.upsert_handle(self.con, "k", "linkedin", None, 0.0, handles.SOURCE_BLOCKED)
@@ -356,6 +470,87 @@ class TestCacheTable(unittest.TestCase):
         self.assertEqual(names, ["Schaeffler Group"])  # person + decided excluded
 
 
+class TestReauditSelection(unittest.TestCase):
+    def setUp(self):
+        self.con = duckdb.connect(":memory:")
+        db.init_schema(self.con)
+        db.upsert_handle(self.con, "figure ai", "linkedin", "@figure-ai", 1.0,
+                         handles.SOURCE_LINKEDIN_SERP)
+        db.upsert_handle(self.con, "spirit ai", "linkedin", "@spirit-ai", 0.75,
+                         handles.SOURCE_LINKEDIN_SERP, "industry unconfirmed")
+        db.upsert_handle(self.con, "kuka", "x", None, 0.0, handles.SOURCE_ABSTAIN)
+        db.upsert_handle(self.con, "manual co", "x", "@manual", 1.0, handles.SOURCE_HUMAN)
+        db.upsert_handle(self.con, "walled co", "linkedin", None, 0.0, handles.SOURCE_BLOCKED)
+
+    def tearDown(self):
+        self.con.close()
+
+    def test_confidence_filter_and_exclusions(self):
+        rows = db.handles_for_reaudit(self.con, ["linkedin", "x"], 0.9, None, 100)
+        keys = {(k, c) for (k, c, *_ ) in rows}
+        self.assertIn(("spirit ai", "linkedin"), keys)   # low confidence
+        self.assertIn(("kuka", "x"), keys)               # abstain (0.0)
+        self.assertNotIn(("figure ai", "linkedin"), keys)  # conf 1.0
+        self.assertNotIn(("manual co", "x"), keys)       # human — never
+        self.assertNotIn(("walled co", "linkedin"), keys)  # blocked — sweep's job
+
+    def test_names_override_confidence(self):
+        rows = db.handles_for_reaudit(
+            self.con, ["linkedin", "x"], 0.9, ["figure ai"], 100)
+        self.assertEqual([(r[0], r[1]) for r in rows], [("figure ai", "linkedin")])
+
+    def test_resume_skips_audited(self):
+        db.mark_handle_audited(self.con, "spirit ai", "linkedin")
+        rows = db.handles_for_reaudit(self.con, ["linkedin"], 0.9, None, 100)
+        self.assertEqual(rows, [])
+        rows = db.handles_for_reaudit(self.con, ["linkedin"], 0.9, None, 100, force=True)
+        self.assertEqual(len(rows), 1)
+
+
+class TestSearchBudget(unittest.TestCase):
+    def setUp(self):
+        self.con = duckdb.connect(":memory:")
+        db.init_schema(self.con)   # seeds provider rows
+
+    def tearDown(self):
+        self.con.close()
+
+    def test_seeded_and_ordered(self):
+        rows = db.get_search_providers(self.con)
+        self.assertEqual([r["provider"] for r in rows],
+                         ["brave", "serper", "searchapi", "cse"])
+        brave = rows[0]
+        self.assertTrue(brave["enabled"])
+        self.assertEqual(brave["monthly_quota"], 1000)
+        self.assertEqual(brave["refill_day"], 11)
+
+    def test_seed_never_overwrites_edits(self):
+        self.con.execute(
+            "UPDATE search_providers SET priority = 9 WHERE provider = 'brave'")
+        db.seed_search_providers(self.con)
+        rows = {r["provider"]: r for r in db.get_search_providers(self.con)}
+        self.assertEqual(rows["brave"]["priority"], 9)
+
+    def test_bump_and_reset(self):
+        db.bump_search_usage(self.con, "brave", 3)
+        rows = {r["provider"]: r for r in db.get_search_providers(self.con)}
+        self.assertEqual(rows["brave"]["used_this_cycle"], 3)
+        from datetime import date
+        db.reset_search_cycle(self.con, "brave", date(2026, 8, 11))
+        rows = {r["provider"]: r for r in db.get_search_providers(self.con)}
+        self.assertEqual(rows["brave"]["used_this_cycle"], 0)
+
+    def test_usage_hook_fires_on_search(self):
+        counted = []
+        handles.search_usage_hook = lambda p: counted.append(p)
+        try:
+            client = FakeClient()
+            handles._web_search(client, SERPER, "anything")
+        finally:
+            handles.search_usage_hook = None
+        self.assertEqual(counted, ["serper"])
+
+
 class TestExportEmbedding(unittest.TestCase):
     def test_cards_carry_handles(self):
         from src.export import _load_cards
@@ -377,6 +572,9 @@ class TestExportEmbedding(unittest.TestCase):
         )
         db.upsert_handle(con, "figure ai", "linkedin", "@figure-ai", 1.0,
                          handles.SOURCE_LINKEDIN)
+        # Review-flagged (below MIN_TAG_CONFIDENCE) — must stay OFF the card.
+        db.upsert_handle(con, "schaeffler group", "linkedin", "@apollo-gold", 0.75,
+                         handles.SOURCE_LINKEDIN_SERP, "industry unconfirmed — review")
 
         cards = _load_cards(con, "Robotics", 10, 0, 0.0, False)
         self.assertEqual(len(cards), 1)

@@ -12,8 +12,9 @@ suffix tokens from both sides). No scraping, no rate-walls.
 This also makes X resolvable without the paid X API.
 
 Providers (first configured wins):
-  - Serper.dev        SERPER_API_KEY                    (2,500 free queries)
-  - SearchApi.io      SEARCHAPI_API_KEY                 (100 free requests)
+  - Brave Search      BRAVE_API_KEY                     (2,000 free/MONTH)
+  - Serper.dev        SERPER_API_KEY                    (2,500 free one-time)
+  - SearchApi.io      SEARCHAPI_API_KEY                 (100 free one-time)
   - Google CSE        GOOGLE_CSE_API_KEY + GOOGLE_CSE_ID (closed to new
     customers since ~2025 — kept for grandfathered projects)
 
@@ -71,6 +72,18 @@ _GENERIC_TOKENS = frozenset(
 )
 
 DEFAULT_MATCH_THRESHOLD = 90    # thefuzz score 0..100
+# Handles below this confidence stay cache-only ("review" flagged) — they
+# are never emitted on cards or lookup responses until a human confirms
+# (make handles-set) or a context-confirmed re-audit raises them.
+MIN_TAG_CONFIDENCE = 0.8
+
+
+def usable_handle(handle, confidence) -> str | None:
+    if handle is None:
+        return None
+    if confidence is not None and float(confidence) < MIN_TAG_CONFIDENCE:
+        return None
+    return handle
 
 
 def _env_float(name: str, default: float) -> float:
@@ -180,6 +193,32 @@ def _match_score(page_name: str, known_names: list[str]) -> int:
     return best
 
 
+_CONTEXT_STOPWORDS = frozenset(
+    "the a an and or of for with to in on at as by from its their new is are"
+    " has have will was were this that".split()
+)
+
+
+def context_terms_from(sector: str, partners: list[str], headlines: list[str]) -> set[str]:
+    """Deterministic context bag for an entity: sector words, partner-name
+    tokens, and card-headline tokens (minus stopwords)."""
+    terms: set[str] = set()
+    for text in [sector or "", *partners, *headlines]:
+        for tok in _tokens(text):
+            if len(tok) >= 3 and tok not in _CONTEXT_STOPWORDS:
+                terms.add(tok)
+    return terms
+
+
+def _context_hits(text: str, context: set[str] | None, own_name_tokens: set[str]) -> int:
+    """Distinct context terms present in a SERP title/snippet, excluding the
+    entity's own name tokens (those match any same-named company)."""
+    if not context:
+        return 0
+    toks = set(_tokens(text))
+    return len((toks & context) - own_name_tokens)
+
+
 def resolve_linkedin(
     name: str,
     aliases: list[str] | None = None,
@@ -269,6 +308,7 @@ def _slug_from_url(url: str) -> str | None:
 _CSE_ENDPOINT = "https://customsearch.googleapis.com/customsearch/v1"
 _SERPER_ENDPOINT = "https://google.serper.dev/search"
 _SEARCHAPI_ENDPOINT = "https://www.searchapi.io/api/v1/search"
+_BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 # Profile-page titles: "Figure (@Figure_robot) / X",
 # "KUKA Fan (@KUKA_Robotics) / Posts / X - Twitter", "... | Twitter".
 # After "(@handle)" only separator/suffix junk may follow — a tweet title
@@ -294,7 +334,12 @@ class SearchApiConfig:
     api_key: str
 
 
-SearchProvider = CseConfig | SerperConfig | SearchApiConfig
+@dataclass
+class BraveConfig:
+    api_key: str
+
+
+SearchProvider = CseConfig | SerperConfig | SearchApiConfig | BraveConfig
 
 
 class SearchQuotaError(Exception):
@@ -302,6 +347,9 @@ class SearchQuotaError(Exception):
 
 
 def search_provider_from_env() -> SearchProvider | None:
+    brave = os.environ.get("BRAVE_API_KEY", "").strip()
+    if brave:
+        return BraveConfig(brave)
     serper = os.environ.get("SERPER_API_KEY", "").strip()
     if serper:
         return SerperConfig(serper)
@@ -313,12 +361,29 @@ def search_provider_from_env() -> SearchProvider | None:
     return CseConfig(key, cx) if key and cx else None
 
 
+# Optional usage hook — the service sets this per request to count every
+# live search against the provider's budget row (DuckDB or Firestore).
+search_usage_hook = None  # Callable[[str], None] | None
+
+
+def provider_name(search: SearchProvider) -> str:
+    return {
+        CseConfig: "cse", SerperConfig: "serper",
+        SearchApiConfig: "searchapi", BraveConfig: "brave",
+    }[type(search)]
+
+
 def _web_search(
     client: httpx.Client, search: SearchProvider, query: str, num: int = 5
 ) -> list[dict]:
     """Top results as [{'title', 'link'}]. Raises SearchQuotaError on
     quota/key rejection AND on network errors — both retryable, and a
     single flaky request must not kill a whole sweep batch."""
+    if search_usage_hook is not None:
+        try:    # count the attempt — providers bill attempts, not successes
+            search_usage_hook(provider_name(search))
+        except Exception:
+            log.exception("search usage hook failed (non-fatal)")
     try:
         return _web_search_raw(client, search, query, num)
     except httpx.HTTPError as exc:
@@ -339,8 +404,23 @@ def _web_search_raw(
             raise SearchQuotaError(f"Serper HTTP {resp.status_code}: {resp.text[:200]}")
         resp.raise_for_status()
         return [
-            {"title": r.get("title", ""), "link": r.get("link", "")}
+            {"title": r.get("title", ""), "link": r.get("link", ""),
+             "snippet": r.get("snippet", "")}
             for r in resp.json().get("organic", []) or []
+        ]
+    if isinstance(search, BraveConfig):
+        resp = client.get(
+            _BRAVE_ENDPOINT,
+            params={"q": query, "count": max(num, 10)},
+            headers={"X-Subscription-Token": search.api_key, "Accept": "application/json"},
+        )
+        if resp.status_code in (401, 402, 403, 429):
+            raise SearchQuotaError(f"Brave HTTP {resp.status_code}: {resp.text[:200]}")
+        resp.raise_for_status()
+        return [
+            {"title": r.get("title", ""), "link": r.get("url", ""),
+             "snippet": r.get("description", "")}
+            for r in (resp.json().get("web", {}) or {}).get("results", []) or []
         ]
     if isinstance(search, SearchApiConfig):
         resp = client.get(
@@ -352,7 +432,8 @@ def _web_search_raw(
             raise SearchQuotaError(f"SearchApi HTTP {resp.status_code}: {resp.text[:200]}")
         resp.raise_for_status()
         return [
-            {"title": r.get("title", ""), "link": r.get("link", "")}
+            {"title": r.get("title", ""), "link": r.get("link", ""),
+             "snippet": r.get("snippet", "")}
             for r in resp.json().get("organic_results", []) or []
         ][:num]
     resp = client.get(
@@ -362,7 +443,28 @@ def _web_search_raw(
     if resp.status_code in (403, 429):
         raise SearchQuotaError(f"CSE HTTP {resp.status_code}: {resp.text[:200]}")
     resp.raise_for_status()
-    return resp.json().get("items", []) or []
+    return [
+        {"title": r.get("title", ""), "link": r.get("link", ""),
+         "snippet": r.get("snippet", "")}
+        for r in resp.json().get("items", []) or []
+    ]
+
+
+def _pick_by_context(matches: dict) -> tuple | None:
+    """From name-passing SERP candidates pick one: a single candidate wins
+    outright; multiple candidates need a STRICT context-hit winner with at
+    least one hit (card partners/sector/headline terms in the snippet).
+    Returns (key, score, display, hits, note) or None to abstain."""
+    if not matches:
+        return None
+    if len(matches) == 1:
+        key, (score, display, hits) = next(iter(matches.items()))
+        return (key, score, display, hits, "")
+    ranked = sorted(matches.items(), key=lambda kv: kv[1][2], reverse=True)
+    (k1, (s1, d1, h1)), (_k2, (_s2, _d2, h2)) = ranked[0], ranked[1]
+    if h1 >= 1 and h1 > h2:
+        return (k1, s1, d1, h1, f"; won on context ({h1} vs {h2} hits)")
+    return None
 
 
 def resolve_linkedin_serp(
@@ -372,6 +474,7 @@ def resolve_linkedin_serp(
     client: httpx.Client,
     search: SearchProvider,
     threshold: int = DEFAULT_MATCH_THRESHOLD,
+    context: set[str] | None = None,
 ) -> HandleResult | None:
     """LinkedIn handle from web-search results. Returns None when the SERP
     has no /company/ results at all (caller may fall back to direct fetch).
@@ -380,6 +483,11 @@ def resolve_linkedin_serp(
     items = _web_search(client, search, f'site:linkedin.com/company "{name}"')
     best_reject: tuple[int, str, str] | None = None
     seen_company_result = False
+    # Collect ALL matching slugs before accepting: two DIFFERENT slugs both
+    # passing the name check = regional pages or same-named companies —
+    # picking Google's first would be a guess, so abstain instead.
+    own_toks = set(_tokens(name)) | {t for a in (aliases or []) for t in _tokens(a)}
+    matches: dict[str, tuple[int, str, int]] = {}  # slug -> (score, page_name, ctx_hits)
     for item in items[:4]:
         link, title = item.get("link", ""), item.get("title", "")
         if "/company/" not in link:
@@ -393,14 +501,30 @@ def resolve_linkedin_serp(
             continue
         score = _match_score(page_name, known_names)
         if score >= threshold:
-            log.info("linkedin SERP verified %r -> @%s (title=%r score=%d)",
-                     name, slug, page_name, score)
-            return HandleResult(
-                f"@{slug}", score / 100.0, SOURCE_LINKEDIN_SERP,
-                f"SERP title '{page_name}' matched (score {score})",
-            )
-        if best_reject is None or score > best_reject[0]:
+            hits = _context_hits(f"{title} {item.get('snippet', '')}", context, own_toks)
+            if slug not in matches or score > matches[slug][0]:
+                matches[slug] = (score, page_name, hits)
+        elif best_reject is None or score > best_reject[0]:
             best_reject = (score, slug, page_name)
+    picked = _pick_by_context(matches)
+    if picked is not None:
+        slug, score, page_name, hits, note = picked
+        if context and not hits:
+            note += "; industry unconfirmed — review"
+        log.info("linkedin SERP verified %r -> @%s (title=%r score=%d ctx=%d)",
+                 name, slug, page_name, score, hits)
+        return HandleResult(
+            f"@{slug}",
+            score / 100.0 if hits or not context else 0.75,
+            SOURCE_LINKEDIN_SERP,
+            f"SERP title '{page_name}' matched (score {score}){note}",
+        )
+    if len(matches) > 1:
+        listing = ", ".join(f"/company/{s} ('{pn}')" for s, (_, pn, _h) in matches.items())
+        return HandleResult(
+            None, 0.0, SOURCE_ABSTAIN,
+            f"ambiguous: multiple pages match the name, none wins on context — {listing}"[:250],
+        )
     if best_reject:
         score, slug, page_name = best_reject
         return HandleResult(
@@ -420,12 +544,16 @@ def resolve_x_serp(
     client: httpx.Client,
     search: SearchProvider,
     threshold: int = DEFAULT_MATCH_THRESHOLD,
+    context: set[str] | None = None,
 ) -> HandleResult:
     """X handle from web-search results — profile pages only, display name
     must match the entity. Raises SearchQuotaError on quota/key failure."""
     known_names = [name, *(aliases or [])]
     items = _web_search(client, search, f'site:x.com "{name}"')
     best_reject: tuple[int, str, str] | None = None
+    own_toks = set(_tokens(name)) | {t for a in (aliases or []) for t in _tokens(a)}
+    cased: dict[str, str] = {}                      # handle(lower) -> as-cased
+    matches: dict[str, tuple[int, str, int]] = {}   # handle(lower) -> (score, display, ctx_hits)
     for item in items[:4]:
         link, title = item.get("link", ""), item.get("title", "")
         url_m = _X_PROFILE_URL_RE.match(link)
@@ -437,14 +565,33 @@ def resolve_x_serp(
             continue    # title/URL disagree — not a profile page, skip
         score = _match_score(display_name, known_names)
         if score >= threshold:
-            log.info("x SERP verified %r -> @%s (display=%r score=%d)",
-                     name, handle, display_name, score)
-            return HandleResult(
-                f"@{handle}", score / 100.0, SOURCE_X_SERP,
-                f"SERP profile '{display_name}' matched (score {score})",
-            )
-        if best_reject is None or score > best_reject[0]:
+            key = handle.lower()
+            hits = _context_hits(f"{title} {item.get('snippet', '')}", context, own_toks)
+            if key not in matches or score > matches[key][0]:
+                matches[key] = (score, display_name, hits)
+                cased[key] = handle
+        elif best_reject is None or score > best_reject[0]:
             best_reject = (score, handle, display_name)
+    picked = _pick_by_context(matches)
+    if picked is not None:
+        key, score, display_name, hits, note = picked
+        if context and not hits:
+            note += "; industry unconfirmed — review"
+        handle = cased[key]
+        log.info("x SERP verified %r -> @%s (display=%r score=%d ctx=%d)",
+                 name, handle, display_name, score, hits)
+        return HandleResult(
+            f"@{handle}",
+            score / 100.0 if hits or not context else 0.75,
+            SOURCE_X_SERP,
+            f"SERP profile '{display_name}' matched (score {score}){note}",
+        )
+    if len(matches) > 1:
+        listing = ", ".join(f"@{cased[k]} ('{dn}')" for k, (_, dn, _h) in matches.items())
+        return HandleResult(
+            None, 0.0, SOURCE_ABSTAIN,
+            f"ambiguous: multiple profiles match the name, none wins on context — {listing}"[:250],
+        )
     if best_reject:
         score, handle, display_name = best_reject
         return HandleResult(
@@ -465,6 +612,7 @@ def resolve_channel(
     client: httpx.Client | None = None,
     search: SearchProvider | None = None,
     allow_direct: bool = True,
+    context: set[str] | None = None,
 ) -> HandleResult:
     """Resolve one (entity, channel). Web search is primary when configured;
     direct LinkedIn fetch is the well-spaced fallback (skippable via
@@ -478,7 +626,8 @@ def resolve_channel(
         if channel == "linkedin":
             if search:
                 try:
-                    result = resolve_linkedin_serp(name, aliases, client=client, search=search)
+                    result = resolve_linkedin_serp(
+                        name, aliases, client=client, search=search, context=context)
                 except SearchQuotaError as exc:
                     log.warning("search failure: %s", exc)
                     return HandleResult(
@@ -493,7 +642,8 @@ def resolve_channel(
             return resolve_linkedin(name, aliases, client=client)
         if channel == "x" and search:
             try:
-                return resolve_x_serp(name, aliases, client=client, search=search)
+                return resolve_x_serp(
+                    name, aliases, client=client, search=search, context=context)
             except SearchQuotaError as exc:
                 log.warning("search failure: %s", exc)
                 return HandleResult(

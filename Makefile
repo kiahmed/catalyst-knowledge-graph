@@ -5,7 +5,7 @@
         ingest ingest-dry export watermark check-log firestore-ping \
         reextract backtest \
         render render-batch render-status \
-        handles handles-lookup handles-unresolved handles-set \
+        handles handles-lookup handles-unresolved handles-set reaudit search-budget \
         db db-query \
         frontend open \
         deploy deploy-preflight deploy-frontend firebase-sa link-domain firestore-sync \
@@ -27,53 +27,59 @@ HANDLE_PORT   ?= 8083
 FRONTEND_PORT ?= 8000
 MIN_DOCKER_MEM_MB ?= 4096
 
+# Help colors: targets light blue, parameters orange.
+HB := \033[94m
+HO := \033[38;5;208m
+HR := \033[0m
+
 help:
 	@echo "Catalyst knowledge-graph — Makefile"
 	@echo ""
 	@echo "Setup & runtime"
-	@echo "  setup              Build images + initialize DuckDB"
-	@echo "  doctor             Preflight: docker memory, ports, .env, creds"
-	@echo "  up                 Start all services"
-	@echo "  down               Stop services (keep volume)"
-	@echo "  logs SERVICE=name  Tail logs for a service (default: all)"
-	@echo "  ps                 List running services (full table)"
-	@echo "  ps-short           List services — name, status, host port only"
-	@echo "  nuke               Stop + wipe volumes (full reset)"
-	@echo "  prune              Reclaim disk: remove dangling images + unused build cache"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "setup" "" "Build images + initialize DuckDB"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "doctor" "" "Preflight: docker memory, ports, .env, creds"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "up" "" "Start all services"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "down" "" "Stop services (keep volume)"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "logs" "SERVICE=name" "Tail logs for a service (default: all)"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "ps" "" "List running services (full table)"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "ps-short" "" "List services: name, status, host port only"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "nuke" "" "Stop + wipe volumes (full reset)"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "prune" "" "Reclaim disk: dangling images + build cache"
 	@echo ""
 	@echo "Pipeline triggers"
-	@echo "  firestore-ping     Read 1 finding from Arboryx Firestore — verifies auth + connectivity"
-	@echo "  ingest-render-status  Pipeline number map: ingest/export/Firestore + render stats"
-	@echo "  check-log          Sanity-check upstream Arboryx data (dup IDs, order, shape)"
-	@echo "  watermark          Show last-processed date + entry_id"
-	@echo "  ingest [LIMIT=N]   Real run (bounded if LIMIT set). Always re-exports cards.json."
-	@echo "  ingest-dry         Preview ingest (reads, no writes, no export)"
-	@echo "  export             Re-export cards.json from current DuckDB (no ingest)"
-	@echo "  reextract ID=... [IDS=a,b,c] [WRITE=1] [PV=v2]  Re-extract one or many entries"
-	@echo "  backtest [LIMIT=N] [IDS=a,b,c]  Dump extractor output to JSONL for eyeballing"
-	@echo "  render             Render one card (CARD_ID=ROB-...)"
-	@echo "  render-batch       Render PNGs. Three modes:"
-	@echo "                       (no args)               → all unrendered"
-	@echo "                       LIMIT=N                 → N latest"
-	@echo "                       FROM=ROB-... LIMIT=N    → N starting at this entry_id"
-	@echo "  render-status      Count catalysts vs rendered PNGs; show backlog"
-	@echo "  handles [LIMIT=N]  Resolve social handles for entities missing them (verify-or-abstain)"
-	@echo "  handles-lookup ENTITIES='Figure AI,Humanoid'  Look up (and resolve) handles for names"
-	@echo "  handles-unresolved  Report unresolved entity/channel pairs (with reason) + never-attempted"
-	@echo "  handles-set ENTITY='...' SET='x:@abc,linkedin:@xyz'  Manually set handles (human-curated)"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "firestore-ping" "" "Read 1 finding from Arboryx Firestore (verifies auth)"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "ingest-render-status" "" "Pipeline number map: ingest/export/Firestore + render"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "check-log" "" "Sanity-check upstream Arboryx data (dups, order, shape)"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "watermark" "" "Show last-processed date + entry_id"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "ingest" "[LIMIT=N]" "Real run (bounded if LIMIT). Always re-exports cards.json"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "ingest-dry" "" "Preview ingest (reads, no writes, no export)"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "export" "" "Re-export cards.json from current DuckDB (no ingest)"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "reextract" "ID=... [IDS=a,b] [WRITE=1] [PV=v2]" "Re-extract one or many entries"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "backtest" "[LIMIT=N] [IDS=a,b,c]" "Dump extractor output to JSONL"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "render" "CARD_ID=ROB-..." "Render one card"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "render-batch" "[LIMIT=N] [FROM=ROB-...] [FORCE=1]" "Render PNGs (no args = all unrendered)"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "render-status" "" "Count catalysts vs rendered PNGs; show backlog"
+	@echo ""
+	@echo "Social handles"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "handles" "[LIMIT=N]" "Resolve handles for entities missing them (verify-or-abstain)"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "handles-lookup" "ENTITIES='A,B'" "Look up (and resolve) handles for names"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "handles-unresolved" "" "Report unresolved entity/channel pairs + reasons"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "handles-set" "ENTITY='...' SET='x:@a,linkedin:@b'" "Manually set handles (human wins)"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "reaudit" "[MAXCONF=0.9] [CHANNELS] [ENTITIES='a; b'] [LIMIT] [FORCE=1]" "Re-verify cached handles; resumable"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "search-budget" "" "Searches left per provider until next credit refill"
 	@echo ""
 	@echo "DB + frontend"
-	@echo "  db                 Open DuckDB CLI"
-	@echo "  db-query Q='...'   Run a one-off query"
-	@echo "  frontend           Open http://localhost:8000"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "db" "" "Open DuckDB CLI"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "db-query" "Q='...'" "Run a one-off query"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "frontend" "" "Open http://localhost:8000"
 	@echo ""
 	@echo "Prod deploy  (see DEPLOYMENT.md — reads .env.prod)"
-	@echo "  deploy             Build + push images/source + terraform apply (runs preflight)"
-	@echo "  deploy-preflight   Verify gcloud auth + IAM admin + .env.prod"
-	@echo "  firestore-sync     One-time: local DuckDB → CKG-<sector> + PNGs → Firebase Storage"
-	@echo "  deploy-frontend    Deploy frontend/ → Firebase Hosting"
-	@echo "  firebase-sa        One-time: create Firebase deploy service account + key"
-	@echo "  link-domain        One-time: link Hosting to CUSTOM_DOMAIN via Cloudflare DNS"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "deploy" "" "Build + push images/source + terraform apply (preflight first)"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "deploy-preflight" "" "Verify gcloud auth + IAM admin + .env.prod"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "firestore-sync" "" "One-time: local DuckDB to CKG-<sector> + PNGs to Storage"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "deploy-frontend" "" "Deploy frontend/ to Firebase Hosting"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "firebase-sa" "" "One-time: create Firebase deploy SA + key"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "link-domain" "" "One-time: link Hosting to CUSTOM_DOMAIN via Cloudflare"
 
 # ── Setup & runtime ────────────────────────────────────────────────
 
@@ -307,6 +313,35 @@ handles-set:
 	curl -fsS -X POST http://localhost:$(HANDLE_PORT)/ \
 		-H "Content-Type: application/json" \
 		-d "{\"set\":{\"entity\":\"$(ENTITY)\",\"handles\":$$hmap}}" | jq .
+
+# Re-verify cached handles under the current resolution logic (fresh SERP
+# + context + ambiguity guard). Resumable: audited rows are stamped and
+# skipped on the next run; blocked (quota/network) rows keep their old
+# value and retry. 'human' rows are never touched.
+#   make reaudit                          # all rows with confidence < 0.9
+#   make reaudit MAXCONF=0.8 LIMIT=100    # tune filter / batch size
+#   make reaudit CHANNELS=linkedin        # one channel (default: both)
+#   make reaudit ENTITIES='Foxconn; LG Electronics'   # specific names
+#   make reaudit FORCE=1                  # re-audit already-audited rows too
+reaudit:
+	@body='{"reaudit":{'; \
+	chans="$(if $(CHANNELS),$(CHANNELS),linkedin,x)"; \
+	chjson=$$(echo "$$chans" | python3 -c 'import json,sys; print(json.dumps([c.strip() for c in sys.stdin.read().split(",") if c.strip()]))'); \
+	body=$$body'"channels":'$$chjson; \
+	[ -n "$(MAXCONF)" ] && body=$$body',"max_confidence":$(MAXCONF)'; \
+	[ -n "$(LIMIT)" ] && body=$$body',"limit":$(LIMIT)'; \
+	[ -n "$(FORCE)" ] && body=$$body',"force":true'; \
+	[ -n "$(ENTITIES)" ] && body=$$body',"entities":"$(ENTITIES)"'; \
+	body=$$body'}}'; \
+	curl -fsS --max-time 590 -X POST http://localhost:$(HANDLE_PORT)/ \
+		-H "Content-Type: application/json" \
+		-d "$$body" | jq .
+
+# Searches remaining per provider until the next credit refill.
+search-budget:
+	@curl -fsS -X POST http://localhost:$(HANDLE_PORT)/ \
+		-H "Content-Type: application/json" \
+		-d '{"budget":true}' | jq .
 
 # Look up handles for specific entity names (resolves + caches on miss).
 handles-lookup:

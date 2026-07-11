@@ -4,6 +4,22 @@
 **Status:** IMPLEMENTED 2026-07-07 (both contracts). Drafted 2026-07-05 from
 the handle-strategy analysis.
 
+> **2026-07-11 — slug → URN resolution now lives in soljet-postiz.** Division of
+> labour is settled: this repo stores only the **verified vanity slug**
+> (`@spiritai-robotics`); soljet-postiz turns slug → **organization URN**
+> (`urn:li:organization:111476012`) at post time via LinkedIn's authenticated
+> `GET /rest/organizations?q=vanityName&vanityName=<slug>` finder, using the
+> LinkedIn app token Postiz already holds. LinkedIn only renders a *real* mention
+> from the token `@[Name](urn:li:organization:<id>)`; a bare `@slug` is dead text.
+> The app-token scope was **verified live** — `rw_organization_admin` resolves
+> arbitrary third-party orgs; no `r_organization_lookup` / Community-Management
+> product access needed (that caveat, item under "Open decisions", is retired).
+> **This repo does NOT need to store the URL or the numeric org id** — both are
+> derivable from the slug downstream. The one irreplaceable upstream job remains:
+> pick the RIGHT company among same-named orgs (`spirit-ai` the games firm vs
+> `spiritai-robotics`), which needs graph/sector context unavailable at post
+> time. Postiz-side impl: `src/lib/linkedin_urn.py`, `docs/linkedin-mentions.md`.
+
 > Implementation notes (2026-07-07): resolution is fully deterministic — no
 > LLM. Storage deviates from the schema sketch below by design: instead of
 > columns on `entities`, handles live in a **shared `entity_handles` table**
@@ -114,6 +130,15 @@ entity names. The posting side caches per (url, entity).
 - `channel_dispatch.entity_tags` builds the per-channel tag list per
   `ENTITY_TAG_MODE` (prefer_handle | handle_only | cashtag_only | both), gated by
   `HANDLE_INJECTION` and `CASHTAGS_ENABLED`, and appends before the deep link.
+- **LinkedIn only:** the resolved slug is passed through
+  `linkedin_urn.to_mention()` → the vanityName finder → the real mention token
+  `@[Official Name](urn:li:organization:<id>)`. **Fail closed**: a wrong/stale
+  slug returns nothing and the tag is silently dropped (no dead mention). X keeps
+  the plain `@handle`. Results cache in `data/linkedin_urn_cache.json`.
+- **So the only field this repo must get right is the slug** (embedded
+  `linkedin_handle`, or served by the endpoint). Precision of *which company* is
+  what matters — a wrong slug just yields no tag, but a slug pointing at the wrong
+  same-named org yields a wrong tag.
 
 To activate once this repo ships: set the card field (A) or `HANDLE_ENDPOINT_URL`
 (B), then `HANDLE_INJECTION="true"` in the product's tier.config. No code change.
@@ -132,3 +157,11 @@ To activate once this repo ships: set the card field (A) or `HANDLE_ENDPOINT_URL
   human-curated / omitted until then?
 - Confirm the **abstain** policy on ambiguous/common-word names (no tag > wrong tag).
 - Resolver inline in `write_extraction()` vs a separate re-runnable backfill step.
+- ~~LinkedIn org-URN lookup gated behind Community-Management product access —
+  verify the app token has it before postiz builds mentions.~~ **Resolved
+  2026-07-11:** token scope verified sufficient; postiz-side resolution shipped.
+- **Backlog audit:** existing cached handles keep their pre-2026-07-11 values
+  (re-resolving costs search credits). Rows with `confidence < 0.9` (the
+  "industry unconfirmed — review" class, e.g. the original Spirit AI) should be
+  spot-audited before their cards are posted, since a wrong slug → wrong tag:
+  `make db-query Q="SELECT * FROM entity_handles WHERE confidence < 0.9 AND handle IS NOT NULL"`.

@@ -142,6 +142,7 @@ services:
       # Web-search API — primary resolution path. Serper.dev preferred
       # (Google CSE is closed to new customers; kept for grandfathered keys).
       # All unset = direct LinkedIn fetch only (rate-wall prone), X manual-only.
+      BRAVE_API_KEY: ${BRAVE_API_KEY:-}
       SERPER_API_KEY: ${SERPER_API_KEY:-}
       SEARCHAPI_API_KEY: ${SEARCHAPI_API_KEY:-}
       GOOGLE_CSE_API_KEY: ${GOOGLE_CSE_API_KEY:-}

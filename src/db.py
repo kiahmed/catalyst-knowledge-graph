@@ -105,6 +105,24 @@ CREATE TABLE IF NOT EXISTS entity_handles (
     PRIMARY KEY (name_key, channel)
 );
 
+-- ── Search providers: budget/priority registry ─────────────────
+-- One row per web-search provider (brave/serper/searchapi/cse). The
+-- handle-resolver picks the enabled provider with the lowest priority
+-- that has a configured key AND remaining budget, counts every live
+-- query against used_this_cycle, and rolls the cycle on refill_day.
+-- Mirrored to Firestore `search-config` for the prod function.
+CREATE TABLE IF NOT EXISTS search_providers (
+    provider        VARCHAR PRIMARY KEY,  -- 'brave'|'serper'|'searchapi'|'cse'
+    priority        INTEGER NOT NULL,     -- lower = preferred
+    enabled         BOOLEAN DEFAULT true,
+    monthly_quota   INTEGER,              -- free searches per cycle; NULL = no cap known
+    used_this_cycle INTEGER DEFAULT 0,
+    cycle_start     DATE,                 -- anchor of the current cycle
+    refill_day      INTEGER,              -- day-of-month the quota refills; NULL = one-time credits
+    note            VARCHAR,
+    updated_at      TIMESTAMP DEFAULT now()
+);
+
 -- ── Ingestion watermark ────────────────────────────────────────
 -- Compound watermark: (last_processed_date, last_processed_entry_id) is the
 -- canonical total-order per spec §2.2. last_gcs_generation short-circuits
@@ -137,9 +155,11 @@ def connect(path: str) -> duckdb.DuckDBPyConnection:
 def init_schema(con: duckdb.DuckDBPyConnection) -> None:
     """Create tables, sequences, indexes. Idempotent."""
     con.execute(_SCHEMA_SQL)
-    # entity_handles.comment landed after the table shipped; CREATE TABLE IF
-    # NOT EXISTS won't add columns to an existing DB.
+    # entity_handles.comment / audited_at landed after the table shipped;
+    # CREATE TABLE IF NOT EXISTS won't add columns to an existing DB.
     con.execute("ALTER TABLE entity_handles ADD COLUMN IF NOT EXISTS comment VARCHAR")
+    con.execute("ALTER TABLE entity_handles ADD COLUMN IF NOT EXISTS audited_at TIMESTAMP")
+    seed_search_providers(con)
 
 
 # ── Watermark ──────────────────────────────────────────────────────
@@ -369,17 +389,18 @@ def insert_unresolved(
 
 def get_handles(
     con: duckdb.DuckDBPyConnection, name_keys: list[str]
-) -> dict[tuple[str, str], tuple[str | None, str]]:
-    """(name_key, channel) -> (handle, source) for the given keys."""
+) -> dict[tuple[str, str], tuple[str | None, str, float | None]]:
+    """(name_key, channel) -> (handle, source, confidence) for the keys."""
     if not name_keys:
         return {}
     placeholders = ", ".join("?" for _ in name_keys)
     rows = con.execute(
-        f"SELECT name_key, channel, handle, source FROM entity_handles"
+        f"SELECT name_key, channel, handle, source, confidence FROM entity_handles"
         f" WHERE name_key IN ({placeholders})",
         name_keys,
     ).fetchall()
-    return {(k, c): (h, s) for (k, c, h, s) in rows}
+    return {(k, c): (h, s, float(cf) if cf is not None else None)
+            for (k, c, h, s, cf) in rows}
 
 
 def upsert_handle(
@@ -403,6 +424,123 @@ def upsert_handle(
             resolved_at = excluded.resolved_at
         """,
         [name_key, channel, handle, confidence, source, comment],
+    )
+
+
+def handles_for_reaudit(
+    con: duckdb.DuckDBPyConnection,
+    channels: list[str],
+    max_confidence: float,
+    names: list[str] | None,
+    limit: int,
+    force: bool = False,
+) -> list[tuple[str, str, str | None, float, str]]:
+    """Rows to re-verify: (name_key, channel, handle, confidence, source).
+
+    Never audits 'human' (owner's word wins) or 'blocked' (sweep retries
+    those). Resumable: rows already stamped audited_at are skipped unless
+    force. Explicit `names` override the confidence filter."""
+    where = ["h.channel IN (" + ", ".join("?" for _ in channels) + ")",
+             "h.source NOT IN ('human', 'blocked')"]
+    params: list[Any] = [*channels]
+    if names:
+        where.append("h.name_key IN (" + ", ".join("?" for _ in names) + ")")
+        params.extend(names)
+    else:
+        where.append("h.confidence < ?")
+        params.append(max_confidence)
+    if not force:
+        where.append("h.audited_at IS NULL")
+    rows = con.execute(
+        f"""
+        SELECT h.name_key, h.channel, h.handle, h.confidence, h.source
+        FROM entity_handles h
+        WHERE {' AND '.join(where)}
+        ORDER BY h.name_key, h.channel
+        LIMIT ?
+        """,
+        [*params, limit],
+    ).fetchall()
+    return [(k, c, h, float(cf or 0.0), s) for (k, c, h, cf, s) in rows]
+
+
+def mark_handle_audited(
+    con: duckdb.DuckDBPyConnection, name_key: str, channel: str
+) -> None:
+    con.execute(
+        "UPDATE entity_handles SET audited_at = now() WHERE name_key = ? AND channel = ?",
+        [name_key, channel],
+    )
+
+
+def entity_by_name_key(
+    con: duckdb.DuckDBPyConnection, key: str
+) -> tuple[str, int] | None:
+    row = con.execute(
+        "SELECT name, entity_id FROM entities WHERE LOWER(TRIM(name)) = ?", [key]
+    ).fetchone()
+    return (row[0], int(row[1])) if row else None
+
+
+# ── Search-provider budget registry ────────────────────────────────
+
+_PROVIDER_SEED = [
+    # (provider, priority, enabled, quota, used, cycle_start, refill_day, note)
+    ("brave", 1, True, 1000, 0, "2026-07-11", 11,
+     "$5 monthly credit ≈ 1000 searches; refills on signup day"),
+    ("serper", 2, False, 2500, 2500, "2026-07-08", None,
+     "one-time 2,500 free credits — exhausted 2026-07-10"),
+    ("searchapi", 3, True, 100, 0, None, None,
+     "one-time 100 free requests; no key configured yet"),
+    ("cse", 4, False, None, 0, None, None,
+     "Google CSE closed to new customers — dead"),
+]
+
+
+def seed_search_providers(con: duckdb.DuckDBPyConnection) -> None:
+    """Insert default provider rows that don't exist yet. Idempotent —
+    never overwrites operator edits to priority/enabled/quota."""
+    for row in _PROVIDER_SEED:
+        con.execute(
+            """INSERT INTO search_providers
+               (provider, priority, enabled, monthly_quota, used_this_cycle,
+                cycle_start, refill_day, note)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (provider) DO NOTHING""",
+            list(row),
+        )
+
+
+def get_search_providers(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
+    rows = con.execute(
+        """SELECT provider, priority, enabled, monthly_quota, used_this_cycle,
+                  cycle_start, refill_day, note
+           FROM search_providers ORDER BY priority"""
+    ).fetchall()
+    return [
+        {"provider": p, "priority": pr, "enabled": bool(e), "monthly_quota": q,
+         "used_this_cycle": u, "cycle_start": cs, "refill_day": rd, "note": n}
+        for (p, pr, e, q, u, cs, rd, n) in rows
+    ]
+
+
+def bump_search_usage(con: duckdb.DuckDBPyConnection, provider: str, n: int = 1) -> None:
+    con.execute(
+        """UPDATE search_providers
+           SET used_this_cycle = used_this_cycle + ?, updated_at = now()
+           WHERE provider = ?""",
+        [n, provider],
+    )
+
+
+def reset_search_cycle(
+    con: duckdb.DuckDBPyConnection, provider: str, cycle_start: date
+) -> None:
+    con.execute(
+        """UPDATE search_providers
+           SET used_this_cycle = 0, cycle_start = ?, updated_at = now()
+           WHERE provider = ?""",
+        [cycle_start, provider],
     )
 
 

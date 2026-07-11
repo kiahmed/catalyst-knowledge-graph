@@ -25,7 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 IMAGES_DIR = REPO_ROOT / "data" / "exports" / "card_images"
 CARDS_JSON = REPO_ROOT / "data" / "exports" / "cards.json"
 SECTOR = os.environ.get("SECTOR", "Robotics")
-PROJECT = os.environ.get("GCP_PROJECT", "sample-gcp-project-id")
+PROJECT = os.environ.get("GCP_PROJECT", "")
 POSTER_DIMS = (2400, 1260)
 FS = "https://firestore.googleapis.com/v1"
 

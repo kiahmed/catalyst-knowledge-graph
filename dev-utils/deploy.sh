@@ -138,6 +138,7 @@ add_secret_version GEMINI_API_KEY  "$GEMINI_API_KEY"
 # without them) — but the secret resources always exist, and a Cloud
 # Function can't mount a secret with zero versions. Push "" if unset
 # (empty = disabled; handles.search_provider_from_env ignores blanks).
+add_secret_version BRAVE_API_KEY      "${BRAVE_API_KEY:-}"
 add_secret_version SERPER_API_KEY     "${SERPER_API_KEY:-}"
 add_secret_version GOOGLE_CSE_API_KEY "${GOOGLE_CSE_API_KEY:-}"
 

@@ -105,6 +105,13 @@ resource "google_cloudfunctions2_function" "handle_resolver" {
     }
 
     secret_environment_variables {
+      key        = "BRAVE_API_KEY"
+      project_id = var.project_id
+      secret     = google_secret_manager_secret.brave_api_key.secret_id
+      version    = "latest"
+    }
+
+    secret_environment_variables {
       key        = "SERPER_API_KEY"
       project_id = var.project_id
       secret     = google_secret_manager_secret.serper_api_key.secret_id
@@ -121,6 +128,7 @@ resource "google_cloudfunctions2_function" "handle_resolver" {
 
   depends_on = [
     google_project_service.required,
+    google_secret_manager_secret_iam_member.handles_brave_key,
     google_secret_manager_secret_iam_member.handles_serper_key,
     google_secret_manager_secret_iam_member.handles_cse_key,
   ]

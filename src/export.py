@@ -146,8 +146,10 @@ def _load_cards(
         )
         for e in entities:
             key = handles.name_key(e["name"])
-            e["linkedin_handle"] = (handle_rows.get((key, "linkedin")) or (None,))[0]
-            e["x_handle"] = (handle_rows.get((key, "x")) or (None,))[0]
+            for channel, field in (("linkedin", "linkedin_handle"), ("x", "x_handle")):
+                hit = handle_rows.get((key, channel))
+                # Review-flagged (low-confidence) handles stay off cards.
+                e[field] = handles.usable_handle(hit[0], hit[2]) if hit else None
 
         # Edge filters: min_edge_confidence + status visibility.
         status_filter = (
