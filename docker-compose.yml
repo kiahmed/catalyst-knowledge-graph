@@ -117,6 +117,49 @@ services:
     restart: unless-stopped
 
   # ─────────────────────────────────────────────────────────────────
+  # handle-resolver — per-entity social handle resolution (verify-or-
+  # abstain, no LLM). DuckDB-backed cache locally; Cloud Function with
+  # Firestore cache in prod. See docs/handle-resolution-spec.md.
+  # ─────────────────────────────────────────────────────────────────
+  handle-resolver:
+    build:
+      context: .
+      dockerfile: ./tools/handle-resolver/Dockerfile
+    container_name: handle-resolver
+    # threads=4: a long sweep must not block lookup requests (postiz calls
+    # this live). DuckDB connections within one process share the DB
+    # instance, so concurrent sweep-write + lookup-read is safe; a mutex in
+    # main.py keeps sweeps themselves single-flight.
+    command: >
+      gunicorn --bind 0.0.0.0:8083 --workers 1 --threads 4
+      --timeout 600
+      'functions_framework:create_app(target="resolve_handles")'
+    depends_on:
+      duckdb:
+        condition: service_healthy
+    environment:
+      DUCKDB_PATH: /data/robotics.duckdb
+      # Web-search API — primary resolution path. Serper.dev preferred
+      # (Google CSE is closed to new customers; kept for grandfathered keys).
+      # All unset = direct LinkedIn fetch only (rate-wall prone), X manual-only.
+      SERPER_API_KEY: ${SERPER_API_KEY:-}
+      SEARCHAPI_API_KEY: ${SEARCHAPI_API_KEY:-}
+      GOOGLE_CSE_API_KEY: ${GOOGLE_CSE_API_KEY:-}
+      GOOGLE_CSE_ID: ${GOOGLE_CSE_ID:-}
+      # Pacing overrides (seconds) — defaults in src/handles.py: 2 between
+      # search-API queries, 8 between direct-fetch candidates, 30 before a
+      # direct fallback. Tune via .env if a provider starts frowning.
+      HANDLE_SEARCH_DELAY_S: ${HANDLE_SEARCH_DELAY_S:-}
+      HANDLE_FETCH_DELAY_S: ${HANDLE_FETCH_DELAY_S:-}
+      HANDLE_DIRECT_DELAY_S: ${HANDLE_DIRECT_DELAY_S:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./data:/data
+    ports:
+      - "${HANDLE_PORT:-8083}:8083"
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────────
   # frontend-dev — nginx serving frontend/ for local browsing
   # ─────────────────────────────────────────────────────────────────
   frontend-dev:

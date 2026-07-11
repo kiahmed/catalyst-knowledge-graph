@@ -90,6 +90,21 @@ CREATE TABLE IF NOT EXISTS unresolved_entities (
     created_at     TIMESTAMP DEFAULT now()
 );
 
+-- ── Social handles (shared cache, per canonical entity NOT per entry) ──
+-- Verify-or-abstain results per (entity name_key, channel). handle NULL =
+-- abstained; source 'blocked' = fetch authwalled, retryable. See
+-- docs/handle-resolution-spec.md and src/handles.py.
+CREATE TABLE IF NOT EXISTS entity_handles (
+    name_key     VARCHAR NOT NULL,   -- lower/trimmed entities.name
+    channel      VARCHAR NOT NULL,   -- 'linkedin' | 'x' | future ('reddit', ...)
+    handle       VARCHAR,            -- e.g. '@figure-ai', NULL = abstained
+    confidence   REAL,
+    source       VARCHAR NOT NULL,   -- 'linkedin_verified'|'human'|'abstain'|'blocked'
+    comment      VARCHAR,            -- why unresolved / what matched
+    resolved_at  TIMESTAMP DEFAULT now(),
+    PRIMARY KEY (name_key, channel)
+);
+
 -- ── Ingestion watermark ────────────────────────────────────────
 -- Compound watermark: (last_processed_date, last_processed_entry_id) is the
 -- canonical total-order per spec §2.2. last_gcs_generation short-circuits
@@ -122,6 +137,9 @@ def connect(path: str) -> duckdb.DuckDBPyConnection:
 def init_schema(con: duckdb.DuckDBPyConnection) -> None:
     """Create tables, sequences, indexes. Idempotent."""
     con.execute(_SCHEMA_SQL)
+    # entity_handles.comment landed after the table shipped; CREATE TABLE IF
+    # NOT EXISTS won't add columns to an existing DB.
+    con.execute("ALTER TABLE entity_handles ADD COLUMN IF NOT EXISTS comment VARCHAR")
 
 
 # ── Watermark ──────────────────────────────────────────────────────
@@ -344,6 +362,122 @@ def insert_unresolved(
            VALUES (?, ?, ?, ?)""",
         [mention, catalyst_id, suggested_name, suggested_type],
     )
+
+
+# ── Social handles (shared cache) ──────────────────────────────────
+
+
+def get_handles(
+    con: duckdb.DuckDBPyConnection, name_keys: list[str]
+) -> dict[tuple[str, str], tuple[str | None, str]]:
+    """(name_key, channel) -> (handle, source) for the given keys."""
+    if not name_keys:
+        return {}
+    placeholders = ", ".join("?" for _ in name_keys)
+    rows = con.execute(
+        f"SELECT name_key, channel, handle, source FROM entity_handles"
+        f" WHERE name_key IN ({placeholders})",
+        name_keys,
+    ).fetchall()
+    return {(k, c): (h, s) for (k, c, h, s) in rows}
+
+
+def upsert_handle(
+    con: duckdb.DuckDBPyConnection,
+    name_key: str,
+    channel: str,
+    handle: str | None,
+    confidence: float,
+    source: str,
+    comment: str | None = None,
+) -> None:
+    con.execute(
+        """
+        INSERT INTO entity_handles (name_key, channel, handle, confidence, source, comment, resolved_at)
+        VALUES (?, ?, ?, ?, ?, ?, now())
+        ON CONFLICT (name_key, channel) DO UPDATE SET
+            handle = excluded.handle,
+            confidence = excluded.confidence,
+            source = excluded.source,
+            comment = excluded.comment,
+            resolved_at = excluded.resolved_at
+        """,
+        [name_key, channel, handle, confidence, source, comment],
+    )
+
+
+def unresolved_handles_report(
+    con: duckdb.DuckDBPyConnection,
+) -> dict[str, Any]:
+    """Everything without a usable handle: attempted-but-unresolved rows
+    (with the why in comment) plus company entities never attempted."""
+    rows = con.execute(
+        """
+        SELECT name_key, channel, source, comment, resolved_at
+        FROM entity_handles
+        WHERE handle IS NULL
+        ORDER BY channel, name_key
+        """
+    ).fetchall()
+    unattempted = [
+        r[0] for r in con.execute(
+            """
+            SELECT e.name FROM entities e
+            WHERE LOWER(e.type) LIKE '%company%'
+              AND NOT EXISTS (
+                SELECT 1 FROM entity_handles h
+                WHERE h.name_key = LOWER(TRIM(e.name))
+              )
+            ORDER BY e.name
+            """
+        ).fetchall()
+    ]
+    return {
+        "unresolved": [
+            {
+                "entity": k, "channel": c, "source": s, "comment": m,
+                "resolved_at": str(t) if t else None,
+            }
+            for (k, c, s, m, t) in rows
+        ],
+        "never_attempted": unattempted,
+    }
+
+
+def entities_missing_handles(
+    con: duckdb.DuckDBPyConnection, channel: str, limit: int
+) -> list[tuple[str, list[str]]]:
+    """(name, aliases) for entities with no entity_handles row for `channel`.
+
+    'blocked' rows count as missing (retryable); 'abstain'/verified do not.
+    Only company-ish entities — people/products don't get company pages.
+    """
+    rows = con.execute(
+        """
+        SELECT e.name, LIST(a.alias),
+               -- blocked rows retry LAST so stuck entities can't starve
+               -- never-attempted ones (and can't trip circuit breakers
+               -- at the head of every sweep)
+               MAX(CASE WHEN h.name_key IS NOT NULL THEN 1 ELSE 0 END) AS was_blocked
+        FROM entities e
+        LEFT JOIN entity_aliases a ON a.entity_id = e.entity_id
+        LEFT JOIN entity_handles h
+               ON h.name_key = LOWER(TRIM(e.name))
+              AND h.channel = ? AND h.source = 'blocked'
+        WHERE LOWER(e.type) LIKE '%company%'
+          AND NOT EXISTS (
+            SELECT 1 FROM entity_handles hx
+            WHERE hx.name_key = LOWER(TRIM(e.name))
+              AND hx.channel = ?
+              AND hx.source != 'blocked'
+          )
+        GROUP BY e.entity_id, e.name
+        ORDER BY was_blocked ASC, e.entity_id
+        LIMIT ?
+        """,
+        [channel, channel, limit],
+    ).fetchall()
+    return [(name, [a for a in (aliases or []) if a]) for (name, aliases, _b) in rows]
 
 
 # ── Relationships ──────────────────────────────────────────────────

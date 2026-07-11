@@ -103,3 +103,30 @@ resource "google_cloud_run_v2_service_iam_member" "pubsub_invoke_render" {
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.pubsub_invoker.email}"
 }
+
+# --- Handle resolver: read/write the shared handle-cache Firestore collection ---
+resource "google_service_account" "handle_resolver" {
+  account_id   = "handle-resolver-sa"
+  display_name = "handle-resolver — Cloud Function SA"
+}
+
+# Same collection-scoping caveat as ingest: Firestore IAM has no
+# collection-level roles, so datastore.user is project-wide. This SA's code
+# path only touches the `handle-cache` collection (tools/handle-resolver).
+resource "google_project_iam_member" "handles_firestore" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${google_service_account.handle_resolver.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "handles_cse_key" {
+  secret_id = google_secret_manager_secret.cse_api_key.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.handle_resolver.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "handles_serper_key" {
+  secret_id = google_secret_manager_secret.serper_api_key.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.handle_resolver.email}"
+}

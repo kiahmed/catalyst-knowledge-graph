@@ -63,3 +63,65 @@ resource "google_cloudfunctions2_function" "robotics_ingest" {
     google_secret_manager_secret_iam_member.ingest_gemini,
   ]
 }
+
+# handle-resolver — on-demand per-entity social handle resolution for
+# soljet-postiz (spec contract B, docs/handle-resolution-spec.md).
+# Verify-or-abstain, no LLM; caches results in the `handle-cache` Firestore
+# collection. IAM-locked: grant roles/run.invoker to the posting side's
+# identity when activating (no allUsers binding here on purpose).
+resource "google_cloudfunctions2_function" "handle_resolver" {
+  name        = "handle-resolver"
+  location    = var.region
+  description = "Resolves per-entity social handles (LinkedIn verify-or-abstain; X cache-only)"
+
+  build_config {
+    runtime     = "python312"
+    entry_point = "resolve_handles"
+    source {
+      storage_source {
+        bucket = google_storage_bucket.robotics_data.name
+        object = var.handles_source_object
+      }
+    }
+  }
+
+  service_config {
+    available_memory                 = "512Mi"
+    available_cpu                    = "1"
+    timeout_seconds                  = 300
+    max_instance_count               = 1
+    max_instance_request_concurrency = 1
+    service_account_email            = google_service_account.handle_resolver.email
+    ingress_settings                 = "ALLOW_ALL"
+
+    environment_variables = {
+      GCP_PROJECT             = var.project_id
+      HANDLE_CACHE_COLLECTION = var.handle_cache_collection
+      GOOGLE_CSE_ID           = var.google_cse_id
+      HANDLE_SEARCH_DELAY_S   = var.handle_search_delay_s
+      HANDLE_FETCH_DELAY_S    = var.handle_fetch_delay_s
+      HANDLE_DIRECT_DELAY_S   = var.handle_direct_delay_s
+      LOG_LEVEL               = "INFO"
+    }
+
+    secret_environment_variables {
+      key        = "SERPER_API_KEY"
+      project_id = var.project_id
+      secret     = google_secret_manager_secret.serper_api_key.secret_id
+      version    = "latest"
+    }
+
+    secret_environment_variables {
+      key        = "GOOGLE_CSE_API_KEY"
+      project_id = var.project_id
+      secret     = google_secret_manager_secret.cse_api_key.secret_id
+      version    = "latest"
+    }
+  }
+
+  depends_on = [
+    google_project_service.required,
+    google_secret_manager_secret_iam_member.handles_serper_key,
+    google_secret_manager_secret_iam_member.handles_cse_key,
+  ]
+}

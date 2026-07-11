@@ -5,6 +5,7 @@
         ingest ingest-dry export watermark check-log firestore-ping \
         reextract backtest \
         render render-batch render-status \
+        handles handles-lookup handles-unresolved handles-set \
         db db-query \
         frontend open \
         deploy deploy-preflight deploy-frontend firebase-sa link-domain firestore-sync \
@@ -22,6 +23,7 @@ export
 # so `make ingest` works even before .env is created.
 INGEST_PORT   ?= 8080
 RENDER_PORT   ?= 8081
+HANDLE_PORT   ?= 8083
 FRONTEND_PORT ?= 8000
 MIN_DOCKER_MEM_MB ?= 4096
 
@@ -55,6 +57,10 @@ help:
 	@echo "                       LIMIT=N                 → N latest"
 	@echo "                       FROM=ROB-... LIMIT=N    → N starting at this entry_id"
 	@echo "  render-status      Count catalysts vs rendered PNGs; show backlog"
+	@echo "  handles [LIMIT=N]  Resolve social handles for entities missing them (verify-or-abstain)"
+	@echo "  handles-lookup ENTITIES='Figure AI,Humanoid'  Look up (and resolve) handles for names"
+	@echo "  handles-unresolved  Report unresolved entity/channel pairs (with reason) + never-attempted"
+	@echo "  handles-set ENTITY='...' SET='x:@abc,linkedin:@xyz'  Manually set handles (human-curated)"
 	@echo ""
 	@echo "DB + frontend"
 	@echo "  db                 Open DuckDB CLI"
@@ -272,6 +278,43 @@ render-status:
 	if [ "$$missing" -gt 0 ]; then \
 		echo ""; echo "Catch up:  make render-batch  (or LIMIT=N for a bounded run)"; \
 	fi
+
+# Resolve social handles (verify-or-abstain, no LLM) for company entities
+# that don't have a cached decision yet. Idempotent — abstains are cached,
+# only 'blocked' (authwalled) entities are retried. After a sweep, re-run
+# `make export` so cards.json / Firestore pick up the new handles.
+handles:
+	@body='{"sweep":true'; \
+	[ -n "$(LIMIT)" ] && body=$$body',"limit":$(LIMIT)'; \
+	body=$$body'}'; \
+	curl -fsS -X POST http://localhost:$(HANDLE_PORT)/ \
+		-H "Content-Type: application/json" \
+		-d "$$body" | jq .
+
+# Report every entity/channel without a usable handle: attempted-but-
+# unresolved rows (with the why in `comment`) + never-attempted entities.
+handles-unresolved:
+	@curl -fsS -X POST http://localhost:$(HANDLE_PORT)/ \
+		-H "Content-Type: application/json" \
+		-d '{"report":"unresolved"}' | jq .
+
+# Manually set handles for one entity (source=human, wins over auto):
+#   make handles-set ENTITY='Figure AI' SET='x:@Figure_robot,linkedin:@figure-ai,reddit:@robotics'
+# Empty value = forced abstain ("never tag this entity on that channel").
+handles-set:
+	@test -n "$(ENTITY)" -a -n "$(SET)" || (echo "!! Set ENTITY='Figure AI' SET='x:@abc,linkedin:@xyz'" && exit 1)
+	@hmap=$$(echo "$(SET)" | python3 -c 'import json,sys; print(json.dumps(dict((p.split(":",1)+[""])[:2] for p in sys.stdin.read().strip().split(",") if p.strip())))'); \
+	curl -fsS -X POST http://localhost:$(HANDLE_PORT)/ \
+		-H "Content-Type: application/json" \
+		-d "{\"set\":{\"entity\":\"$(ENTITY)\",\"handles\":$$hmap}}" | jq .
+
+# Look up handles for specific entity names (resolves + caches on miss).
+handles-lookup:
+	@test -n "$(ENTITIES)" || (echo "!! Set ENTITIES='Figure AI,Humanoid'" && exit 1)
+	@names=$$(echo "$(ENTITIES)" | python3 -c 'import json,sys; print(json.dumps([s.strip() for s in sys.stdin.read().split(",") if s.strip()]))'); \
+	curl -fsS -X POST http://localhost:$(HANDLE_PORT)/ \
+		-H "Content-Type: application/json" \
+		-d "{\"entities\":$$names,\"channels\":[\"linkedin\",\"x\"]}" | jq .
 
 # ── DB + frontend ──────────────────────────────────────────────────
 

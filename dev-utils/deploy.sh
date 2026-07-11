@@ -67,6 +67,7 @@ if git -C "$ROOT" rev-parse --short HEAD >/dev/null 2>&1; then
 fi
 TAG="${TAG:-$(date -u +%Y%m%d-%H%M%S)}"
 INGEST_OBJECT="function-sources/robotics-ingest-${TAG}.zip"
+HANDLES_OBJECT="function-sources/handle-resolver-${TAG}.zip"
 AR="${REGION}-docker.pkg.dev/${GCP_PROJECT}/robotics"
 
 echo "Deploy → project=${GCP_PROJECT} region=${REGION} tag=${TAG}"
@@ -83,6 +84,12 @@ cards_bucket_name    = "${CARDS_BUCKET}"
 ingest_schedule      = "${INGEST_SCHEDULE:-0 6 * * *}"
 image_tag            = "${TAG}"
 ingest_source_object = "${INGEST_OBJECT}"
+handles_source_object = "${HANDLES_OBJECT}"
+google_cse_id        = "${GOOGLE_CSE_ID:-}"
+handle_search_delay_s = "${HANDLE_SEARCH_DELAY_S:-}"
+handle_fetch_delay_s  = "${HANDLE_FETCH_DELAY_S:-}"
+handle_direct_delay_s = "${HANDLE_DIRECT_DELAY_S:-}"
+handle_cache_collection = "${HANDLE_CACHE_COLLECTION:-handle-cache}"
 EOF
 echo "   wrote tools/infra/prod.auto.tfvars"
 
@@ -127,6 +134,12 @@ add_secret_version() {
   echo "   $1 ← new version"
 }
 add_secret_version GEMINI_API_KEY  "$GEMINI_API_KEY"
+# Search keys are optional (handle resolution falls back to direct fetch
+# without them) — but the secret resources always exist, and a Cloud
+# Function can't mount a secret with zero versions. Push "" if unset
+# (empty = disabled; handles.search_provider_from_env ignores blanks).
+add_secret_version SERPER_API_KEY     "${SERPER_API_KEY:-}"
+add_secret_version GOOGLE_CSE_API_KEY "${GOOGLE_CSE_API_KEY:-}"
 
 # ── 4. Package + upload the ingest Cloud Function source ────────────
 echo "── 4/6  ingest function source → gs://${DATA_BUCKET}/${INGEST_OBJECT}"
@@ -138,6 +151,16 @@ find "$STAGE" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
 # Python's built-in zipfile — avoids depending on the `zip` CLI being installed.
 ( cd "$STAGE" && python3 -m zipfile -c source.zip main.py requirements.txt src config )
 gcloud storage cp "$STAGE/source.zip" "gs://${DATA_BUCKET}/${INGEST_OBJECT}" --project="$GCP_PROJECT"
+rm -rf "$STAGE"
+
+# handle-resolver function source (same pattern; Firestore-cached in prod).
+echo "──      handle-resolver source → gs://${DATA_BUCKET}/${HANDLES_OBJECT}"
+STAGE="$(mktemp -d)"
+cp tools/handle-resolver/main.py tools/handle-resolver/requirements.txt "$STAGE/"
+cp -r src "$STAGE/src"
+find "$STAGE" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
+( cd "$STAGE" && python3 -m zipfile -c source.zip main.py requirements.txt src )
+gcloud storage cp "$STAGE/source.zip" "gs://${DATA_BUCKET}/${HANDLES_OBJECT}" --project="$GCP_PROJECT"
 rm -rf "$STAGE"
 
 # ── 5. Build + push the render image ────────────────────────────────

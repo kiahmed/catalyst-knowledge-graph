@@ -8,3 +8,19 @@ resource "google_secret_manager_secret" "gemini_api_key" {
   }
   depends_on = [google_project_service.required]
 }
+
+resource "google_secret_manager_secret" "cse_api_key" {
+  secret_id = "GOOGLE_CSE_API_KEY"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.required]
+}
+
+resource "google_secret_manager_secret" "serper_api_key" {
+  secret_id = "SERPER_API_KEY"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.required]
+}

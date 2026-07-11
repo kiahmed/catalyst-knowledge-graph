@@ -23,7 +23,7 @@ from typing import Any
 
 import duckdb
 
-from . import db
+from . import db, handles
 from .config import RoboticsConfig
 
 
@@ -137,6 +137,17 @@ def _load_cards(
             {"name": n, "ticker": t, "type": ty}
             for (n, t, ty) in ent_rows
         ]
+
+        # Verified social handles from the shared entity_handles cache
+        # (contract A of docs/handle-resolution-spec.md). None = abstained —
+        # soljet-postiz appends no tag for that entity/channel.
+        handle_rows = db.get_handles(
+            con, [handles.name_key(e["name"]) for e in entities]
+        )
+        for e in entities:
+            key = handles.name_key(e["name"])
+            e["linkedin_handle"] = (handle_rows.get((key, "linkedin")) or (None,))[0]
+            e["x_handle"] = (handle_rows.get((key, "x")) or (None,))[0]
 
         # Edge filters: min_edge_confidence + status visibility.
         status_filter = (

@@ -62,3 +62,39 @@ variable "ingest_source_object" {
   type        = string
   default     = "function-sources/robotics-ingest.zip"
 }
+
+variable "handles_source_object" {
+  description = "GCS object (in the data bucket) holding the handle-resolver Cloud Function source zip. `make deploy` sets this per-run (SHA-tagged) so Terraform redeploys on code change."
+  type        = string
+  default     = "function-sources/handle-resolver.zip"
+}
+
+variable "google_cse_id" {
+  description = "Programmable Search Engine ID (cx) for handle resolution. Empty = CSE disabled (direct-fetch fallback only)."
+  type        = string
+  default     = ""
+}
+
+variable "handle_search_delay_s" {
+  description = "Seconds between search-API queries in handle-resolver. Empty = code default (2)."
+  type        = string
+  default     = ""
+}
+
+variable "handle_fetch_delay_s" {
+  description = "Seconds between direct LinkedIn fetches in handle-resolver. Empty = code default (8)."
+  type        = string
+  default     = ""
+}
+
+variable "handle_direct_delay_s" {
+  description = "Seconds before a direct-fetch fallback in handle-resolver. Empty = code default (30)."
+  type        = string
+  default     = ""
+}
+
+variable "handle_cache_collection" {
+  description = "Firestore collection used by handle-resolver as its shared handle cache."
+  type        = string
+  default     = "handle-cache"
+}
