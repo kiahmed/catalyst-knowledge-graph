@@ -51,6 +51,11 @@ fi
 git worktree prune
 
 # --- 2. local branch --------------------------------------------------------
+# `make ship` leaves you ON the ship branch — step off it first (a checked-out
+# branch can't be deleted) and bring main up to date with the merged PR.
+if [ "$(git rev-parse --abbrev-ref HEAD)" = "$BRANCH" ]; then
+  git switch main && git pull --ff-only origin main
+fi
 if git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
   git branch -D "$BRANCH" && echo "  deleted local branch $BRANCH"
 fi
