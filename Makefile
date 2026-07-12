@@ -8,7 +8,7 @@
         handles handles-lookup handles-unresolved handles-set reaudit search-budget \
         db db-query \
         frontend open \
-        deploy deploy-preflight deploy-frontend firebase-sa link-domain firestore-sync \
+        deploy deploy-preflight deploy-frontend ship worktree-clean firebase-sa link-domain firestore-sync \
         nuke prune test fmt
 
 SHELL := /bin/bash
@@ -78,6 +78,8 @@ help:
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "deploy-preflight" "" "Verify gcloud auth + IAM admin + .env.prod"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "firestore-sync" "" "One-time: local DuckDB to CKG-<sector> + PNGs to Storage"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "deploy-frontend" "" "Deploy frontend/ to Firebase Hosting"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "ship" "m=\"msg\" (if dirty)" "Commit + push branch + open PR (never pushes main)"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "worktree-clean" "<name|ship/..> [FORCE=1]" "Remove MERGED worktree/branch: dir + local + remote"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "firebase-sa" "" "One-time: create Firebase deploy SA + key"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "link-domain" "" "One-time: link Hosting to CUSTOM_DOMAIN via Cloudflare"
 
@@ -376,6 +378,38 @@ open: frontend
 # Single-project deployment: GCP_PROJECT is the only project that matters.
 # Verifies tooling + active gcloud account + project-level IAM admin
 # before `terraform apply` tries to write IAM bindings.
+# Remove a MERGED worktree or ship/* branch everywhere — worktree dir,
+# local branch, remote branch. Same tool as soljet-postiz's worktree-clean.
+# Usage: make worktree-clean <name|ship/branch> [FORCE=1]
+worktree-clean:
+	@./dev-utils/worktree-clean.sh "$(filter-out $@,$(MAKECMDGOALS))" "FORCE=$(FORCE)"
+
+# Positional name support (`make worktree-clean <name>`): turn the trailing
+# goal into a no-op so make doesn't error. Scoped to worktree-clean runs.
+ifeq (worktree-clean,$(firstword $(MAKECMDGOALS)))
+$(if $(filter-out worktree-clean,$(MAKECMDGOALS)),\
+     $(eval $(filter-out worktree-clean,$(MAKECMDGOALS)):;@:))
+endif
+
+# Push the current work as a PR branch. Adapted from soljet-postiz's ship
+# target. If the tree is dirty, m="message" is required and everything is
+# committed first. If on main, a ship/<UTC-stamp> branch is cut from HEAD
+# (never pushes main directly). Then: push -u + gh pr create --fill.
+ship:
+	@command -v gh >/dev/null || { echo "!! gh CLI not installed"; exit 2; }
+	@git remote get-url origin >/dev/null 2>&1 || { echo "!! no origin remote — git remote add origin <url>"; exit 2; }
+	@if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$$(git ls-files --others --exclude-standard)" ]; then \
+	  test -n "$(m)" || { echo 'uncommitted changes — usage: make ship m="your message"'; exit 2; }; \
+	  git add -A && git commit -m "$(m)"; \
+	fi
+	@branch=$$(git rev-parse --abbrev-ref HEAD); \
+	if [ "$$branch" = "main" ]; then \
+	  branch="ship/$$(date -u +%Y%m%d-%H%M)"; \
+	  git switch -c "$$branch"; \
+	fi; \
+	git push -u origin "$$branch" && \
+	gh pr create --fill --base main --head "$$branch"
+
 deploy-preflight:
 	@bash -euo pipefail -c '\
 	fail=0; \
