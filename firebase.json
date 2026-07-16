@@ -21,6 +21,10 @@
         "run": { "serviceId": "robotics-og", "region": "us-central1" }
       },
       {
+        "source": "/__session/**",
+        "run": { "serviceId": "arboryx-auth", "region": "us-central1" }
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

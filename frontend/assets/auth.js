@@ -37,6 +37,31 @@
   // an external OAuth app; add them here once enabled in the Console.
   var SOCIAL = ['google'];
 
+  // ── Phase 2: shared .arboryx.ai session cookie (cross-subdomain SSO) ──
+  // robotics.arboryx.ai exposes the arboryx-auth function first-party under
+  // /__session/** (Firebase Hosting rewrite). Minting the cookie on sign-in
+  // lets the apex (arboryx.ai) auto-detect this session, and vice-versa.
+  var SESSION_BASE = '/__session';
+  function sessionFetch(path, opts) {
+    opts = opts || {};
+    opts.credentials = 'include';   // send/receive the .arboryx.ai cookie
+    return fetch(SESSION_BASE + path, opts);
+  }
+  function sessionLogin(user) {
+    return user.getIdToken().then(function (idToken) {
+      return sessionFetch('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        body: JSON.stringify({ idToken: idToken }),
+      });
+    }).catch(function (e) { console.warn('[RoboticsAuth] session login failed:', e); });
+  }
+  function sessionLogout() {
+    return sessionFetch('/logout', {
+      method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    }).catch(function () {});
+  }
+
   // ── SDK loading ────────────────────────────────────────────────────
   function loadScript(src) {
     return new Promise(function (resolve, reject) {
@@ -357,7 +382,7 @@
         '<button type="button" class="rauth-signout" id="rauthSignout">Sign out</button>';
       document.body.appendChild(chip);
       chip.querySelector('#rauthSignout').addEventListener('click', function () {
-        firebase.auth().signOut();
+        sessionLogout().then(function () { firebase.auth().signOut(); });
       });
     }
     chip.querySelector('#rauthUserName').textContent =
@@ -450,6 +475,7 @@
           upsertProfile(user).catch(function (e) {
             console.warn('user profile upsert failed:', e);
           });
+          sessionLogin(user);  // Phase 2: mint the shared .arboryx.ai cookie
           done(user);          // load catalysts (once)
         } else {
           hideUserChip();
