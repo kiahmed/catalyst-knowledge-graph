@@ -242,6 +242,41 @@
     }, 220);
   }
 
+  // ── Busy cursor (reference-counted) ───────────────────────────
+  // withBusy(promiseOrFn) adds `is-busy` to <body> (guards.css turns the
+  // cursor into `progress`) until the promise settles. Ref-counted so
+  // overlapping async ops don't clear each other's cursor early.
+  var busyCount = 0;
+
+  function busyStart() {
+    busyCount += 1;
+    document.body.classList.add('is-busy');
+  }
+
+  function busyEnd() {
+    busyCount = Math.max(0, busyCount - 1);
+    if (busyCount === 0) document.body.classList.remove('is-busy');
+  }
+
+  function withBusy(promiseOrFn) {
+    busyStart();
+    var p;
+    try {
+      p = (typeof promiseOrFn === 'function') ? promiseOrFn() : promiseOrFn;
+    } catch (err) {
+      busyEnd();
+      throw err;
+    }
+    if (!p || typeof p.then !== 'function') {
+      busyEnd();
+      return Promise.resolve(p);
+    }
+    return Promise.resolve(p).then(
+      function (v) { busyEnd(); return v; },
+      function (err) { busyEnd(); throw err; }
+    );
+  }
+
   // ── Expose global ─────────────────────────────────────────────
   window.RoboticsGuards = {
     checkSchema: checkSchema,
@@ -251,5 +286,6 @@
     showEmptyState: showEmptyState,
     showLoading: showLoading,
     hideLoading: hideLoading,
+    withBusy: withBusy,
   };
 })();

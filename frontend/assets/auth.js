@@ -187,9 +187,27 @@
     els.msg.className = 'rauth-msg' + (text ? ' ' + (kind || 'info') : '');
   }
 
-  function setBusy(busy) {
+  var busyBtn = null;         // button showing the '…' pending indicator
+
+  // Disable every gate button while an auth op is pending (blocks
+  // double-submits); mark the clicked one with a '…' (auth.css ::after).
+  function setBusy(busy, btn) {
     var btns = els.gate.querySelectorAll('button');
     for (var i = 0; i < btns.length; i++) btns[i].disabled = busy;
+    if (busyBtn) { busyBtn.classList.remove('rauth-btn-busy'); busyBtn = null; }
+    if (busy && btn) {
+      busyBtn = btn;
+      btn.classList.add('rauth-btn-busy');
+    }
+  }
+
+  // Page-wide progress cursor for the pending op; never swallows or
+  // alters the original promise chain.
+  function trackBusy(promise) {
+    if (window.RoboticsGuards && window.RoboticsGuards.withBusy) {
+      window.RoboticsGuards.withBusy(promise.then(function () {}, function () {}));
+    }
+    return promise;
   }
 
   // Show/hide field groups + relabel controls for the current mode.
@@ -228,12 +246,12 @@
     return null;
   }
 
-  function signInWithProvider(id) {
+  function signInWithProvider(id, btn) {
     var p = providerFor(id);
     if (!p) return;
-    setBusy(true);
+    setBusy(true, btn);
     showMsg('', '');
-    firebase.auth().signInWithPopup(p)
+    trackBusy(firebase.auth().signInWithPopup(p))
       .catch(function (e) { showMsg(friendlyError(e), 'error'); })
       .then(function () { setBusy(false); });
   }
@@ -243,13 +261,14 @@
     var email = els.email.value.trim();
     var pw = els.password.value;
     if (!email || !pw) { showMsg('Enter your email and password.', 'error'); return; }
-    setBusy(true);
+    setBusy(true, els.submit);
     showMsg('', '');
     var auth = firebase.auth();
     var op = (mode === 'signup')
       ? auth.createUserWithEmailAndPassword(email, pw)
       : auth.signInWithEmailAndPassword(email, pw);
-    op.catch(function (e) { showMsg(friendlyError(e), 'error'); })
+    trackBusy(op)
+      .catch(function (e) { showMsg(friendlyError(e), 'error'); })
       .then(function () { setBusy(false); });
   }
 
@@ -259,8 +278,8 @@
       showMsg('Enter your email above, then click “Forgot password?”.', 'info');
       return;
     }
-    setBusy(true);
-    firebase.auth().sendPasswordResetEmail(email)
+    setBusy(true, els.forgot);
+    trackBusy(firebase.auth().sendPasswordResetEmail(email))
       .then(function () { showMsg('Password reset email sent to ' + email + '.', 'info'); })
       .catch(function (e) { showMsg(friendlyError(e), 'error'); })
       .then(function () { setBusy(false); });
@@ -277,13 +296,13 @@
   function sendCode() {
     var phone = els.phone.value.trim();
     if (!phone) { showMsg('Enter a phone number.', 'error'); return; }
-    setBusy(true);
+    setBusy(true, els.submit);
     showMsg('Sending code…', 'info');
     // Invisible reCAPTCHA — required by Firebase before sending an SMS.
     if (!recaptcha) {
       recaptcha = new firebase.auth.RecaptchaVerifier('rauthRecaptcha', { size: 'invisible' });
     }
-    firebase.auth().signInWithPhoneNumber(phone, recaptcha)
+    trackBusy(firebase.auth().signInWithPhoneNumber(phone, recaptcha))
       .then(function (result) {
         confirmation = result;
         phoneStep = 'code';
@@ -303,9 +322,9 @@
     if (!confirmation) { showMsg('Request a code first.', 'error'); return; }
     var code = els.code.value.trim();
     if (!code) { showMsg('Enter the 6-digit code.', 'error'); return; }
-    setBusy(true);
+    setBusy(true, els.submit);
     showMsg('Verifying…', 'info');
-    confirmation.confirm(code)
+    trackBusy(confirmation.confirm(code))
       .catch(function (e) {
         showMsg(friendlyError(e), 'error');
         setBusy(false);
@@ -351,7 +370,7 @@
     for (var i = 0; i < provBtns.length; i++) {
       (function (btn) {
         btn.addEventListener('click', function () {
-          signInWithProvider(btn.getAttribute('data-provider'));
+          signInWithProvider(btn.getAttribute('data-provider'), btn);
         });
       })(provBtns[i]);
     }

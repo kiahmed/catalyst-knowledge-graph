@@ -23,6 +23,7 @@
   const EDGE_MIN_W = 1;
   const EDGE_MAX_W = 5;
   const MECH_TRUNC = 160;
+  const CHUNK_NODES = 15;
 
   const state = {
     cy: null,
@@ -32,6 +33,8 @@
     callbacks: {},
     hasFitted: false,
     bilkentRegistered: false,
+    renderToken: 0,
+    lastSignature: null,
   };
 
   function lerp(a, b, t) { return a + (b - a) * t; }
@@ -101,7 +104,7 @@
 
   function filterPayload(payload, filters) {
     const f = filters || {};
-    const timeWindowDays = f.timeWindowDays == null ? 90 : f.timeWindowDays;
+    const timeWindowDays = f.timeWindowDays == null ? 30 : f.timeWindowDays;
     const minConfidence = f.minConfidence == null ? 0 : f.minConfidence;
     const showInvalidated = !!f.showInvalidated;
     const evidenceTypes = new Set(f.evidenceTypes || ['direct', 'inferred', 'web_grounded', 'speculative']);
@@ -110,7 +113,7 @@
     const cutoff = timeWindowDays > 0 ? new Date(today.getTime() - timeWindowDays * 86400000) : null;
 
     const rawEdges = (payload.graph && payload.graph.edges) || [];
-    const edges = rawEdges.filter(e => {
+    let edges = rawEdges.filter(e => {
       if (!showInvalidated && e.status === 'invalidated') return false;
       if ((e.confidence || 0) < minConfidence) return false;
       if (!evidenceTypes.has(e.evidence_type)) return false;
@@ -121,15 +124,43 @@
       return true;
     });
 
+    // Ego view (entity search): only the searched entity's 1-hop edges,
+    // capped to the most recent by catalyst_date. Applied on top of the
+    // regular filters above.
+    if (f.egoEntity) {
+      let ego = edges.filter(e => e.from === f.egoEntity || e.to === f.egoEntity);
+      const maxE = f.egoMaxEdges == null ? 20 : f.egoMaxEdges;
+      if (ego.length > maxE) {
+        ego = ego.slice().sort((a, b) =>
+          String(b.catalyst_date || '').localeCompare(String(a.catalyst_date || '')));
+        ego = ego.slice(0, maxE);
+      }
+      edges = ego;
+    }
+
     const keep = new Set();
     edges.forEach(e => { keep.add(e.from); keep.add(e.to); });
+    if (f.egoEntity) keep.add(f.egoEntity); // show the entity even edge-less
     const rawNodes = (payload.graph && payload.graph.nodes) || [];
     const nodes = rawNodes.filter(n => keep.has(n.id));
 
     return { nodes, edges };
   }
 
-  function buildElements(nodes, edges) {
+  function hasPresetPosition(n) {
+    return Number.isFinite(n.x) && Number.isFinite(n.y);
+  }
+
+  // True when enough nodes carry exporter-provided x/y layout coordinates
+  // to skip the force layout. Old payloads lack them entirely.
+  function mostHavePositions(nodes) {
+    if (!nodes.length) return false;
+    let withPos = 0;
+    nodes.forEach(n => { if (hasPresetPosition(n)) withPos += 1; });
+    return withPos / nodes.length >= 0.9;
+  }
+
+  function buildElements(nodes, edges, usePositions) {
     const maxEdgeCount = nodes.reduce((m, n) => Math.max(m, n.edge_count || 0), 1);
     const denom = Math.max(1, maxEdgeCount - 1);
 
@@ -139,7 +170,7 @@
       const t = Math.min(1, (ec - 1) / denom);
       const size = lerp(NODE_MIN_PX, NODE_MAX_PX, t);
       const label = n.ticker ? `${n.name} (${n.ticker})` : n.name;
-      els.push({
+      const el = {
         group: 'nodes',
         data: {
           id: n.id,
@@ -151,7 +182,11 @@
           _size: size,
           _fill: heatToHex(n.heat || 0),
         },
-      });
+      };
+      if (usePositions && hasPresetPosition(n)) {
+        el.position = { x: n.x, y: n.y };
+      }
+      els.push(el);
     });
 
     // Group parallel edges by unordered node-pair so we can fan them out
@@ -276,6 +311,17 @@
         },
       },
       {
+        selector: 'node.robotics-ego',
+        style: {
+          'border-color': '#06b6d4',
+          'border-width': 4,
+          'underlay-color': '#06b6d4',
+          'underlay-opacity': 0.15,
+          'underlay-padding': 10,
+          'z-index': 999,
+        },
+      },
+      {
         selector: 'node.robotics-dim',
         style: {
           'opacity': 0.35,
@@ -379,6 +425,34 @@
     return el;
   }
 
+  // Discrete +/- zoom stepper (same approach as the mini-graph's), stepping
+  // multiplicatively about the viewport centre within cy's min/max zoom.
+  function createZoomControl(container, cy) {
+    const el = document.createElement('div');
+    el.className = 'robotics-zoom';
+    el.innerHTML = '<button type="button" data-dir="1" title="Zoom in">+</button><button type="button" data-dir="-1" title="Zoom out">−</button>';
+    const btns = el.querySelectorAll('button');
+    const STEP = 1.5;
+    const sync = () => {
+      btns[0].disabled = cy.zoom() >= cy.maxZoom() / 1.01;
+      btns[1].disabled = cy.zoom() <= cy.minZoom() * 1.01;
+    };
+    el.addEventListener('click', ev => {
+      const b = ev.target.closest('button');
+      if (!b) return;
+      const level = cy.zoom() * (b.dataset.dir === '1' ? STEP : 1 / STEP);
+      cy.zoom({
+        level: Math.max(cy.minZoom(), Math.min(cy.maxZoom(), level)),
+        renderedPosition: { x: container.clientWidth / 2, y: container.clientHeight / 2 },
+      });
+      sync();
+    });
+    cy.on('zoom', sync);
+    container.appendChild(el);
+    sync();
+    return el;
+  }
+
   function showTip(edge, event) {
     if (!state.tipEl) return;
     const d = edge.data();
@@ -461,6 +535,91 @@
     });
   }
 
+  function renderSignature(payload, filters) {
+    const f = filters || {};
+    return JSON.stringify([
+      payload.generated_at || '',
+      f.timeWindowDays,
+      f.minConfidence,
+      !!f.showInvalidated,
+      (f.evidenceTypes || []).slice().sort(),
+      f.egoEntity || '',
+      f.egoMaxEdges || 0,
+    ]);
+  }
+
+  // Preset-position path: paint in degree-descending batches of CHUNK_NODES
+  // per animation frame, each batch bringing along the edges whose endpoints
+  // are both on screen. Cheap because no force layout runs.
+  function renderChunked(nodes, edges, token) {
+    const ordered = nodes.slice().sort((a, b) =>
+      (b.edge_count || 0) - (a.edge_count || 0) || (b.heat || 0) - (a.heat || 0));
+    const els = buildElements(ordered, edges, true);
+    const nodeEls = els.filter(el => el.group === 'nodes');
+    const edgeEls = els.filter(el => el.group === 'edges');
+
+    const batchOfNode = new Map();
+    nodeEls.forEach((el, i) => batchOfNode.set(el.data.id, Math.floor(i / CHUNK_NODES)));
+    const batchCount = Math.max(1, Math.ceil(nodeEls.length / CHUNK_NODES));
+
+    const batches = [];
+    for (let i = 0; i < batchCount; i++) {
+      batches.push(nodeEls.slice(i * CHUNK_NODES, (i + 1) * CHUNK_NODES));
+    }
+    edgeEls.forEach(el => {
+      const b = Math.max(
+        batchOfNode.get(el.data.source) ?? 0,
+        batchOfNode.get(el.data.target) ?? 0);
+      batches[b].push(el);
+    });
+
+    return new Promise(resolve => {
+      let i = 0;
+      const step = () => {
+        // A newer render() (tab switch / filter change) cancels this loop.
+        if (token !== state.renderToken || !state.cy) { resolve(false); return; }
+        state.cy.batch(() => { state.cy.add(batches[i]); });
+        if (i === 0) {
+          try { state.cy.fit(undefined, 40); } catch (_) {}
+        }
+        i += 1;
+        if (i < batches.length) {
+          requestAnimationFrame(step);
+        } else {
+          try {
+            state.cy.layout({ name: 'preset', fit: true, padding: 40, animate: false }).run();
+          } catch (_) {}
+          state.hasFitted = true;
+          resolve(true);
+        }
+      };
+      requestAnimationFrame(step);
+    });
+  }
+
+  // Fallback for payloads without positions: single-shot cose(-bilkent)
+  // layout, as before — chunking a force layout just thrashes it.
+  function renderSingleShot(nodes, edges) {
+    const elements = buildElements(nodes, edges, false);
+    state.cy.batch(() => { state.cy.add(elements); });
+
+    const layoutName = ensureLayoutRegistered();
+    const layout = state.cy.layout(layoutOpts(layoutName));
+    return new Promise(resolve => {
+      let settled = false;
+      const done = () => { if (!settled) { settled = true; resolve(true); } };
+      layout.one('layoutstop', done);
+      layout.run();
+      // Safety net: some layouts don't emit layoutstop when given 0 elements.
+      setTimeout(done, 30000);
+
+      if (!state.hasFitted) {
+        state.hasFitted = true;
+        setTimeout(() => { try { state.cy.fit(undefined, 40); } catch (_) {} }, 0);
+      }
+    });
+  }
+
   const RoboticsGraph = {
     init(container, opts) {
       if (!container) throw new Error('[RoboticsGraph] container required');
@@ -470,6 +629,7 @@
       state.container = container;
       state.callbacks = opts || {};
       state.hasFitted = false;
+      state.lastSignature = null;
 
       container.classList.add('robotics-graph');
       if (!getComputedStyle(container).position || getComputedStyle(container).position === 'static') {
@@ -495,40 +655,59 @@
       });
 
       wireEvents(state.cy);
+      createZoomControl(container, state.cy);
       return state.cy;
     },
 
+    // Returns a Promise that settles when the paint is complete (last chunk
+    // added, or layoutstop in the force fallback). A no-op cache hit or a
+    // render superseded by a newer call resolves immediately.
     render(payload, filters) {
       if (!state.cy) throw new Error('[RoboticsGraph] init() must be called before render()');
+      state.renderToken += 1;
+      const token = state.renderToken;
+
       if (!payload || !payload.graph) {
+        state.lastSignature = null;
         state.cy.elements().remove();
-        return;
+        return Promise.resolve(false);
       }
+
+      // Same payload + filters as the last render → keep the instance as-is.
+      const sig = renderSignature(payload, filters);
+      if (sig === state.lastSignature && state.cy.elements().length > 0) {
+        return Promise.resolve(false);
+      }
+      state.lastSignature = sig;
+
+      hideTip();
+      state.cy.elements().remove();
+
       const { nodes, edges } = filterPayload(payload, filters);
-      const elements = buildElements(nodes, edges);
-
-      state.cy.batch(() => {
-        state.cy.elements().remove();
-        state.cy.add(elements);
+      const paint = mostHavePositions(nodes)
+        ? renderChunked(nodes, edges, token)
+        : renderSingleShot(nodes, edges);
+      const ego = (filters || {}).egoEntity;
+      if (!ego) return paint;
+      // Highlight the searched entity once the paint settles.
+      return paint.then(ok => {
+        if (state.cy) {
+          const n = state.cy.getElementById(ego);
+          if (n && n.length) n.addClass('robotics-ego');
+        }
+        return ok;
       });
-
-      const layoutName = ensureLayoutRegistered();
-      const layout = state.cy.layout(layoutOpts(layoutName));
-      layout.run();
-
-      if (!state.hasFitted) {
-        state.hasFitted = true;
-        setTimeout(() => { try { state.cy.fit(undefined, 40); } catch (_) {} }, 0);
-      }
     },
 
     destroy() {
+      state.renderToken += 1;   // cancel any in-flight chunk loop
+      state.lastSignature = null;
       if (state.cy) {
         try { state.cy.destroy(); } catch (_) {}
         state.cy = null;
       }
       if (state.container) {
-        state.container.querySelectorAll('.robotics-graph-canvas, .robotics-edge-tip, .robotics-graph-legend')
+        state.container.querySelectorAll('.robotics-graph-canvas, .robotics-edge-tip, .robotics-graph-legend, .robotics-zoom')
           .forEach(el => el.remove());
         state.container.classList.remove('robotics-graph');
       }
@@ -556,6 +735,7 @@
         easing: 'ease-in-out',
       });
     },
+
   };
 
   window.RoboticsGraph = RoboticsGraph;

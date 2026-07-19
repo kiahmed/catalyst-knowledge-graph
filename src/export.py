@@ -267,6 +267,68 @@ def _compute_stats(
     }
 
 
+def _precompute_layout(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> None:
+    """Bake deterministic x/y layout coordinates into each node, in place.
+
+    Fruchterman-Reingold, pure python, seeded by node name — so the
+    frontend can render with cytoscape's zero-cost `preset` layout instead
+    of running cose-bilkent on the main thread (seconds of frozen UI at
+    ~500 nodes). Runs offline at export time where the cost is invisible.
+    Iterations are capped so the whole pass stays a few seconds.
+    """
+    import math
+    import random
+
+    n = len(nodes)
+    if n == 0:
+        return
+    rng = random.Random("ckg-layout-v1")  # fixed seed → stable positions run-to-run
+    area_side = 100.0 * math.sqrt(n)
+    k = area_side / math.sqrt(n)  # ideal spring length
+    idx = {nd["id"]: i for i, nd in enumerate(nodes)}
+    pos = [[rng.uniform(0, area_side), rng.uniform(0, area_side)] for _ in range(n)]
+    pairs = [(idx[e["from"]], idx[e["to"]]) for e in edges
+             if e["from"] in idx and e["to"] in idx]
+
+    iters = 50 if n <= 600 else 30
+    temp = area_side / 10.0
+    cool = temp / (iters + 1)
+    for _ in range(iters):
+        disp = [[0.0, 0.0] for _ in range(n)]
+        # repulsion (O(n^2) — fine at export time for a few hundred nodes)
+        for i in range(n):
+            xi, yi = pos[i]
+            di = disp[i]
+            for j in range(i + 1, n):
+                dx = xi - pos[j][0]
+                dy = yi - pos[j][1]
+                d2 = dx * dx + dy * dy or 0.01
+                f = (k * k) / d2
+                fx, fy = dx * f, dy * f
+                di[0] += fx; di[1] += fy
+                disp[j][0] -= fx; disp[j][1] -= fy
+        # attraction along edges
+        for i, j in pairs:
+            dx = pos[i][0] - pos[j][0]
+            dy = pos[i][1] - pos[j][1]
+            d = math.sqrt(dx * dx + dy * dy) or 0.1
+            f = (d * d) / k / d
+            fx, fy = dx * f, dy * f
+            disp[i][0] -= fx; disp[i][1] -= fy
+            disp[j][0] += fx; disp[j][1] += fy
+        for i in range(n):
+            dx, dy = disp[i]
+            d = math.sqrt(dx * dx + dy * dy) or 0.1
+            step = min(d, temp)
+            pos[i][0] += dx / d * step
+            pos[i][1] += dy / d * step
+        temp -= cool
+
+    for i, nd in enumerate(nodes):
+        nd["x"] = round(pos[i][0], 1)
+        nd["y"] = round(pos[i][1], 1)
+
+
 def _build_graph_projection(cards: list[dict[str, Any]]) -> dict[str, Any]:
     """Flatten cards into a node-and-edge graph suitable for direct UI render.
 
@@ -318,8 +380,10 @@ def _build_graph_projection(cards: list[dict[str, Any]]) -> dict[str, Any]:
         for n in nodes.values():
             n["heat"] = round(n["heat"] / max_heat, 3)
 
+    node_list = sorted(nodes.values(), key=lambda n: n["heat"], reverse=True)
+    _precompute_layout(node_list, edges)
     return {
-        "nodes": sorted(nodes.values(), key=lambda n: n["heat"], reverse=True),
+        "nodes": node_list,
         "edges": edges,
     }
 
