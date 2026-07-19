@@ -15,6 +15,8 @@
 <meta name="twitter:image" content="https://robotics.arboryx.ai/assets/main%20logo.png" />
 <meta name="twitter:title" content="Robotics module · Arboryx" />
 <meta name="twitter:description" content="Embodied AI catalysts — daily entity-graph view." />
+<link rel="icon" type="image/png" sizes="64x64" href="/assets/favicon.png" />
+<link rel="icon" href="/assets/favicon.ico" sizes="16x16 32x32 48x48" />
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -458,6 +460,7 @@ input[type="date"]:focus { border-color: var(--border-focus); }
 }
 .share-btn:hover { background: var(--bg-warm); border-color: var(--border-hover); }
 .share-btn:active { transform: translateY(1px); }
+.share-btn:disabled { opacity: .6; cursor: progress; }
 .insight-bar { display: flex; align-items: center; justify-content: space-between; padding: 9px 13px; background: var(--bg-detail); border: 1px solid var(--border); border-radius: 7px; margin-bottom: 5px; font-size: 13px; }
 .insight-entity { font-weight: 600; color: var(--text); }
 .insight-metric { font-weight: 500; }
@@ -517,6 +520,58 @@ input[type="date"]:focus { border-color: var(--border-focus); }
   color: var(--text);
   box-shadow: 0 1px 2px rgba(0,0,0,0.05);
 }
+.gfilter-panel .gf-widen-note {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+/* ── Graph entity search (ego view) ── */
+.graph-search {
+  position: absolute; top: 12px; left: 284px; z-index: 420;
+  width: 230px;
+}
+.gs-label {
+  font-size: 10px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.5px;
+  margin-bottom: 4px;
+  display: inline-block;
+  padding: 2px 6px; border-radius: 4px;
+  background: rgba(253,252,250,0.8);
+}
+.gs-box { position: relative; }
+.graph-search input {
+  width: 100%; box-sizing: border-box;
+  height: 32px; padding: 0 30px 0 12px;
+  font: inherit; font-size: 12px; color: var(--text);
+  background: rgba(253,252,250,0.92);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: var(--shadow);
+  outline: none;
+}
+.graph-search input:focus { border-color: #06b6d4; }
+.gs-clear {
+  position: absolute; top: 4px; right: 4px;
+  width: 24px; height: 24px;
+  border: none; background: none; padding: 0;
+  color: var(--text-muted); font-size: 15px; line-height: 1;
+  cursor: pointer; border-radius: 6px;
+}
+.gs-clear:hover { color: var(--text); background: var(--bg-warm); }
+.gs-suggestions {
+  position: absolute; top: 36px; left: 0; right: 0;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: var(--shadow);
+  overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.gs-item {
+  font: inherit; font-size: 12px; text-align: left;
+  padding: 7px 12px; border: none; background: none;
+  color: var(--text-secondary); cursor: pointer;
+}
+.gs-item:hover, .gs-item.is-active { background: var(--bg-warm); color: var(--text); }
 .gfilter-panel .gf-slider-row { display: flex; align-items: center; gap: 8px; }
 .gfilter-panel input[type="range"] {
   flex: 1; height: 4px; -webkit-appearance: none; appearance: none;
@@ -777,7 +832,30 @@ input[type="date"]:focus { border-color: var(--border-focus); }
   font-size: 10px; color: var(--text-muted);
   text-transform: uppercase; letter-spacing: 0.5px;
   font-weight: 600; margin-bottom: 8px;
+  display: flex; align-items: center; justify-content: space-between;
 }
+.mini-explore-btn {
+  font: inherit; font-size: 10px; letter-spacing: 0.5px;
+  text-transform: none; font-weight: 600;
+  background: none; border: none; padding: 0;
+  color: #06b6d4; cursor: pointer;
+}
+.mini-explore-btn:hover { color: #0891b2; text-decoration: underline; }
+.mini-graph .mini-edge-tip {
+  position: absolute; top: 0; left: 0; display: none;
+  max-width: 240px; padding: 8px 10px;
+  background: var(--bg-card); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: var(--shadow);
+  font-size: 11px; line-height: 1.45;
+  pointer-events: none; z-index: 60;
+  white-space: normal; word-wrap: break-word;
+  text-transform: none; letter-spacing: normal; font-weight: 400;
+}
+.mini-graph .mini-edge-tip.is-visible { display: block; }
+.mini-graph .mini-tip-title { font-weight: 600; margin-bottom: 3px; }
+.mini-graph .mini-tip-meta { color: var(--text-secondary); font-family: 'IBM Plex Mono', monospace; font-size: 10px; }
+.mini-graph .mini-tip-mech { margin-top: 3px; }
 .mini-graph {
   width: 100%; height: 240px;
   background: var(--bg-detail);
@@ -791,6 +869,18 @@ input[type="date"]:focus { border-color: var(--border-focus); }
   width: 100%; height: 100%;
   font-size: 11px; color: var(--text-muted);
 }
+.mini-zoom {
+  position: absolute; top: 8px; right: 8px; z-index: 5;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.mini-zoom button {
+  width: 22px; height: 22px;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg-detail); color: var(--text-muted);
+  font-size: 13px; line-height: 1; cursor: pointer; padding: 0;
+}
+.mini-zoom button:hover { color: var(--text); }
+.mini-zoom button:disabled { opacity: 0.35; cursor: default; }
 
 /* ══ Responsive ══ */
 @media (max-width: 860px) {
@@ -983,6 +1073,16 @@ input[type="date"]:focus { border-color: var(--border-focus); }
 <!-- Graph view -->
 <div id="graphView" class="view-root" style="display:none;">
   <div class="robotics-graph" id="roboticsGraphRoot"></div>
+
+  <!-- Entity search (ego view) -->
+  <div class="graph-search" id="graphSearch">
+    <div class="gs-label">Filter by company name</div>
+    <div class="gs-box">
+      <input type="text" id="graphSearchInput" placeholder="Search entity…" autocomplete="off" spellcheck="false">
+      <button type="button" class="gs-clear" id="graphSearchClear" title="Clear search" hidden>×</button>
+      <div class="gs-suggestions" id="graphSearchSugg" hidden></div>
+    </div>
+  </div>
 
   <!-- 1.13c filter panel -->
   <div class="gfilter-panel" id="gfilterPanel">
@@ -1211,9 +1311,72 @@ function transformCard(c, idx, sector) {
   const meta = TYPE_META[c.card_type] || TYPE_META.catalyst;
   const ents = c.entities || [];
   const rels = c.relationships || [];
-  const entA = ents[0] ? { name: ents[0].name, ticker: ents[0].ticker || null } : null;
-  const entB = ents[1] ? { name: ents[1].name, ticker: ents[1].ticker || null } : null;
-  const related = ents.slice(2, 6).map(e => e.ticker || e.name);
+
+  // The exporter emits entities[] ALPHABETICALLY, so entities[0] is usually
+  // not the story's subject. Pick the subject by headline match (longest
+  // match wins, names before tickers); fall back to the entity in the most
+  // of this card's relationships; last resort entities[0].
+  const hl = (c.headline || "").toLowerCase();
+  let subject = null;
+  let bestLen = 0;
+  ents.forEach(e => {
+    if (e.name && e.name.length > bestLen && hl.includes(e.name.toLowerCase())) {
+      subject = e;
+      bestLen = e.name.length;
+    }
+  });
+  if (!subject) {
+    // Tickers only if no name matched, and only on word boundaries — short
+    // tickers (F, AI…) substring-match almost any headline.
+    ents.forEach(e => {
+      if (!e.ticker || e.ticker.length <= bestLen) return;
+      const re = new RegExp(`\\b${e.ticker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+      if (re.test(c.headline || "")) {
+        subject = e;
+        bestLen = e.ticker.length;
+      }
+    });
+  }
+  if (!subject && rels.length) {
+    const freq = new Map();
+    rels.forEach(r => {
+      [r.from, r.to].forEach(n => { if (n) freq.set(n, (freq.get(n) || 0) + 1); });
+    });
+    let bestN = 0;
+    ents.forEach(e => {
+      const n = freq.get(e.name) || 0;
+      if (n > bestN) { subject = e; bestN = n; }
+    });
+  }
+  if (!subject) subject = ents[0] || null;
+
+  const entA = subject ? { name: subject.name, ticker: subject.ticker || null } : null;
+
+  // entityB = other endpoint of the subject's strongest relationship
+  // (highest confidence; 'direct' evidence wins ties). Null when the
+  // subject has no relationships — the pill row renders subject-only.
+  let entB = null;
+  if (subject) {
+    let best = null;
+    rels.forEach(r => {
+      if (r.from !== subject.name && r.to !== subject.name) return;
+      const other = r.from === subject.name ? r.to : r.from;
+      if (!other || other === subject.name) return;
+      const conf = r.confidence || 0;
+      const bconf = best ? (best.r.confidence || 0) : -1;
+      if (!best || conf > bconf ||
+          (conf === bconf && r.evidence_type === "direct" && best.r.evidence_type !== "direct")) {
+        best = { r, other };
+      }
+    });
+    if (best) {
+      const bEnt = ents.find(e => e.name === best.other);
+      entB = { name: best.other, ticker: (bEnt && bEnt.ticker) || null };
+    }
+  }
+
+  const chosen = new Set([entA && entA.name, entB && entB.name].filter(Boolean));
+  const related = ents.filter(e => !chosen.has(e.name)).slice(0, 4).map(e => e.ticker || e.name);
   const [y, m, d] = (c.date || "").split("-");
   const sortDate = y && m && d ? parseInt(y+m+d, 10) : 0;
   return {
@@ -1274,15 +1437,177 @@ function currentGraphFilters() {
     if (allowed.length) ev = allowed;
   }
   return {
-    timeWindowDays: h.tw != null ? parseInt(h.tw, 10) : (gcfg.time_window_days ?? 90),
+    // Default window is 30d unless the hash carries an explicit choice.
+    // (payload graph_config.time_window_days is ignored here on purpose —
+    // exports ship 0/"All", which made every first paint render everything.)
+    timeWindowDays: h.tw != null ? parseInt(h.tw, 10) : 30,
     minConfidence: h.minc != null ? parseFloat(h.minc) : (gcfg.min_edge_confidence ?? 0.0),
     showInvalidated: h.inv != null ? h.inv === "1" : !!gcfg.show_invalidated,
     evidenceTypes: ev
   };
 }
 
+// Mirrors graph.js filterPayload's edge filter, to probe window widths
+// without rendering.
+function graphEdgeCountFor(f) {
+  if (!PAYLOAD || !PAYLOAD.graph) return 0;
+  const edges = PAYLOAD.graph.edges || [];
+  const ev = new Set(f.evidenceTypes || EVIDENCE_TYPES_ALL);
+  const cutoff = f.timeWindowDays > 0
+    ? new Date(new Date(PAYLOAD.generated_at || "2026-04-18").getTime() - f.timeWindowDays * 86400000)
+    : null;
+  let n = 0;
+  for (const e of edges) {
+    if (!f.showInvalidated && e.status === "invalidated") continue;
+    if ((e.confidence || 0) < f.minConfidence) continue;
+    if (!ev.has(e.evidence_type)) continue;
+    if (cutoff) {
+      const d = new Date(e.catalyst_date);
+      if (!isNaN(d) && d < cutoff) continue;
+    }
+    n++;
+  }
+  return n;
+}
+
+// When the window is the default (no tw in the hash) and it yields an empty
+// graph, widen 30 → 90 → All until something shows, and say so in the panel.
+// An explicit user choice stays strict — empty is empty.
+const GRAPH_WIDEN_STEPS = [30, 90, 0];
+
+function effectiveGraphFilters() {
+  const f = currentGraphFilters();
+  const strict = { filters: f, widenedFrom: null };
+  if (parseHash().tw != null || !PAYLOAD) return strict;
+  if (graphEdgeCountFor(f) > 0) return strict;
+  for (const w of GRAPH_WIDEN_STEPS) {
+    if (w === f.timeWindowDays) continue;
+    const cand = Object.assign({}, f, { timeWindowDays: w });
+    if (graphEdgeCountFor(cand) > 0) return { filters: cand, widenedFrom: f.timeWindowDays };
+  }
+  return strict; // nothing anywhere — honest empty state
+}
+
+function updateWidenNote(widenedFrom, tw) {
+  const seg = document.getElementById("gfTimeSeg");
+  if (!seg) return;
+  let note = document.getElementById("gfWidenNote");
+  if (widenedFrom == null) { if (note) note.remove(); return; }
+  if (!note) {
+    note = document.createElement("div");
+    note.id = "gfWidenNote";
+    note.className = "gf-widen-note";
+    seg.insertAdjacentElement("afterend", note);
+  }
+  const shown = tw > 0 ? `${tw} days` : "all time";
+  note.textContent = `No catalysts in the last ${widenedFrom} days — showing ${shown}`;
+}
+
+// ══ Graph entity search (ego view) ══
+// Selecting an entity renders only it + its 1-hop neighbours (capped to the
+// EGO_MAX_EDGES most recent edges), with all other filters still applied.
+// State lives in the hash (q=) so it's shareable and survives tab switches.
+const EGO_MAX_EDGES = 20;
+
+function syncGraphSearchUI() {
+  const input = document.getElementById("graphSearchInput");
+  const clearBtn = document.getElementById("graphSearchClear");
+  if (!input) return;
+  const q = parseHash().q || "";
+  if (document.activeElement !== input) input.value = q;
+  clearBtn.hidden = !q;
+}
+
+(function initGraphSearch() {
+  const input = document.getElementById("graphSearchInput");
+  const clearBtn = document.getElementById("graphSearchClear");
+  const sugg = document.getElementById("graphSearchSugg");
+  if (!input || !clearBtn || !sugg) return;
+  let items = [];
+  let hi = -1;
+
+  const nodeNames = () =>
+    (((PAYLOAD && PAYLOAD.graph && PAYLOAD.graph.nodes) || []).map(n => n.name || n.id));
+
+  function closeSugg() {
+    sugg.hidden = true;
+    sugg.textContent = "";
+    items = [];
+    hi = -1;
+  }
+
+  function highlight(i) {
+    hi = i;
+    sugg.querySelectorAll(".gs-item").forEach((el, j) =>
+      el.classList.toggle("is-active", j === i));
+  }
+
+  function renderSugg(list) {
+    sugg.textContent = "";
+    list.forEach(name => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "gs-item";
+      b.textContent = name;
+      // mousedown (not click) so the input's blur doesn't swallow it
+      b.addEventListener("mousedown", ev => { ev.preventDefault(); select(name); });
+      sugg.appendChild(b);
+    });
+    items = list;
+    sugg.hidden = list.length === 0;
+    highlight(list.length ? 0 : -1);
+  }
+
+  function select(name) {
+    input.value = name;
+    closeSugg();
+    clearBtn.hidden = false;
+    writeHash({ q: name, node: "", edge: "", from: "", to: "", rel: "" });
+    onFilterChange();
+  }
+
+  function clearSearch() {
+    input.value = "";
+    clearBtn.hidden = true;
+    closeSugg();
+    writeHash({ q: "" });
+    onFilterChange();
+  }
+
+  input.addEventListener("input", () => {
+    const q = input.value.trim().toLowerCase();
+    if (!q) { closeSugg(); return; }
+    const list = nodeNames()
+      .filter(n => n.toLowerCase().includes(q))
+      .sort((a, b) => a.toLowerCase().indexOf(q) - b.toLowerCase().indexOf(q) || a.length - b.length)
+      .slice(0, 8);
+    renderSugg(list);
+  });
+
+  input.addEventListener("keydown", e => {
+    e.stopPropagation(); // keep global card-paging shortcuts (Enter/arrows) out
+    if (e.key === "ArrowDown" && items.length) {
+      e.preventDefault();
+      highlight((hi + 1) % items.length);
+    } else if (e.key === "ArrowUp" && items.length) {
+      e.preventDefault();
+      highlight((hi - 1 + items.length) % items.length);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (items.length) select(items[Math.max(0, hi)]);
+    } else if (e.key === "Escape") {
+      if (!sugg.hidden) closeSugg();
+      else if (input.value) clearSearch();
+      input.blur();
+    }
+  });
+
+  input.addEventListener("blur", () => setTimeout(closeSugg, 150));
+  clearBtn.addEventListener("click", () => { clearSearch(); input.focus(); });
+})();
+
 function renderGraphFromPayload() {
-  if (!PAYLOAD || !window.RoboticsGraph) return;
+  if (!PAYLOAD || !window.RoboticsGraph) return Promise.resolve(false);
   const root = document.getElementById("roboticsGraphRoot");
   if (!GRAPH_INITIALIZED) {
     RoboticsGraph.init(root, {
@@ -1305,7 +1630,10 @@ function renderGraphFromPayload() {
     });
     GRAPH_INITIALIZED = true;
   }
-  RoboticsGraph.render(PAYLOAD, currentGraphFilters());
+  let filters = effectiveGraphFilters().filters;
+  const q = parseHash().q;
+  if (q) filters = Object.assign({}, filters, { egoEntity: q, egoMaxEdges: EGO_MAX_EDGES });
+  return RoboticsGuards.withBusy(RoboticsGraph.render(PAYLOAD, filters));
 }
 
 function setView(view, opts = {}) {
@@ -1322,6 +1650,7 @@ function setView(view, opts = {}) {
   if (isGraph) {
     renderGraphFromPayload();
     hydrateFilterPanel();
+    syncGraphSearchUI();
     if (window.RoboticsGraph && GRAPH_INITIALIZED) requestAnimationFrame(() => RoboticsGraph.fit());
     // Restore panels from hash
     const h = parseHash();
@@ -1540,38 +1869,41 @@ function renderShareBar(card) {
     <div class="detail-section" style="border-top:1px solid var(--border);padding-top:12px;margin-top:16px">
       <div class="detail-label">Share</div>
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">
-        <button class="share-btn" onclick="shareNative()">Share…</button>
+        <button class="share-btn" onclick="shareNative(this)">Share…</button>
         <a class="share-btn" target="_blank" rel="noopener"
            href="https://twitter.com/intent/tweet?text=${tweet}&url=${encodeURIComponent(url)}">Twitter</a>
         <a class="share-btn" target="_blank" rel="noopener"
            href="https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(url)}">LinkedIn</a>
         <a class="share-btn" target="_blank" rel="noopener"
            href="https://www.reddit.com/submit?title=${redditTitle}&url=${encodeURIComponent(url)}">Reddit</a>
-        <button class="share-btn" onclick="copyLink()">Copy link</button>
+        <button class="share-btn" onclick="copyLink(this)">Copy link</button>
         ${card.source_url ? `<a class="share-btn" target="_blank" rel="noopener" href="${card.source_url}">Source</a>` : ''}
       </div>
       <div id="shareToast" style="margin-top:8px;font-size:12px;color:var(--text-muted);opacity:0;transition:opacity .2s"></div>
     </div>`;
 }
-async function shareNative() {
+async function shareNative(btn) {
   if (!_currentCard) return;
   const data = {
     title: _currentCard.headline,
     text: _currentCard.share?.twitter_text || _currentCard.headline,
     url: shareURL(_currentCard),
   };
+  if (btn) btn.disabled = true;
   try {
-    if (navigator.share) await navigator.share(data);
-    else await copyLink();
+    await RoboticsGuards.withBusy(navigator.share ? navigator.share(data) : copyLink());
   } catch (_) { /* user cancelled */ }
+  finally { if (btn) btn.disabled = false; }
 }
-async function copyLink() {
+async function copyLink(btn) {
   if (!_currentCard) return;
+  if (btn) btn.disabled = true;
   try {
-    await navigator.clipboard.writeText(shareURL(_currentCard));
+    await RoboticsGuards.withBusy(navigator.clipboard.writeText(shareURL(_currentCard)));
     const t = document.getElementById('shareToast');
     if (t) { t.textContent = "Link copied."; t.style.opacity = "1"; setTimeout(() => t.style.opacity = "0", 1500); }
   } catch (_) { /* clipboard denied */ }
+  finally { if (btn) btn.disabled = false; }
 }
 
 // ══ Filtering ══
@@ -1664,7 +1996,9 @@ document.addEventListener('click', function init() { initAudio(); document.remov
 
 // ══ Ticket 1.13c — Graph filters panel ══
 function hydrateFilterPanel() {
-  const f = currentGraphFilters();
+  const eff = effectiveGraphFilters();
+  const f = eff.filters;
+  updateWidenNote(eff.widenedFrom, f.timeWindowDays);
   // Time-window segmented
   document.querySelectorAll("#gfTimeSeg .gf-seg-btn").forEach(btn => {
     const tw = parseInt(btn.dataset.tw, 10);
@@ -1697,7 +2031,8 @@ function evidenceHashFromChips() {
 function onFilterChange() {
   if (!GRAPH_INITIALIZED) return;
   requestAnimationFrame(() => {
-    RoboticsGraph.render(PAYLOAD, currentGraphFilters());
+    renderGraphFromPayload();
+    hydrateFilterPanel();
   });
 }
 
@@ -2019,6 +2354,7 @@ const MINI_EVIDENCE_COLORS = {
 const MINI_HEAT_COOL = { h: 201, s: 47, l: 78 };
 const MINI_HEAT_WARM = { h: 10, s: 100, l: 64 };
 function _lerp(a,b,t){ return a + (b-a)*t; }
+function _truncate(s, n){ return (s && s.length > n) ? s.slice(0, n - 1) + "…" : (s || ""); }
 function _hslToHex(h,s,l){
   s/=100; l/=100;
   const k = n => (n + h/30) % 12;
@@ -2047,33 +2383,140 @@ function destroyMiniGraph() {
   }
 }
 
+// Discrete zoom stepper for the mini-graph, expressed as multipliers of the
+// fitted zoom. cy.minZoom/maxZoom (set after fit) clamp buttons AND wheel.
+const MINI_ZOOM_STEPS = [1, 1.35, 1.8, 2.5];
+
+function _addMiniZoom(container, cy, fitZ) {
+  const steps = MINI_ZOOM_STEPS;
+  const ctl = document.createElement("div");
+  ctl.className = "mini-zoom";
+  ctl.innerHTML = `<button type="button" data-dir="1" title="Zoom in">+</button><button type="button" data-dir="-1" title="Zoom out">−</button>`;
+  const btns = ctl.querySelectorAll("button");
+  const nearest = () => {
+    const r = cy.zoom() / fitZ;
+    let best = 0;
+    steps.forEach((s, i) => { if (Math.abs(s - r) < Math.abs(steps[best] - r)) best = i; });
+    return best;
+  };
+  const sync = () => {
+    const i = nearest();
+    btns[0].disabled = i >= steps.length - 1;
+    btns[1].disabled = i <= 0;
+  };
+  ctl.addEventListener("click", ev => {
+    const b = ev.target.closest("button");
+    if (!b) return;
+    const i = Math.max(0, Math.min(steps.length - 1, nearest() + Number(b.dataset.dir)));
+    // Zoom about the current viewport center so the view never jumps.
+    cy.zoom({ level: fitZ * steps[i], renderedPosition: { x: container.clientWidth / 2, y: container.clientHeight / 2 } });
+    sync();
+  });
+  cy.on("zoom", sync); // keep disabled state coherent after wheel-zoom
+  container.appendChild(ctl);
+  sync();
+}
+
+// Per-edge tooltip for the mini subgraph. Same title/meta format as the main
+// graph's edge tip/pin (`A —[rel]→ B`, evidence + confidence, mechanism).
+// Tap covers touch; hidden on mouseout, background tap, pan and zoom.
+function _addMiniEdgeTip(container, cy) {
+  const tip = document.createElement("div");
+  tip.className = "mini-edge-tip";
+  tip.innerHTML = `<div class="mini-tip-title"></div><div class="mini-tip-meta"></div><div class="mini-tip-mech"></div>`;
+  container.appendChild(tip);
+
+  const hide = () => tip.classList.remove("is-visible");
+  const position = evt => {
+    const rp = evt.renderedPosition;
+    if (!rp) return;
+    const x = Math.max(4, Math.min(container.clientWidth - tip.offsetWidth - 4, rp.x + 10));
+    const y = Math.max(4, Math.min(container.clientHeight - tip.offsetHeight - 4, rp.y + 10));
+    tip.style.left = x + "px";
+    tip.style.top = y + "px";
+  };
+  const show = evt => {
+    const d = evt.target.data();
+    tip.querySelector(".mini-tip-title").textContent = `${d.source} —[${d.rel}]→ ${d.target}`;
+    tip.querySelector(".mini-tip-meta").textContent =
+      `evidence: ${d.evidenceType} · confidence: ${Number(d.confidence).toFixed(2)}`;
+    const mechEl = tip.querySelector(".mini-tip-mech");
+    mechEl.textContent = d.mechanism ? _truncate(d.mechanism, 120) : "";
+    mechEl.style.display = d.mechanism ? "" : "none";
+    tip.classList.add("is-visible"); // visible first so position() can measure
+    position(evt);
+  };
+
+  cy.on("mouseover", "edge", show);
+  cy.on("mousemove", "edge", position);
+  cy.on("mouseout", "edge", hide);
+  cy.on("tap", "edge", show);
+  cy.on("tap", evt => { if (evt.target === cy) hide(); });
+  cy.on("pan zoom", hide);
+  // A fast pointer exit can leave the container without an edge mouseout.
+  container.addEventListener("mouseleave", hide);
+}
+
+function cardEntityNames(card) {
+  const names = new Set();
+  (card.entityA ? [card.entityA.name] : []).concat(card.entityB ? [card.entityB.name] : []).forEach(n => names.add(n));
+  if (card._rels) card._rels.forEach(r => { if (r.from) names.add(r.from); if (r.to) names.add(r.to); });
+  names.delete("");
+  return names;
+}
+
+// Jump from a card to the full graph via the entity-search ego view: search
+// is set to the card's primary entity, window = the smallest of 30/90/All
+// that still contains the card's date. Same hash state as a manual search,
+// so landing is deterministic whether or not the render cache is warm.
+function exploreCardInGraph(card) {
+  const primary = (card.entityA && card.entityA.name) || [...cardEntityNames(card)][0];
+  if (!primary) return;
+  const gen = new Date((PAYLOAD && PAYLOAD.generated_at) || "2026-04-18");
+  const d = new Date(card.isoDate || "");
+  let tw = 0;
+  if (!isNaN(d)) {
+    const ageDays = (gen - d) / 86400000;
+    if (ageDays <= 30) tw = 30;
+    else if (ageDays <= 90) tw = 90;
+  }
+  closeExpanded();
+  writeHash({ tw: String(tw), q: primary, card: "", node: "", edge: "", from: "", to: "", rel: "" });
+  setView("graph");
+}
+
 function renderMiniGraph(container, card) {
   destroyMiniGraph();
   if (!PAYLOAD || !PAYLOAD.graph || typeof window.cytoscape !== "function") {
     container.innerHTML = `<div class="mini-graph-empty">graph unavailable</div>`;
     return;
   }
-  const names = new Set();
-  (card.entityA ? [card.entityA.name] : []).concat(card.entityB ? [card.entityB.name] : []).forEach(n => names.add(n));
-  if (card._rels) card._rels.forEach(r => { if (r.from) names.add(r.from); if (r.to) names.add(r.to); });
+  const names = cardEntityNames(card);
 
   const f = currentGraphFilters();
   const allEdges = PAYLOAD.graph.edges || [];
   const allNodes = PAYLOAD.graph.nodes || [];
-  const cutoff = f.timeWindowDays > 0
-    ? new Date(new Date(PAYLOAD.generated_at || "2026-04-18").getTime() - f.timeWindowDays * 86400000)
-    : null;
-
-  const edgesSlice = allEdges.filter(e => {
-    if (!names.has(e.from) && !names.has(e.to)) return false;
+  // No time-window cutoff here: this subgraph shows THIS card's relationship
+  // neighborhood, and the card is its own time context — the global window
+  // (default 30d) would strip edges of any older catalyst (bug: bare nodes).
+  const passesFilters = e => {
     if (!f.showInvalidated && e.status === "invalidated") return false;
     if ((e.confidence || 0) < f.minConfidence) return false;
-    if (cutoff) {
-      const d = new Date(e.catalyst_date);
-      if (!isNaN(d) && d < cutoff) return false;
-    }
     return true;
-  });
+  };
+  // Primary: only edges emitted for THIS catalyst. Strict === so edges with a
+  // null catalyst_id never match; skip entirely when the card has no card_id.
+  let edgesSlice = card.card_id
+    ? allEdges.filter(e => e.catalyst_id === card.card_id && passesFilters(e))
+    : [];
+  // Fallback: cards outside the export's graph window (graph_window_days) have
+  // no catalyst_id-tagged edges — for those, keep edges whose BOTH endpoints
+  // are this card's entities (never the one-endpoint neighborhood match, which
+  // floods the mini-graph with unrelated catalysts).
+  if (edgesSlice.length === 0) {
+    edgesSlice = allEdges.filter(e =>
+      names.has(e.from) && names.has(e.to) && passesFilters(e));
+  }
 
   const keep = new Set();
   edgesSlice.forEach(e => { keep.add(e.from); keep.add(e.to); });
@@ -2123,6 +2566,10 @@ function renderMiniGraph(container, card) {
         id: `m${idx}-${e.from}-${e.to}`,
         source: e.from,
         target: e.to,
+        rel: e.rel || "",
+        confidence: conf,
+        evidenceType: e.evidence_type || "direct",
+        mechanism: e.mechanism || "",
         _width: w,
         _color: color,
         _opacity: op,
@@ -2163,9 +2610,10 @@ function renderMiniGraph(container, card) {
       wheelSensitivity: 0.2,
       minZoom: 0.3,
       maxZoom: 2.5,
-      userZoomingEnabled: false,
+      userZoomingEnabled: true,
       userPanningEnabled: true
     });
+    _addMiniEdgeTip(container, _miniCy);
     const layoutName = (typeof window.cytoscapeCoseBilkent === "function") ? "cose-bilkent" : "cose";
     _miniCy.layout({
       name: layoutName,
@@ -2174,7 +2622,18 @@ function renderMiniGraph(container, card) {
       fit: true, padding: 20,
       nodeDimensionsIncludeLabels: true
     }).run();
-    setTimeout(() => { try { _miniCy && _miniCy.fit(undefined, 20); } catch (_) {} }, 0);
+    setTimeout(() => {
+      try {
+        if (!_miniCy) return;
+        _miniCy.fit(undefined, 20);
+        const fitZ = _miniCy.zoom();
+        // Clamp zoom (buttons and wheel) to [fit, 2.5x fit] so the graph can
+        // never distort or burst out of the container.
+        _miniCy.minZoom(fitZ);
+        _miniCy.maxZoom(fitZ * MINI_ZOOM_STEPS[MINI_ZOOM_STEPS.length - 1]);
+        _addMiniZoom(container, _miniCy, fitZ);
+      } catch (_) {}
+    }, 0);
   } catch (err) {
     console.warn("mini-graph failed:", err);
     container.innerHTML = `<div class="mini-graph-empty">mini-graph unavailable</div>`;
@@ -2197,7 +2656,8 @@ expandCard = function(card) {
 
   const wrap = document.createElement("div");
   wrap.className = "mini-graph-wrap";
-  wrap.innerHTML = `<div class="mini-graph-label">Local subgraph</div><div class="mini-graph" id="miniGraphRoot"></div>`;
+  wrap.innerHTML = `<div class="mini-graph-label">Local subgraph<button type="button" class="mini-explore-btn" id="miniExploreBtn">Explore in full graph →</button></div><div class="mini-graph" id="miniGraphRoot"></div>`;
+  wrap.querySelector("#miniExploreBtn").addEventListener("click", () => exploreCardInGraph(card));
   // Place before the share bar if present, else at end
   const shareBar = body.querySelector(".detail-section:last-child");
   if (shareBar && shareBar.querySelector(".share-btn")) body.insertBefore(wrap, shareBar);
@@ -2255,9 +2715,9 @@ async function renderTeaser() {
 
 if (firestoreConfigured()) {
   renderTeaser();
-  RoboticsAuth.deferredGate(window.FIREBASE_CONFIG, () => loadCards());
+  RoboticsAuth.deferredGate(window.FIREBASE_CONFIG, () => RoboticsGuards.withBusy(loadCards()));
 } else {
-  loadCards();
+  RoboticsGuards.withBusy(loadCards());
 }
 </script>
 </body>

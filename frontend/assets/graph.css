@@ -166,3 +166,42 @@
 .robotics-graph .robotics-graph-legend .robotics-legend-dot-sm { width: 6px; height: 6px; }
 .robotics-graph .robotics-graph-legend .robotics-legend-dot-md { width: 10px; height: 10px; }
 .robotics-graph .robotics-graph-legend .robotics-legend-dot-lg { width: 16px; height: 16px; }
+
+/* ── Zoom stepper (main graph) ────────────────────────────── */
+.robotics-graph .robotics-zoom {
+  position: absolute;
+  right: 12px;
+  /* clear of the fixed signed-in user chip (bottom:9px, ~36px tall) */
+  bottom: 60px;
+  z-index: 410;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.robotics-graph .robotics-zoom button {
+  width: 30px;
+  height: 30px;
+  border: 1.5px solid #06b6d4;
+  border-radius: 8px;
+  background: var(--bg-card, #fdfcfa);
+  color: #06b6d4;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  box-shadow: var(--shadow, 0 1px 3px rgba(0,0,0,0.06));
+}
+
+.robotics-graph .robotics-zoom button:hover {
+  background: #06b6d4;
+  color: #ffffff;
+}
+
+.robotics-graph .robotics-zoom button:disabled {
+  opacity: 0.35;
+  cursor: default;
+  background: var(--bg-card, #fdfcfa);
+  color: #06b6d4;
+}

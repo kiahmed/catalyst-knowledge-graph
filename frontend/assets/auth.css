@@ -158,3 +158,6 @@
   cursor: pointer;
 }
 .rauth-signout:hover { border-color: var(--border-hover, #c4bfb5); }
+
+/* Pending indicator on the button that triggered the auth op (auth.js setBusy) */
+.rauth-btn-busy::after { content: ' …'; }
