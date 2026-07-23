@@ -198,8 +198,9 @@ export:
 
 # Show the current ingest cursor (what was last processed).
 watermark:
-	@docker compose exec duckdb duckdb /data/robotics.duckdb \
-		"SELECT sector, last_processed_date, last_processed_entry_id, last_processed_at FROM ingestion_meta;"
+	@docker compose exec -T duckdb duckdb /data/robotics.duckdb -readonly \
+		"SELECT sector, last_processed_date, last_processed_entry_id, last_processed_at FROM ingestion_meta;" 2>/dev/null \
+		|| echo "  DuckDB is locked (ingest/sweep running) — try again in a minute."
 
 # Full pipeline number map: upstream findings vs ingested vs exported vs
 # Firestore, plus render stats (local/bucket PNGs, poster vs old format,
@@ -276,8 +277,11 @@ render-batch:
 # Render progress: how many catalysts in DuckDB vs how many PNGs on disk.
 # No persistent cursor exists — the gap between these counts IS the backlog.
 render-status:
-	@total=$$(docker compose exec -T duckdb duckdb /data/robotics.duckdb -noheader -list \
+	@total=$$(docker compose exec -T duckdb duckdb /data/robotics.duckdb -readonly -noheader -list \
 		"SELECT COUNT(*) FROM catalysts;" 2>/dev/null | tr -d '[:space:]'); \
+	if [ -z "$$total" ]; then \
+		echo "  DuckDB is locked (ingest/sweep running) — try again in a minute."; exit 0; \
+	fi; \
 	rendered=$$(ls data/exports/card_images/*.png 2>/dev/null | wc -l); \
 	missing=$$(( total - rendered )); \
 	printf "  %-24s %s\n" "catalysts in DuckDB" "$$total"; \
