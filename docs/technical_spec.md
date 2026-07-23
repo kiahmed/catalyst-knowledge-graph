@@ -774,6 +774,28 @@ Two variants per card, exposed via the share overlay:
 
 The platform-specific `twitter_text` and `linkedin_text` are generated once during export (not at share time) by a lightweight LLM pass on the card data — same call that produces the headline. This keeps the frontend purely static.
 
+### 2.7a Crawler access — robots.txt
+
+**Why:** X/Twitterbot (and LinkedIn's crawler) fetch `/card/<id>` for OG tags
+and `/card-img/<id>.png` for the preview image before rendering a link card.
+With no `/robots.txt`, the SPA catch-all rewrite (`** → /index.html`) answers
+that path with HTML, and some crawlers treat an unparseable or missing
+robots.txt as *disallow* — silently killing image previews on posts.
+Requested by soljet-postiz (consumer of the share links).
+
+**Contract:** `https://robotics.arboryx.ai/robots.txt` returns `200 text/plain`:
+
+```
+User-agent: *
+Allow: /
+```
+
+**Mechanism:** `frontend/robots.txt` is a real static file in the Hosting
+public dir. Firebase Hosting serves existing static files *before* applying
+`rewrites`, so no firebase.json change is needed — the file's presence alone
+beats the `**` catch-all. It is not matched by the hosting `ignore` list and
+ships with every `make deploy-frontend`.
+
 ### 2.8 Social card image renderer
 
 **Why:** platforms embed richer previews when a true image is attached. Text-only intent links leave engagement on the table.

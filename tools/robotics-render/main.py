@@ -562,13 +562,16 @@ def render_batch():
     _log("duckdb_pull", **_pull_duckdb())
 
     if from_id:
-        # Mode 3: from a specific entry_id, oldest-forward
+        # Mode 3: from a specific entry_id, oldest-forward. DuckDB can't
+        # compare a row tuple against a multi-column subquery directly —
+        # join the anchor row and compare fields instead.
         sql = """
-            SELECT entry_id FROM catalysts
-            WHERE (timestamp, entry_id) >= (
-                SELECT timestamp, entry_id FROM catalysts WHERE entry_id = ?
-            )
-            ORDER BY timestamp ASC, entry_id ASC
+            SELECT c.entry_id FROM catalysts c,
+                 (SELECT timestamp AS ats, entry_id AS aid
+                  FROM catalysts WHERE entry_id = ?) a
+            WHERE c.timestamp > a.ats
+               OR (c.timestamp = a.ats AND c.entry_id >= a.aid)
+            ORDER BY c.timestamp ASC, c.entry_id ASC
         """
         params: list[Any] = [from_id]
     else:
