@@ -136,3 +136,11 @@ resource "google_secret_manager_secret_iam_member" "handles_brave_key" {
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.handle_resolver.email}"
 }
+
+# Ingest runs the in-process handles sweep post-ingest (HANDLE_SWEEP_ENABLED)
+# — it needs the search-API key too.
+resource "google_secret_manager_secret_iam_member" "ingest_brave" {
+  secret_id = google_secret_manager_secret.brave_api_key.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.robotics_ingest.email}"
+}

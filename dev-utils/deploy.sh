@@ -115,7 +115,10 @@ echo "── 2/6  terraform bootstrap (bucket, AR repo, secrets) ─────
 terraform apply -input=false -auto-approve \
   -target=google_storage_bucket.robotics_data \
   -target=google_artifact_registry_repository.robotics \
-  -target=google_secret_manager_secret.gemini_api_key
+  -target=google_secret_manager_secret.gemini_api_key \
+  -target=google_secret_manager_secret.brave_api_key \
+  -target=google_secret_manager_secret.serper_api_key \
+  -target=google_secret_manager_secret.cse_api_key
 cd "$ROOT"
 
 # ── 3. Push secret values to Secret Manager ─────────────────────────
@@ -129,9 +132,12 @@ add_secret_version() {
     echo "   $1 — version exists, skipping (FORCE=1 to push a new one)"
     return
   fi
-  printf '%s' "$2" | gcloud secrets versions add "$1" \
+  # Secret Manager rejects EMPTY payloads, but a version must exist for a
+  # function to mount the secret. Unset keys get a single space — consumers
+  # .strip() env values, so it reads as "not configured".
+  printf '%s' "${2:- }" | gcloud secrets versions add "$1" \
     --project="$GCP_PROJECT" --data-file=- >/dev/null
-  echo "   $1 ← new version"
+  echo "   $1 ← new version${2:+}"
 }
 add_secret_version GEMINI_API_KEY  "$GEMINI_API_KEY"
 # Search keys are optional (handle resolution falls back to direct fetch

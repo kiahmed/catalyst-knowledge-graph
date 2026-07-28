@@ -45,6 +45,10 @@ resource "google_cloudfunctions2_function" "robotics_ingest" {
       STORAGE_CARDS_PREFIX        = "cards"
       DUCKDB_GCS_BUCKET           = google_storage_bucket.robotics_data.name
       PUBSUB_DONE_TOPIC           = google_pubsub_topic.ingest_done.name
+      # Handles sweep for new entities, run in-process after each ingest
+      # and before export (prod mirror of the local make-ingest chain).
+      HANDLE_SWEEP_ENABLED        = "true"
+      HANDLE_SWEEP_LIMIT          = "25"
       LOG_LEVEL                   = "INFO"
     }
 
@@ -54,13 +58,21 @@ resource "google_cloudfunctions2_function" "robotics_ingest" {
       secret     = google_secret_manager_secret.gemini_api_key.secret_id
       version    = "latest"
     }
+
+    secret_environment_variables {
+      key        = "BRAVE_API_KEY"
+      project_id = var.project_id
+      secret     = google_secret_manager_secret.brave_api_key.secret_id
+      version    = "latest"
+    }
   }
 
-  # The function mounts GEMINI_API_KEY — its SA needs secretAccessor before
-  # the function is created. depends_on forces the IAM binding first.
+  # The function mounts GEMINI_API_KEY + BRAVE_API_KEY — its SA needs
+  # secretAccessor before the function is created.
   depends_on = [
     google_project_service.required,
     google_secret_manager_secret_iam_member.ingest_gemini,
+    google_secret_manager_secret_iam_member.ingest_brave,
   ]
 }
 

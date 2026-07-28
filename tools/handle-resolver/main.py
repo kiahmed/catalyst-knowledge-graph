@@ -35,7 +35,7 @@ from flask import Request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from src import db, handles  # noqa: E402
+from src import db, handle_sweep as hs, handles  # noqa: E402
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -106,118 +106,12 @@ def _fs_put(fs, key: str, channel: str, result: handles.HandleResult) -> None:
     )
 
 
-# ── Search budget: cycle roll, provider selection, pre-flight ──────
+# ── Search budget: shared engine lives in src/handle_sweep.py ──────
 
-import calendar
-from datetime import date, timedelta
-
-
-def _next_refill(cycle_start: date, refill_day: int) -> date:
-    """First refill date strictly after cycle_start (same day next month,
-    clamped to month length)."""
-    y, m = cycle_start.year, cycle_start.month
-    m += 1
-    if m > 12:
-        y, m = y + 1, 1
-    return date(y, m, min(refill_day, calendar.monthrange(y, m)[1]))
-
-
-def _roll_cycles(con) -> list[dict]:
-    """Roll any provider whose refill date passed; return fresh rows with
-    computed remaining + next_refill."""
-    today = date.today()
-    out = []
-    for row in db.get_search_providers(con):
-        cs, rd = row["cycle_start"], row["refill_day"]
-        if cs is not None and not isinstance(cs, date):
-            cs = date.fromisoformat(str(cs))
-        if rd and cs:
-            nxt = _next_refill(cs, rd)
-            while nxt <= today:          # catch up over multiple idle months
-                cs = nxt
-                nxt = _next_refill(cs, rd)
-            if cs != row["cycle_start"]:
-                db.reset_search_cycle(con, row["provider"], cs)
-                row["used_this_cycle"], row["cycle_start"] = 0, cs
-            row["next_refill"] = str(nxt)
-        else:
-            row["next_refill"] = None    # one-time credits — never refills
-        quota = row["monthly_quota"]
-        row["remaining"] = (max(0, quota - row["used_this_cycle"])
-                            if quota is not None else None)
-        out.append(row)
-    return out
-
-
-def _env_key_for(provider: str) -> bool:
-    return bool({
-        "brave": os.environ.get("BRAVE_API_KEY", ""),
-        "serper": os.environ.get("SERPER_API_KEY", ""),
-        "searchapi": os.environ.get("SEARCHAPI_API_KEY", ""),
-        "cse": os.environ.get("GOOGLE_CSE_API_KEY", "") and os.environ.get("GOOGLE_CSE_ID", ""),
-    }.get(provider, "").strip())
-
-
-def _make_config(provider: str):
-    if provider == "brave":
-        return handles.BraveConfig(os.environ["BRAVE_API_KEY"].strip())
-    if provider == "serper":
-        return handles.SerperConfig(os.environ["SERPER_API_KEY"].strip())
-    if provider == "searchapi":
-        return handles.SearchApiConfig(os.environ["SEARCHAPI_API_KEY"].strip())
-    if provider == "cse":
-        return handles.CseConfig(os.environ["GOOGLE_CSE_API_KEY"].strip(),
-                                 os.environ["GOOGLE_CSE_ID"].strip())
-    return None
-
-
-def _select_provider(con) -> tuple[str | None, object | None, dict | None]:
-    """(name, config, budget_row) — first enabled provider by priority with
-    a configured key and remaining budget (unknown quota counts as OK)."""
-    for row in _roll_cycles(con):
-        if not row["enabled"] or not _env_key_for(row["provider"]):
-            continue
-        if row["remaining"] is not None and row["remaining"] <= 0:
-            continue
-        return row["provider"], _make_config(row["provider"]), row
-    return None, None, None
-
-
-def _budget_report(con) -> dict:
-    rows = _roll_cycles(con)
-    active, _cfg, _row = _select_provider(con)
-    return {
-        "active_provider": active,
-        "providers": [
-            {k: (str(v) if isinstance(v, date) else v) for k, v in r.items()}
-            for r in rows
-        ],
-    }
-
-
-def _budget_guard(con, estimated: int) -> tuple[object | None, dict]:
-    """Pre-flight: pick provider, warn/clamp against remaining budget.
-    Returns (search_config, info). search_config None = refuse."""
-    name, cfg, row = _select_provider(con)
-    if cfg is None:
-        rows = _roll_cycles(con)
-        refills = [r["next_refill"] for r in rows if r["next_refill"]]
-        return None, {
-            "error": "no search provider has remaining budget",
-            "next_refill": min(refills) if refills else None,
-            "budget": _budget_report(con),
-        }
-    info: dict = {"provider": name}
-    if row["remaining"] is not None:
-        info["searches_remaining"] = row["remaining"]
-        info["next_refill"] = row["next_refill"]
-        if estimated > row["remaining"]:
-            info["warning"] = (
-                f"requested work (~{estimated} searches) exceeds the {row['remaining']} "
-                f"left this cycle on '{name}' — clamped; rest resumes after "
-                f"{row['next_refill']}"
-            )
-    return cfg, info
+_roll_cycles = hs.roll_cycles
+_select_provider = hs.select_provider
+_budget_report = hs.budget_report
+_budget_guard = hs.budget_guard
 
 
 # ── Lookup (contract B) ────────────────────────────────────────────
@@ -259,40 +153,12 @@ def _lookup_duckdb(names: list[str], channels: list[str], client: httpx.Client) 
         con.close()
 
 
-def _context_for(con, name: str) -> set[str] | None:
-    """Context bag for disambiguation: sector + partner entity names +
-    headlines of the cards this entity appears in. DuckDB mode only."""
-    entity_id = db.find_entity_exact(con, name)
-    if entity_id is None:
-        return None
-    partners = [r[0] for r in con.execute(
-        """
-        SELECT DISTINCT e2.name
-        FROM relationships r
-        JOIN entities e2 ON e2.entity_id IN (r.entity_a_id, r.entity_b_id)
-        WHERE ? IN (r.entity_a_id, r.entity_b_id) AND e2.entity_id != ?
-        LIMIT 30
-        """, [entity_id, entity_id]).fetchall()]
-    headlines = [r[0] for r in con.execute(
-        """
-        SELECT DISTINCT c.headline
-        FROM catalysts c JOIN relationships r ON r.catalyst_id = c.catalyst_id
-        WHERE ? IN (r.entity_a_id, r.entity_b_id)
-        LIMIT 20
-        """, [entity_id]).fetchall()]
-    sector = os.environ.get("SECTOR", "Robotics")
-    # Sector words are the strongest industry signal — include obvious forms.
-    return handles.context_terms_from(f"{sector} robot robots", partners, headlines)
+def _context_for(con, name: str):
+    return hs.context_for(con, name)
 
 
 def _aliases_for(con, name: str) -> list[str]:
-    entity_id = db.find_entity_exact(con, name)
-    if entity_id is None:
-        return []
-    rows = con.execute(
-        "SELECT alias FROM entity_aliases WHERE entity_id = ?", [entity_id]
-    ).fetchall()
-    return [r[0] for r in rows]
+    return hs.aliases_for(con, name)
 
 
 def _lookup_firestore(names: list[str], channels: list[str], client: httpx.Client) -> dict:
@@ -332,62 +198,7 @@ def _sweep(limit: int, client: httpx.Client) -> dict[str, Any]:
     _tl.bump = lambda prov: db.bump_search_usage(con, prov)
     try:
         db.init_schema(con)
-        search, binfo = _budget_guard(con, limit * 2)
-        if search is None:
-            return binfo
-        remaining = binfo.get("searches_remaining")
-        if remaining is not None and remaining < limit * 2:
-            limit = max(1, remaining // 2)
-        channels = ["linkedin", "x"]
-        counts: dict[str, Any] = {"resolved": 0, "abstained": 0, "blocked": 0,
-                                  "budget": binfo}
-        allow_direct = True   # flips off for the rest of the run on first 999
-        for channel in channels:
-            todo = db.entities_missing_handles(con, channel, limit)
-            consecutive_blocked = 0
-            for i, (name, aliases) in enumerate(todo):
-                if i:
-                    # Graceful gap between entities — SEARCH_DELAY_S on the
-                    # search-API path; direct fallbacks add their own delay.
-                    handles.polite_sleep(
-                        handles.SEARCH_DELAY_S if search else handles.DEFAULT_FETCH_DELAY_S
-                    )
-                result = handles.resolve_channel(
-                    channel, name, aliases,
-                    client=client, search=search, allow_direct=allow_direct,
-                    context=_context_for(con, name),
-                )
-                db.upsert_handle(
-                    con, handles.name_key(name), channel,
-                    result.handle, result.confidence, result.source, result.comment,
-                )
-                if result.handle:
-                    counts["resolved"] += 1
-                    consecutive_blocked = 0
-                elif result.source == handles.SOURCE_BLOCKED:
-                    counts["blocked"] += 1
-                    if result.comment == handles.COMMENT_DIRECT_WALLED:
-                        # LinkedIn walled this IP — skip direct fallbacks for
-                        # the rest of the run; search-backed work continues.
-                        allow_direct = False
-                    # Only search-API failures predict the NEXT entity also
-                    # failing (with a provider configured, direct-fetch walls
-                    # don't) — so only they feed the circuit breaker.
-                    if search is None or result.comment == handles.COMMENT_SEARCH_UNAVAILABLE:
-                        consecutive_blocked += 1
-                        if consecutive_blocked >= 3:
-                            counts["stopped_early"] = True
-                            log.warning("sweep circuit-breaker (%s): 3 consecutive blocked", channel)
-                            break
-                else:
-                    counts["abstained"] += 1
-                    consecutive_blocked = 0
-            if counts.get("stopped_early"):
-                break
-        counts["remaining"] = {
-            c: len(db.entities_missing_handles(con, c, 10_000)) for c in channels
-        }
-        return counts
+        return hs.sweep(con, client, limit)
     finally:
         _tl.bump = None
         con.close()

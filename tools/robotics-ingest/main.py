@@ -124,10 +124,25 @@ def run_ingest(request: Request):
         return {"ok": False, "error": str(exc)}, 500
 
     export_summary = None
+    sweep_summary = None
     firestore_summary = None
     duckdb_push_summary = None
     publish_summary = None
     if not dry_run:
+        # Handles sweep for newly discovered entities — BEFORE export so the
+        # fresh handles land on this run's cards. Prod mirror of the local
+        # `make ingest` → sweep → export chain. Gated by env; budget-guarded
+        # and non-fatal inside run_sweep (ingest must never fail because
+        # handle resolution couldn't run).
+        if os.environ.get("HANDLE_SWEEP_ENABLED", "").lower() == "true":
+            from src.handle_sweep import run_sweep  # noqa: PLC0415
+
+            sweep_summary = run_sweep(
+                cfg.duckdb_path,
+                limit=int(os.environ.get("HANDLE_SWEEP_LIMIT", "25") or 25),
+            )
+            _log("handle_sweep_done", **{k: v for k, v in sweep_summary.items()
+                                         if k != "budget"})
         try:
             export_summary = export_cards(cfg)
             _log("export_done", **export_summary)
@@ -164,6 +179,7 @@ def run_ingest(request: Request):
         "ok": True,
         "duration_s": round(time.monotonic() - start, 2),
         **ingest_result.to_json(),
+        "handle_sweep": sweep_summary,
         "export": export_summary,
         "firestore_export": firestore_summary,
         "duckdb_push": duckdb_push_summary,
