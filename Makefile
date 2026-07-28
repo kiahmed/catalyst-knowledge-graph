@@ -179,7 +179,15 @@ ingest:
 	trap "kill $$tail_pid 2>/dev/null || true" EXIT INT TERM; \
 	curl -fsS -X POST http://localhost:$(INGEST_PORT) \
 		-H "Content-Type: application/json" \
-		-d "$$body" | jq .
+		-d "$$body" | jq .; \
+	echo "── handles sweep for new entities (bounded, budget-guarded) ──"; \
+	curl -fsS --max-time 500 -X POST http://localhost:$(HANDLE_PORT)/ \
+		-H "Content-Type: application/json" \
+		-d '{"sweep":true,"limit":25}' | jq . \
+		|| echo "!! handles sweep skipped (resolver down or out of budget) — run: make handles"; \
+	echo "── re-export so new handles land on cards ────────────────────"; \
+	$(MAKE) --no-print-directory export >/dev/null && echo "export ok" \
+		|| echo "!! export failed — run: make export"
 
 ingest-dry:
 	@curl -fsS -X POST http://localhost:$(INGEST_PORT) \

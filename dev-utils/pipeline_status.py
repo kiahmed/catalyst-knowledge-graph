@@ -147,7 +147,9 @@ def main() -> int:
     ducked = duckdb_count()
     exported, gen_at = cards_json_count()
     local_md5, poster, old = local_pngs()
-    bucket = os.environ.get("CARDS_BUCKET", "")
+    # Prod names it CARDS_BUCKET (.env.prod); local dev names it
+    # STORAGE_BUCKET (.env). Accept either.
+    bucket = os.environ.get("CARDS_BUCKET") or os.environ.get("STORAGE_BUCKET", "")
     prefix = os.environ.get("STORAGE_CARDS_PREFIX", "cards")
     bucket_md5 = bucket_pngs(tok, bucket, prefix) if tok else None
 
