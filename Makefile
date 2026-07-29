@@ -2,7 +2,7 @@
 # Most commands wrap `docker compose` + `curl` for the tool HTTP endpoints.
 
 .PHONY: help setup doctor up down logs ps ps-short \
-        ingest ingest-dry export watermark check-log firestore-ping \
+        ingest ingest-dry ingest-prod export watermark check-log firestore-ping \
         reextract backtest \
         render render-batch render-status \
         handles handles-lookup handles-unresolved handles-set reaudit search-budget \
@@ -53,6 +53,7 @@ help:
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "watermark" "" "Show last-processed date + entry_id"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "ingest" "[LIMIT=N]" "Real run (bounded if LIMIT). Always re-exports cards.json"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "ingest-dry" "" "Preview ingest (reads, no writes, no export)"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "ingest-prod" "" "Trigger the PROD pipeline now (cloud owns ingest since 07-28)"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "export" "" "Re-export cards.json from current DuckDB (no ingest)"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "reextract" "ID=... [IDS=a,b] [WRITE=1] [PV=v2]" "Re-extract one or many entries"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "backtest" "[LIMIT=N] [IDS=a,b,c]" "Dump extractor output to JSONL"
@@ -188,6 +189,33 @@ ingest:
 	echo "── re-export so new handles land on cards ────────────────────"; \
 	$(MAKE) --no-print-directory export >/dev/null && echo "export ok" \
 		|| echo "!! export failed — run: make export"
+
+# Trigger the PROD pipeline on demand (same run as the daily 06:00 UTC
+# cycle: ingest → handles sweep → export → Firestore → render fan-out).
+# The GCS DuckDB is authoritative since the 2026-07-28 cloud handover —
+# use this instead of local `make ingest`. Auth: ADC (application-default).
+ingest-prod:
+	@TOKEN=$$(gcloud auth application-default print-access-token 2>/dev/null) || \
+		{ echo "!! ADC expired — run: gcloud auth application-default login"; exit 1; }; \
+	start=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \
+	curl -fsS -X POST "https://cloudscheduler.googleapis.com/v1/projects/$${GCP_PROJECT:?set GCP_PROJECT}/locations/us-central1/jobs/robotics-ingest-daily:run" \
+		-H "Authorization: Bearer $$TOKEN" -H "Content-Type: application/json" -d '{}' >/dev/null \
+		&& echo "prod run triggered — polling (ingest takes 2-6 min)..."; \
+	for i in $$(seq 1 24); do \
+		sleep 30; \
+		TOKEN=$$(gcloud auth application-default print-access-token 2>/dev/null); \
+		res=$$(curl -sS -X POST "https://logging.googleapis.com/v2/entries:list" \
+			-H "Authorization: Bearer $$TOKEN" -H "Content-Type: application/json" \
+			-d "{\"resourceNames\":[\"projects/$${GCP_PROJECT:?set GCP_PROJECT}\"],\"filter\":\"log_name=\\\"projects/$${GCP_PROJECT:?set GCP_PROJECT}/logs/run.googleapis.com%2Frequests\\\" AND resource.labels.service_name=\\\"robotics-ingest\\\" AND timestamp>=\\\"$$start\\\"\",\"pageSize\":1}" \
+			| python3 -c 'import json,sys; e=(json.load(sys.stdin).get("entries") or [{}])[0].get("httpRequest",{}); print(e.get("status",""), e.get("latency",""))'); \
+		code=$$(echo $$res | cut -d" " -f1); \
+		if [ -n "$$code" ]; then \
+			echo "prod run finished: HTTP $$res"; \
+			[ "$$code" = "200" ] || { echo "!! non-200 — check logs"; exit 1; }; \
+			break; \
+		fi; \
+		echo "  ...still running ($$((i*30))s)"; \
+	done
 
 ingest-dry:
 	@curl -fsS -X POST http://localhost:$(INGEST_PORT) \

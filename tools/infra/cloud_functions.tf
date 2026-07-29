@@ -43,6 +43,10 @@ resource "google_cloudfunctions2_function" "robotics_ingest" {
       STORAGE_UPLOAD_ENABLED      = "true"
       STORAGE_BUCKET              = google_storage_bucket.robotics_cards.name
       STORAGE_CARDS_PREFIX        = "cards"
+      # Cloud Functions filesystem is read-only except /tmp — the container
+      # default (/data/...) is compose-only. Without this the very first
+      # duckdb_pull dies with EACCES.
+      DUCKDB_PATH                 = "/tmp/robotics.duckdb"
       DUCKDB_GCS_BUCKET           = google_storage_bucket.robotics_data.name
       PUBSUB_DONE_TOPIC           = google_pubsub_topic.ingest_done.name
       # Handles sweep for new entities, run in-process after each ingest

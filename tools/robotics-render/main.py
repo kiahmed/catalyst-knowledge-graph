@@ -110,6 +110,20 @@ def _storage_bucket():
     return _cards_bucket()
 
 
+def _bucket_png_ids() -> set[str]:
+    """card_ids that already have a PNG in Storage. Empty set when the
+    bucket is unset (local dev without storage) — local-disk check rules."""
+    if not STORAGE_BUCKET:
+        return set()
+    bucket = _cards_bucket()
+    prefix = f"{STORAGE_CARDS_PREFIX}/"
+    return {
+        blob.name[len(prefix):-len(".png")]
+        for blob in bucket.list_blobs(prefix=prefix)
+        if blob.name.endswith(".png")
+    }
+
+
 def _upload_png(card_id: str, local_path: Path) -> dict[str, Any]:
     """Upload a single PNG to Firebase Storage. No-op when upload disabled.
 
@@ -591,11 +605,23 @@ def render_batch():
 
     CARD_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Cloud Run instances are ephemeral — the local-disk check alone would
+    # re-render the whole catalog on every cold start. One bucket listing
+    # up front makes skip-detection survive instance churn.
+    in_bucket: set[str] = set()
+    if not force:
+        try:
+            in_bucket = _bucket_png_ids()
+        except Exception as exc:
+            _log("bucket_list_failed", error=str(exc))
+
     rendered, skipped, failed, uploaded, upload_skipped = 0, 0, 0, 0, 0
     for (entry_id,) in rows:
         out_path = CARD_IMAGES_DIR / f"{entry_id}.png"
-        if out_path.exists() and not force:
+        if not force and (out_path.exists() or entry_id in in_bucket):
             skipped += 1
+            if not out_path.exists():
+                continue    # already served from Storage; nothing to upload
         else:
             card = _load_card(entry_id)
             if not card:

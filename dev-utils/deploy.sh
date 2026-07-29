@@ -183,8 +183,16 @@ for svc in robotics-render; do
     continue
   fi
   echo "   building ${svc}:${TAG}"
-  gcloud builds submit "tools/${svc}" \
+  # Stage the build context: tool dir + repo-root card templates. Cloud Run
+  # has no volume mounts, so /templates must be IN the image (the local
+  # compose mount hid a missing-templates bug until 2026-07-29).
+  BSTAGE="$(mktemp -d)"
+  cp -r "tools/${svc}/." "$BSTAGE/"
+  mkdir -p "$BSTAGE/templates"
+  cp templates/cards/* "$BSTAGE/templates/"
+  gcloud builds submit "$BSTAGE" \
     --project="$GCP_PROJECT" --tag="${AR}/${svc}:${TAG}" --quiet
+  rm -rf "$BSTAGE"
 done
 
 # ── 6. Full terraform apply (interactive — review the plan) ─────────
