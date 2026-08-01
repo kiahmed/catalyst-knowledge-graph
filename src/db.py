@@ -587,8 +587,10 @@ def entities_missing_handles(
 ) -> list[tuple[str, list[str]]]:
     """(name, aliases) for entities with no entity_handles row for `channel`.
 
-    'blocked' rows count as missing (retryable); 'abstain'/verified do not.
-    Only company-ish entities — people/products don't get company pages.
+    'blocked' rows count as missing (retryable) — but only after a 3-day
+    cooldown, so the stuck tail (SERP-empty + LinkedIn-walled entities)
+    doesn't burn search budget on every single sweep. 'abstain'/verified
+    never retry. Only company-ish entities.
     """
     rows = con.execute(
         """
@@ -607,7 +609,8 @@ def entities_missing_handles(
             SELECT 1 FROM entity_handles hx
             WHERE hx.name_key = LOWER(TRIM(e.name))
               AND hx.channel = ?
-              AND hx.source != 'blocked'
+              AND (hx.source != 'blocked'
+                   OR hx.resolved_at > now() - INTERVAL 3 DAY)
           )
         GROUP BY e.entity_id, e.name
         ORDER BY was_blocked ASC, e.entity_id

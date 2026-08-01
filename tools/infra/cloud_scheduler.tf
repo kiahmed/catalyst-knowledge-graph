@@ -5,6 +5,10 @@ resource "google_cloud_scheduler_job" "ingest_daily" {
   region      = var.region
   schedule    = var.ingest_schedule
   time_zone   = "UTC"
+  # Ingest+sweep legitimately runs 3-8 min; the 180s default made the
+  # scheduler mark DEADLINE_EXCEEDED daily and fire 3 retry runs (each
+  # burning a full handles sweep) even though every request returned 200.
+  attempt_deadline = "1800s"
 
   http_target {
     http_method = "POST"

@@ -83,6 +83,35 @@ def duckdb_count() -> int | None:
         return None
 
 
+def cloud_duckdb_count(tok: str) -> int | None:
+    """Catalyst count from the AUTHORITATIVE GCS DuckDB (prod owns state
+    since the 2026-07-28 handover). Downloads to data/.prod-status.duckdb,
+    cached by GCS generation so repeat runs are free."""
+    bucket = os.environ.get("DUCKDB_GCS_BUCKET", "robotics-data")
+    try:
+        meta = _get(f"https://storage.googleapis.com/storage/v1/b/{bucket}"
+                    f"/o/robotics.duckdb?fields=generation", tok)
+        gen = meta["generation"]
+        cache = REPO_ROOT / "data" / ".prod-status.duckdb"
+        gen_file = cache.with_suffix(".gen")
+        if not (cache.exists() and gen_file.exists() and gen_file.read_text() == gen):
+            req = urllib.request.Request(
+                f"https://storage.googleapis.com/storage/v1/b/{bucket}"
+                f"/o/robotics.duckdb?alt=media",
+                headers={"Authorization": f"Bearer {tok}"})
+            with urllib.request.urlopen(req, timeout=60) as r:
+                cache.write_bytes(r.read())
+            gen_file.write_text(gen)
+        out = subprocess.run(
+            ["docker", "compose", "exec", "-T", "duckdb", "duckdb",
+             "/data/.prod-status.duckdb", "-readonly", "-json",
+             "SELECT COUNT(*) AS n FROM catalysts;"],
+            capture_output=True, text=True, timeout=30, cwd=REPO_ROOT)
+        return int(json.loads(out.stdout)[0]["n"]) if out.returncode == 0 else None
+    except Exception:
+        return None
+
+
 def cards_json_count() -> tuple[int | None, str]:
     try:
         d = json.loads(CARDS_JSON.read_text())
@@ -145,6 +174,7 @@ def main() -> int:
                                          "value": {"stringValue": SECTOR}}}) if tok else None
     ck_items = fs_count(tok, f"/CKG-{SECTOR}/catalysts", "items") if tok else None
     ducked = duckdb_count()
+    cloud_ducked = cloud_duckdb_count(tok) if tok else None
     exported, gen_at = cards_json_count()
     local_md5, poster, old = local_pngs()
     # Prod names it CARDS_BUCKET (.env.prod); local dev names it
@@ -164,23 +194,28 @@ def main() -> int:
     gap = (lambda a, b: f"  ({a - b} behind)" if a is not None and b is not None and a > b else "")
 
     print(f"\nPipeline status — {SECTOR}   (poster format = {POSTER_DIMS[0]}x{POSTER_DIMS[1]})")
-    print("─" * 62)
-    print(f"{'Stage':34}{'Entries':>8}")
-    print(f"{'Upstream findings (Arboryx)':34}{fmt(upstream):>8}")
-    print(f"{'Ingested (DuckDB catalysts)':34}{fmt(ducked):>8}{gap(upstream, ducked)}")
-    print(f"{'Exported (cards.json)':34}{fmt(exported):>8}  gen {gen_at}")
-    print(f"{'Firestore CKG items':34}{fmt(ck_items):>8}{gap(ducked, ck_items)}")
-    print("─" * 62)
-    print(f"{'Render':34}{'local':>8}{'bucket':>9}")
-    print(f"{'  poster format':34}{poster:>8}{'':>9}")
-    print(f"{'  old format (needs reframe)':34}{old:>8}{'':>9}")
+    print("  local = dev copy (frozen since the 2026-07-28 cloud handover)")
+    print("  cloud = authoritative (GCS DuckDB / Firestore / Storage)")
+    print("─" * 66)
+    print(f"{'Stage':30}{'local':>10}{'cloud':>10}")
+    print(f"{'Upstream findings (Arboryx)':30}{'':>10}{fmt(upstream):>10}")
+    print(f"{'Ingested (DuckDB catalysts)':30}{fmt(ducked):>10}{fmt(cloud_ducked):>10}"
+          f"{gap(upstream, cloud_ducked)}")
+    print(f"{'Exported cards':30}{fmt(exported):>10}{fmt(ck_items):>10}"
+          f"  (local gen {gen_at})")
+    print(f"{'Firestore CKG items':30}{'':>10}{fmt(ck_items):>10}{gap(cloud_ducked, ck_items)}")
+    print("─" * 66)
+    print(f"{'Render':30}{'local':>10}{'bucket':>10}")
+    print(f"{'  poster format':30}{poster:>10}{'':>10}")
+    print(f"{'  old format (needs reframe)':30}{old:>10}{'':>10}")
     missing_local = ducked - local_total if ducked is not None else None
-    print(f"{'  total PNGs':34}{local_total:>8}{fmt(bucket_total):>9}")
-    print(f"{'  missing (vs ingested)':34}{fmt(missing_local):>8}"
-          f"{fmt(ducked - bucket_total if ducked is not None and bucket_total is not None else None):>9}")
-    print(f"{'  in-sync (md5 match)':34}{'':>8}{fmt(in_sync):>9}")
-    print(f"{'  stale in bucket (md5 differs)':34}{'':>8}{fmt(stale):>9}")
-    print("─" * 62)
+    missing_cloud = (cloud_ducked - bucket_total
+                     if cloud_ducked is not None and bucket_total is not None else None)
+    print(f"{'  total PNGs':30}{local_total:>10}{fmt(bucket_total):>10}")
+    print(f"{'  missing (vs own DB)':30}{fmt(missing_local):>10}{fmt(missing_cloud):>10}")
+    print(f"{'  in-sync (local∩bucket md5)':30}{'':>10}{fmt(in_sync):>10}")
+    print(f"{'  stale in bucket (md5 differs)':30}{'':>10}{fmt(stale):>10}")
+    print("─" * 66)
     if tok is None:
         print("cloud rows n/a — set GOOGLE_APPLICATION_CREDENTIALS to an SA key")
     return 0
