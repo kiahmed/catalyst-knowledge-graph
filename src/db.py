@@ -584,13 +584,14 @@ def unresolved_handles_report(
 
 def entities_missing_handles(
     con: duckdb.DuckDBPyConnection, channel: str, limit: int
-) -> list[tuple[str, list[str]]]:
+) -> list[tuple[str, list[str], bool]]:
     """(name, aliases) for entities with no entity_handles row for `channel`.
 
-    'blocked' rows count as missing (retryable) — but only after a 3-day
+    'blocked' rows count as missing (retryable) — but only after a 14-day
     cooldown, so the stuck tail (SERP-empty + LinkedIn-walled entities)
-    doesn't burn search budget on every single sweep. 'abstain'/verified
-    never retry. Only company-ish entities.
+    doesn't burn search budget on every sweep. Rows are returned with a
+    was_blocked flag (stragglers last) so the sweep can probe a few and
+    stop early when none succeed. 'abstain'/verified never retry.
     """
     rows = con.execute(
         """
@@ -610,7 +611,7 @@ def entities_missing_handles(
             WHERE hx.name_key = LOWER(TRIM(e.name))
               AND hx.channel = ?
               AND (hx.source != 'blocked'
-                   OR hx.resolved_at > now() - INTERVAL 3 DAY)
+                   OR hx.resolved_at > now() - INTERVAL 14 DAY)
           )
         GROUP BY e.entity_id, e.name
         ORDER BY was_blocked ASC, e.entity_id
@@ -618,7 +619,8 @@ def entities_missing_handles(
         """,
         [channel, channel, limit],
     ).fetchall()
-    return [(name, [a for a in (aliases or []) if a]) for (name, aliases, _b) in rows]
+    return [(name, [a for a in (aliases or []) if a], bool(b))
+            for (name, aliases, b) in rows]
 
 
 # ── Relationships ──────────────────────────────────────────────────
