@@ -189,6 +189,11 @@ def sweep(con, client: httpx.Client, limit: int) -> dict[str, Any]:
     channels = ["linkedin", "x"]
     counts: dict[str, Any] = {"resolved": 0, "abstained": 0, "blocked": 0,
                               "budget": binfo}
+    # Stragglers (previously-blocked rows past their 14-day cooldown) are
+    # retried LAST, and only probed: if the first STRAGGLER_PROBE of them
+    # all block again with zero successes, the rest are deferred to the
+    # next cooldown window instead of burning budget.
+    STRAGGLER_PROBE = 5
 
     # Count usage. In the resolver service a thread-local dispatcher is
     # already installed (concurrent lookups each bump their own con) — leave
@@ -202,7 +207,13 @@ def sweep(con, client: httpx.Client, limit: int) -> dict[str, Any]:
         for channel in channels:
             todo = db.entities_missing_handles(con, channel, limit)
             consecutive_blocked = 0
-            for i, (name, aliases) in enumerate(todo):
+            straggler_tries = straggler_wins = 0
+            for i, (name, aliases, was_blocked) in enumerate(todo):
+                if (was_blocked and straggler_tries >= STRAGGLER_PROBE
+                        and straggler_wins == 0):
+                    counts["stragglers_deferred"] = counts.get(
+                        "stragglers_deferred", 0) + 1
+                    continue
                 if i:
                     handles.polite_sleep(handles.SEARCH_DELAY_S)
                 result = handles.resolve_channel(
@@ -214,6 +225,10 @@ def sweep(con, client: httpx.Client, limit: int) -> dict[str, Any]:
                     con, handles.name_key(name), channel,
                     result.handle, result.confidence, result.source, result.comment,
                 )
+                if was_blocked:
+                    straggler_tries += 1
+                    if result.handle:
+                        straggler_wins += 1
                 if result.handle:
                     counts["resolved"] += 1
                     consecutive_blocked = 0

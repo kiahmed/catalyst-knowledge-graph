@@ -465,15 +465,54 @@ class TestCacheTable(unittest.TestCase):
                          handles.SOURCE_LINKEDIN)
         db.upsert_handle(self.con, "schaeffler group", "linkedin", None, 0.0,
                          handles.SOURCE_BLOCKED)
-        # Fresh blocked row is inside the 3-day cooldown — NOT retried yet.
+        # Fresh blocked row is inside the 14-day cooldown — NOT retried yet.
         todo = db.entities_missing_handles(self.con, "linkedin", 10)
-        self.assertEqual([n for n, _ in todo], [])
-        # After the cooldown ages out, it becomes retryable again.
+        self.assertEqual([n for n, _, _ in todo], [])
+        # After the cooldown ages out, it becomes retryable (flagged straggler).
         self.con.execute(
-            "UPDATE entity_handles SET resolved_at = now() - INTERVAL 4 DAY"
+            "UPDATE entity_handles SET resolved_at = now() - INTERVAL 15 DAY"
             " WHERE name_key = 'schaeffler group'")
         todo = db.entities_missing_handles(self.con, "linkedin", 10)
-        self.assertEqual([n for n, _ in todo], ["Schaeffler Group"])
+        self.assertEqual([(n, b) for n, _, b in todo],
+                         [("Schaeffler Group", True)])
+
+    def test_straggler_probe_stops_after_no_wins(self):
+        from src import handle_sweep as hs
+        import os
+        # 8 aged-out blocked entities; SERPs empty, direct fetch walled →
+        # first probe re-blocks; after 5 tries with 0 wins the rest defer.
+        for i in range(8):
+            db.insert_entity(self.con, f"Ghost Corp {i}", None, "private_company")
+            db.upsert_handle(self.con, f"ghost corp {i}", "linkedin", None, 0.0,
+                             handles.SOURCE_BLOCKED)
+            db.upsert_handle(self.con, f"ghost corp {i}", "x", None, 0.0,
+                             handles.SOURCE_ABSTAIN)
+        self.con.execute(
+            "UPDATE entity_handles SET resolved_at = now() - INTERVAL 15 DAY")
+        client = FakeClient(cse={},
+                            pages={s: FakeResponse(999)
+                                   for i in range(8)
+                                   for s in handles.slug_candidates(f"Ghost Corp {i}")})
+        os.environ["BRAVE_API_KEY"] = "test-key"
+        real_get = client.get
+        def get(url, params=None, headers=None):
+            if "api.search.brave.com" in url:
+                return FakeResponse(200, json_data={"web": {"results": []}})
+            return real_get(url, params)
+        client.get = get
+        old_delay = handles.SEARCH_DELAY_S
+        old_direct = handles.DIRECT_FALLBACK_DELAY_S
+        handles.SEARCH_DELAY_S = 0
+        handles.DIRECT_FALLBACK_DELAY_S = 0
+        try:
+            counts = hs.sweep(self.con, client, limit=10)
+        finally:
+            handles.SEARCH_DELAY_S = old_delay
+            handles.DIRECT_FALLBACK_DELAY_S = old_direct
+            del os.environ["BRAVE_API_KEY"]
+        self.assertEqual(counts["resolved"], 0)
+        self.assertGreaterEqual(counts.get("stragglers_deferred", 0), 3)
+        self.assertLessEqual(counts["blocked"], 5)
 
 
 class TestReauditSelection(unittest.TestCase):
