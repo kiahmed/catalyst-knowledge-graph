@@ -61,3 +61,4 @@ tools/infra/prod.auto.tfvars
 # OS
 .DS_Store
 Thumbs.db
+data/.prod-status.duckdb*

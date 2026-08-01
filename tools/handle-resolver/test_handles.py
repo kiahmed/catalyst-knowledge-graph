@@ -460,14 +460,20 @@ class TestCacheTable(unittest.TestCase):
         db.insert_entity(self.con, "Figure AI", None, "private_company")
         db.insert_entity(self.con, "Jane Doe", None, "person")
         db.insert_entity(self.con, "Schaeffler Group", "SHA", "public_company")
-        # Figure AI already decided; Schaeffler blocked (retryable).
+        # Figure AI already decided; Schaeffler blocked (retryable after cooldown).
         db.upsert_handle(self.con, "figure ai", "linkedin", "@figure-ai", 1.0,
                          handles.SOURCE_LINKEDIN)
         db.upsert_handle(self.con, "schaeffler group", "linkedin", None, 0.0,
                          handles.SOURCE_BLOCKED)
+        # Fresh blocked row is inside the 3-day cooldown — NOT retried yet.
         todo = db.entities_missing_handles(self.con, "linkedin", 10)
-        names = [n for n, _ in todo]
-        self.assertEqual(names, ["Schaeffler Group"])  # person + decided excluded
+        self.assertEqual([n for n, _ in todo], [])
+        # After the cooldown ages out, it becomes retryable again.
+        self.con.execute(
+            "UPDATE entity_handles SET resolved_at = now() - INTERVAL 4 DAY"
+            " WHERE name_key = 'schaeffler group'")
+        todo = db.entities_missing_handles(self.con, "linkedin", 10)
+        self.assertEqual([n for n, _ in todo], ["Schaeffler Group"])
 
 
 class TestReauditSelection(unittest.TestCase):
