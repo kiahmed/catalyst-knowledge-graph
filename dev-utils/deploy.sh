@@ -187,9 +187,10 @@ for svc in robotics-render; do
   # has no volume mounts, so /templates must be IN the image (the local
   # compose mount hid a missing-templates bug until 2026-07-29).
   BSTAGE="$(mktemp -d)"
-  cp -r "tools/${svc}/." "$BSTAGE/"
-  mkdir -p "$BSTAGE/templates"
-  cp templates/cards/* "$BSTAGE/templates/"
+  mkdir -p "$BSTAGE/tools" "$BSTAGE/templates"
+  cp -r "tools/${svc}" "$BSTAGE/tools/"
+  cp -r templates/cards "$BSTAGE/templates/"
+  cp "tools/${svc}/Dockerfile" "$BSTAGE/Dockerfile"
   gcloud builds submit "$BSTAGE" \
     --project="$GCP_PROJECT" --tag="${AR}/${svc}:${TAG}" --quiet
   rm -rf "$BSTAGE"

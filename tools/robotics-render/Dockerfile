@@ -13,18 +13,19 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt .
+# Build context is the REPO ROOT (compose + deploy.sh agree) so the
+# repo-root card templates can be baked in unconditionally — glob tricks
+# break on Cloud Build's classic builder. See .dockerignore for the lean
+# context.
+COPY tools/robotics-render/requirements.txt .
 RUN pip install --break-system-packages -r requirements.txt
 
-COPY main.py .
+COPY tools/robotics-render/main.py .
 
-# Card templates baked into the image at the TEMPLATES_DIR default so prod
-# (no volume mounts on Cloud Run) can render. The glob makes the COPY a
-# no-op when the build context has no templates/ dir — the local compose
-# build (context = tools/robotics-render) relies on that: compose mounts
-# ../../templates/cards over /templates instead. deploy.sh stages
-# templates/ into the build context for the prod image.
-COPY template[s]/ /templates/
+# Card templates baked at the TEMPLATES_DIR default so prod (no volume
+# mounts on Cloud Run) can render. Local compose still mounts
+# ./templates/cards over /templates — identical content wins either way.
+COPY templates/cards/ /templates/
 
 # Cloud Run injects $PORT; default 8081 for local dev to avoid collision with robotics-ingest.
 ENV PORT=8081

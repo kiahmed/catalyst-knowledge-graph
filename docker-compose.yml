@@ -89,7 +89,8 @@ services:
   # ─────────────────────────────────────────────────────────────────
   robotics-render:
     build:
-      context: ./tools/robotics-render
+      context: .
+      dockerfile: ./tools/robotics-render/Dockerfile
     container_name: robotics-render
     depends_on:
       duckdb:

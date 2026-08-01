@@ -1,0 +1,11 @@
+# Keep build contexts lean: repo-root builds (robotics-ingest,
+# robotics-render) only need src/, config/, templates/, tools/.
+.git
+data/
+docs/
+frontend/
+dev-utils/
+**/__pycache__/
+**/*.pyc
+.env*
+*.log
