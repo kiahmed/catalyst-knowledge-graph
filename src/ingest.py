@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -277,10 +278,26 @@ def run_ingest(
         written = 0
         failed = 0
         failed_ids: list[str] = []
+        # Soft deadline: stop starting NEW extractions once the run has used
+        # its budget, so export / DuckDB push / Pub/Sub still get to run and
+        # the watermark's partial progress survives. Without it a backlog
+        # bigger than the request timeout wedges the pipeline permanently:
+        # every run is killed mid-extraction, nothing is published, and the
+        # backlog grows (observed in prod 2026-08-25/26). 0 = unlimited.
+        budget_s = float(os.environ.get("INGEST_TIME_BUDGET_S", "0") or 0)
+        run_start = time.monotonic()
         for idx, e in enumerate(new_entries, start=1):
             entry_id = e.get("entry_id") or "?"
             if dry_run:
                 continue  # count-only, no LLM call, no writes
+            if budget_s and (time.monotonic() - run_start) > budget_s:
+                deferred = len(new_entries) - idx + 1
+                log.warning(
+                    "time_budget_reached budget_s=%.0f written=%d deferred=%d "
+                    "next_entry=%s — finishing export/push; rest resumes next run",
+                    budget_s, written, deferred, entry_id,
+                )
+                break
             log.info(
                 "extract_start entry_id=%s seq=%d/%d ts=%s",
                 entry_id, idx, len(new_entries), e.get("timestamp"),

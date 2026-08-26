@@ -24,9 +24,12 @@ resource "google_cloudfunctions2_function" "robotics_ingest" {
   }
 
   service_config {
-    available_memory                 = "2Gi"
-    available_cpu                    = "1"
-    timeout_seconds                  = 540
+    available_memory = "2Gi"
+    available_cpu    = "1"
+    # 30 min = Cloud Scheduler's max attempt deadline. The old 540s could
+    # not fit a multi-entry extraction backlog (~90s/entry), so every run
+    # was killed before it could publish -> renders stopped (2026-08-26).
+    timeout_seconds                  = 1800
     max_instance_count               = 1
     max_instance_request_concurrency = 1
     service_account_email            = google_service_account.robotics_ingest.email
@@ -53,6 +56,9 @@ resource "google_cloudfunctions2_function" "robotics_ingest" {
       # and before export (prod mirror of the local make-ingest chain).
       HANDLE_SWEEP_ENABLED        = "true"
       HANDLE_SWEEP_LIMIT          = "25"
+      # Stop starting new extractions after 20 min so export + DuckDB push
+      # + Pub/Sub fan-out always run inside the 30-min request timeout.
+      INGEST_TIME_BUDGET_S        = "1200"
       LOG_LEVEL                   = "INFO"
     }
 
