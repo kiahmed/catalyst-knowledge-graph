@@ -63,6 +63,19 @@ def pull(duckdb_path: str) -> dict:
         return {"pulled": False, "reason": "no_remote_object"}
 
     os.makedirs(os.path.dirname(duckdb_path) or ".", exist_ok=True)
+    # Drop sidecar files left behind by a PREVIOUS run on this instance.
+    # Cloud Run reuses warm containers: a run killed mid-transaction (e.g.
+    # the request timeout) leaves a .wal describing the OLD file. Downloading
+    # a fresh DB over it makes DuckDB replay that stale WAL on open ->
+    # "Bitpacking offset is out of range ... corrupt database file", and the
+    # whole run's writes are lost. Observed in prod 2026-08-26.
+    for sidecar in (f"{duckdb_path}.wal", f"{duckdb_path}.tmp"):
+        if os.path.exists(sidecar):
+            log.warning("duckdb_pull removing stale sidecar %s", sidecar)
+            try:
+                os.remove(sidecar)
+            except OSError as exc:
+                log.warning("duckdb_pull could not remove %s: %s", sidecar, exc)
     blob.download_to_filename(duckdb_path)
     size = os.path.getsize(duckdb_path)
     log.info("duckdb_pull ok gs://%s/%s -> %s (%d bytes)", bucket_name, obj, duckdb_path, size)
@@ -80,6 +93,23 @@ def push(duckdb_path: str) -> dict:
     if not os.path.exists(duckdb_path):
         log.warning("duckdb_push skipped — local file missing: %s", duckdb_path)
         return {"pushed": False, "reason": "no_local_file"}
+
+    # NEVER overwrite the authoritative copy with a broken file. A run that
+    # hit a fatal DuckDB error still reaches this call (push is non-fatal by
+    # design), so verify the file opens and its core tables read before the
+    # upload — otherwise prod state is destroyed by a bad local copy.
+    try:
+        import duckdb
+
+        probe = duckdb.connect(duckdb_path, read_only=True)
+        try:
+            probe.execute("SELECT COUNT(*) FROM catalysts").fetchone()
+            probe.execute("SELECT COUNT(*) FROM entities").fetchone()
+        finally:
+            probe.close()
+    except Exception as exc:  # noqa: BLE001
+        log.error("duckdb_push REFUSED — local DB failed integrity probe: %s", exc)
+        return {"pushed": False, "reason": "integrity_probe_failed", "error": str(exc)}
 
     from google.cloud import storage
 

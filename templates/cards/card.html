@@ -41,7 +41,11 @@
     {% endif %}
 
     {# Confidence #}
-    {% if confidence is defined %}
+    {# `is defined` was not enough: a card whose relationships were all
+       filtered out has confidence = null, and `null * 5` crashes the
+       render (ROB-081526-001, 2026-08-26). Truthiness covers null and 0 —
+       both mean "no surviving edges", so the meter is simply omitted. #}
+    {% if confidence %}
     <div class="sp-confidence">
       <span class="sp-confidence-label">Confidence</span>
       <div class="sp-confidence-dots">
