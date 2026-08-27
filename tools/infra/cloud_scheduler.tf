@@ -4,7 +4,10 @@ resource "google_cloud_scheduler_job" "ingest_daily" {
   description = "Daily ingestion of Arboryx Robotics findings"
   region      = var.region
   schedule    = var.ingest_schedule
-  time_zone   = "UTC"
+  # Local zone, not UTC: Arboryx doesn't publish until ~07:30 ET, so a UTC
+  # morning cron always ran BEFORE the day's findings existed and stayed a
+  # day behind. Naming the zone also keeps the offset right across DST.
+  time_zone = "America/New_York"
   # Ingest+sweep legitimately runs 3-8 min; the 180s default made the
   # scheduler mark DEADLINE_EXCEEDED daily and fire 3 retry runs (each
   # burning a full handles sweep) even though every request returned 200.
