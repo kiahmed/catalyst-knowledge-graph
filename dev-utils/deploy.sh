@@ -35,25 +35,21 @@ source "$ENVF"; set +a
 : "${CARDS_BUCKET:?set CARDS_BUCKET in .env.prod}"
 : "${GEMINI_API_KEY:?set GEMINI_API_KEY in .env.prod}"
 
-# Deploy must act as YOUR user account (the project Owner), not the local
-# Firestore service account. The Makefile exports GOOGLE_APPLICATION_CREDENTIALS
-# from .env (that SA key is for the local docker stack only) — Terraform would
-# otherwise authenticate as that SA, which lacks project IAM-admin and cannot
-# create the per-tool service-account role bindings. Unset it so Terraform
-# falls back to your `gcloud auth application-default login` credentials.
-unset GOOGLE_APPLICATION_CREDENTIALS
-
-# Terraform authenticates with Application Default Credentials — a SEPARATE
-# credential store from `gcloud auth login` (the CLI account). Verify ADC
-# exists and is usable up front, before doing any work.
+# Deploy uses WHATEVER ADC is configured — a service-account key via
+# GOOGLE_APPLICATION_CREDENTIALS, or a human `gcloud auth application-default
+# login`. This used to force the human account by unsetting the key, because
+# market-agent-sa lacked projectIamAdmin (terraform writes SA role bindings)
+# and artifactregistry.writer (image push). Both were granted 2026-08-26, so
+# headless SA deploys work and the override is gone.
 if ! gcloud auth application-default print-access-token >/dev/null 2>&1; then
   echo "!! Application Default Credentials are missing or expired."
-  echo "   ADC is separate from 'gcloud auth login' — Terraform uses ADC."
-  echo "   Fix (as the project Owner), then re-run make deploy:"
-  echo "     gcloud auth application-default login"
+  echo "   ADC is separate from 'gcloud auth login' — terraform uses ADC."
+  echo "   Fix with EITHER:"
+  echo "     export GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json   # headless"
+  echo "     gcloud auth application-default login                        # browser"
   exit 1
 fi
-echo "Terraform authenticates via your Application Default Credentials."
+echo "Terraform authenticates via ADC: ${GOOGLE_APPLICATION_CREDENTIALS:-user application-default credentials}"
 
 # Image tag: prefer the current git short SHA so every code change redeploys.
 # Outside git, fall back to a UTC timestamp — NEVER a fixed tag like
