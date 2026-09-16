@@ -11,6 +11,7 @@ Endpoints:
         { "since_days": 7, "force": false }
     GET  /card/<id>       → OG deep-link page for social crawlers
     GET  /card-img/<id>.png → stream the card PNG from Firebase Storage
+    GET  /graph-img/<id>.png → stream the catalyst subgraph PNG
     GET  /healthz         → 200 OK
 
 Single worker, Chromium launched once per request (Cloud Run concurrency=1).
@@ -64,6 +65,12 @@ def _env_bool(name: str, default: bool = False) -> bool:
 STORAGE_UPLOAD_ENABLED = _env_bool("STORAGE_UPLOAD_ENABLED", False)
 STORAGE_BUCKET = os.environ.get("STORAGE_BUCKET", "")
 STORAGE_CARDS_PREFIX = os.environ.get("STORAGE_CARDS_PREFIX", "cards")
+# Catalyst subgraph posters live beside the cards under their own prefix.
+STORAGE_GRAPHS_PREFIX = os.environ.get("STORAGE_GRAPHS_PREFIX", "graphs")
+GRAPH_IMAGES_DIR = Path(os.environ.get("GRAPH_IMAGES_DIR", "/data/exports/graph_images"))
+# Node/edge/font sizes in the site's mini-graph are tuned for a ~240px panel;
+# the poster canvas is ~5x that, so scale them up to keep the same look.
+GRAPH_SCALE = float(os.environ.get("GRAPH_SCALE", "1.7"))
 
 # OG deep-link mode — the robotics-og Cloud Run service sets OG_ONLY=true so
 # the shared image serves only the GET routes (render endpoints 404).
@@ -355,6 +362,150 @@ def _render_png(card: dict[str, Any]) -> bytes:
     return png
 
 
+# ── Catalyst subgraph posters ──────────────────────────────────────
+
+_graph_doc_cache: dict[str, Any] = {}
+
+
+def _graph_doc(sector: str) -> dict[str, Any] | None:
+    """The same `graph` payload the website loads: CKG-<sector>/graph/sectors/
+    <sector>. Read once per process — it is identical for every card in a
+    batch and is ~1MB."""
+    if sector in _graph_doc_cache:
+        return _graph_doc_cache[sector]
+    from google.cloud import firestore
+
+    collection = os.environ.get("FIRESTORE_EXPORT_COLLECTION", f"CKG-{sector}")
+    snap = (firestore.Client()
+            .collection(collection).document("graph")
+            .collection("sectors").document(sector).get())
+    doc = (snap.to_dict() or {}).get("graph") if snap.exists else None
+    _graph_doc_cache[sector] = doc
+    return doc
+
+
+def _bucket_graph_ids() -> set[str]:
+    if not STORAGE_BUCKET:
+        return set()
+    prefix = f"{STORAGE_GRAPHS_PREFIX}/"
+    return {b.name[len(prefix):-len(".png")]
+            for b in _cards_bucket().list_blobs(prefix=prefix)
+            if b.name.endswith(".png")}
+
+
+def _upload_graph_png(card_id: str, local_path: Path) -> dict[str, Any]:
+    bucket = _storage_bucket()
+    if bucket is None:
+        return {"uploaded": False, "reason": "upload_disabled"}
+    blob = bucket.blob(f"{STORAGE_GRAPHS_PREFIX}/{card_id}.png")
+    if blob.exists():
+        return {"uploaded": False, "reason": "already_exists"}
+    blob.upload_from_filename(str(local_path), content_type="image/png")
+    return {"uploaded": True, "blob": blob.name}
+
+
+def _card_entity_names(card_id: str) -> list[str]:
+    """Entity names in this catalyst's relationships — the same set the site's
+    cardEntityNames(card) derives from the card payload."""
+    import duckdb
+
+    con = duckdb.connect(DUCKDB_PATH, read_only=True)
+    try:
+        rows = con.execute(
+            """
+            SELECT DISTINCT e.name
+            FROM catalysts c
+            JOIN relationships r ON r.catalyst_id = c.catalyst_id
+            JOIN entities e ON e.entity_id IN (r.entity_a_id, r.entity_b_id)
+            WHERE c.entry_id = ?
+            ORDER BY e.name
+            """,
+            [card_id],
+        ).fetchall()
+    finally:
+        con.close()
+    return [r[0] for r in rows]
+
+
+_pw_singleton = None
+_browser_singleton = None
+
+
+def _shared_browser():
+    """One Chromium for the life of the process. Launching per render costs
+    ~2-3s each, which turns a 500-card backfill into hours."""
+    global _pw_singleton, _browser_singleton
+    if _browser_singleton is not None and _browser_singleton.is_connected():
+        return _browser_singleton
+    from playwright.sync_api import sync_playwright
+
+    _pw_singleton = sync_playwright().start()
+    _browser_singleton = _pw_singleton.chromium.launch(args=["--no-sandbox"])
+    return _browser_singleton
+
+
+def _render_graph_png(card_id: str, card: dict[str, Any]) -> bytes:
+    """Screenshot the catalyst's subgraph using the SAME cytoscape code and
+    styles as the site's mini-graph (templates/cards/graph.html)."""
+    import json as _json
+    from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+    sector = card.get("sector") or os.environ.get("SECTOR", "Robotics")
+    graph = _graph_doc(sector)
+    if not graph:
+        raise RuntimeError(f"no graph doc for sector {sector}")
+
+    names = _card_entity_names(card_id)
+    env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)),
+                      autoescape=select_autoescape())
+    html = env.get_template("graph.html").render(
+        card_id=card_id, headline=card.get("headline", ""),
+        date=card.get("date", ""), sector=sector,
+        width=VIEWPORT_W, height=VIEWPORT_H, scale=GRAPH_SCALE,
+        graph_json=_json.dumps(graph), card_id_json=_json.dumps(card_id),
+        entity_names_json=_json.dumps(names),
+        min_confidence=float(os.environ.get("GRAPH_MIN_CONFIDENCE", "0")),
+        show_invalidated=False,
+    )
+    # set_content() has no base URL, so relative <script src> would 404 —
+    # inline the vendored cytoscape bundles instead.
+    for rel in ("vendor/cytoscape.min.js", "vendor/layout-base.js",
+                "vendor/cose-base.js", "vendor/cytoscape-cose-bilkent.js"):
+        path = TEMPLATES_DIR / rel
+        js = path.read_text() if path.exists() else ""
+        html = html.replace(f'<script src="{rel}"></script>', f"<script>{js}</script>")
+
+    page = _shared_browser().new_page(
+        viewport={"width": VIEWPORT_W, "height": VIEWPORT_H},
+        device_scale_factor=2,
+    )
+    try:
+        page.set_content(html, wait_until="load")
+        page.wait_for_function("window.__graphReady !== undefined", timeout=30000)
+        page.wait_for_timeout(250)   # let the layout settle before the shot
+        return page.screenshot(
+            clip={"x": 0, "y": 0, "width": VIEWPORT_W, "height": VIEWPORT_H})
+    finally:
+        page.close()
+
+
+@app.post("/render-graph")
+def render_graph():
+    body = request.get_json(silent=True) or {}
+    card_id = (body.get("card_id") or "").strip()
+    if not _CARD_ID_RE.match(card_id):
+        return {"ok": False, "error": "bad card_id"}, 400
+    card = _load_card(card_id)
+    if not card:
+        return {"ok": False, "error": "unknown card_id"}, 404
+    GRAPH_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    out = GRAPH_IMAGES_DIR / f"{card_id}.png"
+    out.write_bytes(_render_graph_png(card_id, card))
+    up = _upload_graph_png(card_id, out)
+    _log("graph_ok", card_id=card_id, bytes=out.stat().st_size, **up)
+    return {"ok": True, "card_id": card_id, "bytes": out.stat().st_size, **up}, 200
+
+
 @app.get("/healthz")
 def healthz():
     return "ok", 200
@@ -500,6 +651,26 @@ def og_card_image(card_id: str):
     )
 
 
+@app.get("/graph-img/<card_id>.png")
+def og_graph_image(card_id: str):
+    """Public URL for the catalyst subgraph poster — the image soljet-postiz
+    attaches. Mirrors /card-img/; served by the robotics-og service."""
+    if not _CARD_ID_RE.match(card_id):
+        return "not found", 404
+    bucket = _cards_bucket()
+    if bucket is None:
+        return "not found", 404
+    blob = bucket.blob(f"{STORAGE_GRAPHS_PREFIX}/{card_id}.png")
+    if not blob.exists():
+        return "not found", 404
+    return (
+        blob.download_as_bytes(),
+        200,
+        {"Content-Type": "image/png",
+         "Cache-Control": "public, max-age=3600, must-revalidate"},
+    )
+
+
 @app.post("/render")
 def render_one():
     if OG_ONLY:
@@ -615,43 +786,91 @@ def render_batch():
         except Exception as exc:
             _log("bucket_list_failed", error=str(exc))
 
+    # Catalyst subgraph posters ride the same loop: same skip rules, own
+    # prefix. graphs=false in the body turns them off for a run.
+    graphs_on = bool(body.get("graphs", True))
+    graphs_in_bucket: set[str] = set()
+    if graphs_on and not force:
+        try:
+            graphs_in_bucket = _bucket_graph_ids()
+        except Exception as exc:
+            _log("graph_bucket_list_failed", error=str(exc))
+    if graphs_on:
+        GRAPH_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    g_rendered = g_skipped = g_failed = g_uploaded = 0
+
     rendered, skipped, failed, uploaded, upload_skipped = 0, 0, 0, 0, 0
     for (entry_id,) in rows:
+        card: dict[str, Any] | None = None    # loaded lazily, shared by card+graph
         out_path = CARD_IMAGES_DIR / f"{entry_id}.png"
+        # NOTE: no `continue` in the card section — the graph block below must
+        # still run for catalysts whose card PNG is already done (which is
+        # every backfilled card), otherwise graphs never render at all.
+        card_upload_needed = True
         if not force and (out_path.exists() or entry_id in in_bucket):
             skipped += 1
-            if not out_path.exists():
-                continue    # already served from Storage; nothing to upload
+            card_upload_needed = out_path.exists()   # local file → may need upload
         else:
             card = _load_card(entry_id)
             if not card:
                 failed += 1
-                continue
-            try:
-                out_path.write_bytes(_render_png(card))
-                rendered += 1
-            except Exception as exc:
-                failed += 1
-                _log("render_failed", card_id=entry_id, error=str(exc))
-                continue
+                card_upload_needed = False
+            else:
+                try:
+                    out_path.write_bytes(_render_png(card))
+                    rendered += 1
+                except Exception as exc:
+                    failed += 1
+                    card_upload_needed = False
+                    _log("render_failed", card_id=entry_id, error=str(exc))
 
         # Upload regardless of whether we just rendered or skipped — covers
         # the case where local PNGs exist but Storage doesn't (first cutover).
+        if card_upload_needed:
+            try:
+                up = _upload_png(entry_id, out_path)
+                if up.get("uploaded"):
+                    uploaded += 1
+                else:
+                    upload_skipped += 1
+            except Exception as exc:
+                _log("upload_failed", card_id=entry_id, error=str(exc))
+
+        if not graphs_on:
+            continue
+        g_path = GRAPH_IMAGES_DIR / f"{entry_id}.png"
+        if not force and (g_path.exists() or entry_id in graphs_in_bucket):
+            g_skipped += 1
+            if not g_path.exists():
+                continue
+        else:
+            card = card or _load_card(entry_id)
+            if not card:
+                g_failed += 1
+                continue
+            try:
+                g_path.write_bytes(_render_graph_png(entry_id, card))
+                g_rendered += 1
+            except Exception as exc:
+                g_failed += 1
+                _log("graph_failed", card_id=entry_id, error=str(exc))
+                continue
         try:
-            up = _upload_png(entry_id, out_path)
-            if up.get("uploaded"):
-                uploaded += 1
-            else:
-                upload_skipped += 1
+            if _upload_graph_png(entry_id, g_path).get("uploaded"):
+                g_uploaded += 1
         except Exception as exc:
-            _log("upload_failed", card_id=entry_id, error=str(exc))
+            _log("graph_upload_failed", card_id=entry_id, error=str(exc))
 
     duration = round(time.monotonic() - start, 2)
     _log("batch_ok", total=len(rows), rendered=rendered, skipped=skipped,
          failed=failed, uploaded=uploaded, upload_skipped=upload_skipped,
+         graphs_rendered=g_rendered, graphs_skipped=g_skipped,
+         graphs_failed=g_failed, graphs_uploaded=g_uploaded,
          duration_s=duration)
     return jsonify({
         "ok": True, "total": len(rows), "rendered": rendered, "skipped": skipped,
+        "graphs_rendered": g_rendered, "graphs_skipped": g_skipped,
+        "graphs_failed": g_failed, "graphs_uploaded": g_uploaded,
         "failed": failed, "uploaded": uploaded, "upload_skipped": upload_skipped,
         "duration_s": duration,
     }), 200

@@ -1,0 +1,200 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<title>{{ card_id }} graph</title>
+<style>
+  /* Palette copied from frontend/index.html so posters match the site. */
+  :root { --bg-detail:#f0ede7; --border:#ddd8cf; --text:#1c1917; --muted:#57534e; }
+  html,body { margin:0; padding:0; background:var(--bg-detail); }
+  body { width:{{ width }}px; height:{{ height }}px; overflow:hidden;
+         font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  #wrap { width:100%; height:100%; display:flex; flex-direction:column; }
+  #head { padding:30px 56px 6px; }
+  #headline { font-size:34px; font-weight:600; color:var(--text); line-height:1.2;
+              margin:0 0 10px; }
+  #meta { font-size:18px; color:var(--muted); }
+  #cy { flex:1; margin:0 28px 10px; background:var(--bg-detail); }
+  #foot { padding:0 56px 20px; font-size:17px; color:var(--muted);
+          display:flex; justify-content:space-between; align-items:center; }
+  #legend { display:flex; align-items:center; gap:18px; font-size:15px; }
+  #legend .key { display:flex; align-items:center; gap:6px; white-space:nowrap; }
+  #legend .key i { width:22px; height:4px; border-radius:2px; display:inline-block; }
+  #legend .note { color:#8a857c; }
+</style>
+</head><body>
+<div id="wrap">
+  <div id="head">
+    <h1 id="headline">{{ headline }}</h1>
+    <div id="meta">{{ date }} &nbsp;·&nbsp; {{ sector }} catalyst graph</div>
+  </div>
+  <div id="cy"></div>
+  <div id="foot">
+    <span id="brand">robotics.arboryx.ai &nbsp;·&nbsp; {{ card_id }}</span>
+    <span id="legend">
+      <span class="key"><i style="background:#1c1917"></i>direct</span>
+      <span class="key"><i style="background:#10b981"></i>web-grounded</span>
+      <span class="key"><i style="background:#d97706"></i>inferred</span>
+      <span class="key"><i style="background:#ef4444"></i>speculative</span>
+      <span class="key note">node size = connections · fill = heat</span>
+    </span>
+  </div>
+</div>
+<script src="vendor/cytoscape.min.js"></script>
+<script src="vendor/layout-base.js"></script>
+<script src="vendor/cose-base.js"></script>
+<script src="vendor/cytoscape-cose-bilkent.js"></script>
+<script>
+// ── Verbatim from frontend/index.html renderMiniGraph(): same constants,
+// same edge-slice rules, same Cytoscape styles/layout. Keep in sync.
+const MINI_EVIDENCE_COLORS = { direct:'#1c1917', web_grounded:'#10b981',
+                               inferred:'#d97706', speculative:'#ef4444' };
+const MINI_HEAT_COOL = { h:201, s:47, l:78 };
+const MINI_HEAT_WARM = { h:10, s:100, l:64 };
+function _lerp(a,b,t){ return a + (b-a)*t; }
+function _hslToHex(h,s,l){
+  s/=100; l/=100;
+  const k = n => (n + h/30) % 12;
+  const a = s * Math.min(l, 1-l);
+  const f = n => {
+    const c = l - a * Math.max(-1, Math.min(k(n)-3, Math.min(9-k(n), 1)));
+    return Math.round(255*c).toString(16).padStart(2,'0');
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+function _heatHex(h){
+  const t = Math.max(0, Math.min(1, h||0));
+  return _hslToHex(_lerp(MINI_HEAT_COOL.h, MINI_HEAT_WARM.h, t),
+                   _lerp(MINI_HEAT_COOL.s, MINI_HEAT_WARM.s, t),
+                   _lerp(MINI_HEAT_COOL.l, MINI_HEAT_WARM.l, t));
+}
+
+const SCALE = {{ scale }};
+const GRAPH = {{ graph_json | safe }};
+const CARD_ID = {{ card_id_json | safe }};
+const NAMES = new Set({{ entity_names_json | safe }});
+const MIN_CONF = {{ min_confidence }};
+const SHOW_INVALIDATED = {{ 'true' if show_invalidated else 'false' }};
+
+const allEdges = GRAPH.edges || [], allNodes = GRAPH.nodes || [];
+const passesFilters = e => {
+  if (!SHOW_INVALIDATED && e.status === "invalidated") return false;
+  if ((e.confidence || 0) < MIN_CONF) return false;
+  return true;
+};
+let edgesSlice = CARD_ID
+  ? allEdges.filter(e => e.catalyst_id === CARD_ID && passesFilters(e)) : [];
+if (edgesSlice.length === 0) {
+  edgesSlice = allEdges.filter(e => NAMES.has(e.from) && NAMES.has(e.to) && passesFilters(e));
+}
+const keep = new Set();
+edgesSlice.forEach(e => { keep.add(e.from); keep.add(e.to); });
+NAMES.forEach(n => keep.add(n));
+const nodesSlice = allNodes.filter(n => keep.has(n.id));
+NAMES.forEach(name => {
+  if (!nodesSlice.find(n => n.id === name))
+    nodesSlice.push({ id:name, name:name, ticker:null, type:"", heat:0, edge_count:0 });
+});
+
+const elements = [];
+const maxEc = nodesSlice.reduce((m,n) => Math.max(m, n.edge_count||0), 1);
+const denom = Math.max(1, maxEc - 1);
+nodesSlice.forEach(n => {
+  const ec = Math.max(1, n.edge_count || 1);
+  const t = Math.min(1, (ec - 1) / denom);
+  elements.push({ group:"nodes", data:{ id:n.id,
+    label: n.ticker ? `${n.name} (${n.ticker})` : n.name,
+    _size: _lerp(18, 42, t) * SCALE, _fill: _heatHex(n.heat || 0),
+    _labelMargin: 7*SCALE + _lerp(18, 42, t) * SCALE * 0.14 }});
+});
+edgesSlice.forEach((e, idx) => {
+  const conf = Math.max(0, Math.min(1, e.confidence || 0));
+  const color = MINI_EVIDENCE_COLORS[e.evidence_type] || MINI_EVIDENCE_COLORS.direct;
+  let ls = "solid", op = 1;
+  if (e.evidence_type === "speculative") ls = "dashed";
+  if (e.status === "invalidated") { ls = "dashed"; op = 0.3; }
+  else if (e.status === "stale") op = 0.4;
+  elements.push({ group:"edges", data:{ id:`m${idx}-${e.from}-${e.to}`,
+    source:e.from, target:e.to, _width:_lerp(1,4,conf) * SCALE,
+    _color:color, _opacity:op, _lineStyle:ls }});
+});
+
+const cy = cytoscape({
+  container: document.getElementById("cy"),
+  elements,
+  style: [
+    { selector:"node", style:{
+      "width":"data(_size)", "height":"data(_size)",
+      "background-color":"data(_fill)",
+      "border-width":1.5*SCALE, "border-color":"#ddd8cf",
+      "label":"data(label)", "font-family":"Inter, sans-serif",
+      "font-size":9*SCALE, "font-weight":500, "color":"#57534e",
+      "text-valign":"bottom", "text-halign":"center",
+      "text-margin-y":"data(_labelMargin)", "text-wrap":"wrap", "text-max-width":100*SCALE,
+      // Poster-only: the site can rely on hover/zoom to read a covered label,
+      // a static image cannot. Halo + z-index keep every label legible when
+      // edges pass underneath.
+      "text-background-color":"#f0ede7", "text-background-opacity":0.92,
+      "text-background-shape":"roundrectangle",
+      "text-background-padding":3*SCALE,
+      "text-border-opacity":0, "z-index":10 }},
+    { selector:"edge", style:{
+      "width":"data(_width)", "line-color":"data(_color)",
+      "target-arrow-color":"data(_color)", "target-arrow-shape":"triangle",
+      "curve-style":"bezier", "line-style":"data(_lineStyle)",
+      "opacity":"data(_opacity)", "arrow-scale":0.9*SCALE, "z-index":1 }}
+  ],
+  // Static poster: no interaction, and no zoom clamping (we fit once).
+  userZoomingEnabled:false, userPanningEnabled:false, autoungrabify:true
+});
+const layoutName = (typeof cytoscapeCoseBilkent === "function" || cy.layout)
+  ? "cose-bilkent" : "cose";
+try { cy.layout({ name:layoutName, randomize:false, animate:false,
+  idealEdgeLength:70*SCALE, nodeRepulsion:3500, fit:true, padding:18,
+  // Disconnected entities (no surviving edge in this catalyst) otherwise land
+  // far outside the cluster and shrink everything else once we fit.
+  tile:true, tilingPaddingVertical:18*SCALE, tilingPaddingHorizontal:18*SCALE,
+  nodeDimensionsIncludeLabels:true }).run(); }
+catch (e) { cy.layout({ name:"cose", animate:false, fit:true }).run(); }
+// The container is flex-sized, so cytoscape's initial fit can run against a
+// stale box and leave the graph tiny. Re-measure after layout + fonts, then
+// fit again before signalling readiness.
+function placeIsolated() {
+  const iso = cy.nodes().filter(n => n.degree() === 0);
+  if (!iso.length || iso.length === cy.nodes().length) return;
+  const bb = cy.nodes().difference(iso).boundingBox();
+  // Keep them close under the cluster and centred: a big gap would blow up
+  // the bounding box and shrink the whole graph once we fit.
+  const gap = 120*SCALE;
+  const y = bb.y2 + 42*SCALE;
+  const cx = (bb.x1 + bb.x2) / 2;
+  const x0 = cx - gap * (iso.length - 1) / 2;
+  iso.forEach((n, i) => n.position({ x: x0 + i * gap, y: y }));
+}
+// A cose layout is roughly square; the poster is ~3:1 (wide). Without this
+// the graph fits to HEIGHT and leaves huge side margins. Widen positions
+// toward the frame's aspect (capped, so the diagram is stretched, not warped).
+function spreadToAspect() {
+  const box = cy.container().getBoundingClientRect();
+  if (!box.width || !box.height) return;
+  const bb = cy.nodes().boundingBox();
+  const w = Math.max(1, bb.x2 - bb.x1), h = Math.max(1, bb.y2 - bb.y1);
+  const target = box.width / box.height, cur = w / h;
+  if (cur >= target) return;
+  const k = Math.min(1.9, target / cur);
+  const cx = (bb.x1 + bb.x2) / 2;
+  cy.nodes().forEach(n => {
+    const p = n.position();
+    n.position({ x: cx + (p.x - cx) * k, y: p.y });
+  });
+}
+function settle() {
+  placeIsolated();
+  spreadToAspect();
+  cy.resize();
+  cy.fit(undefined, 18);
+  window.__graphReady = { nodes: cy.nodes().length, edges: cy.edges().length,
+                          zoom: cy.zoom() };
+}
+(document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve())
+  .then(() => requestAnimationFrame(() => setTimeout(settle, 60)));
+</script>
+</body></html>
