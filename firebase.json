@@ -14,15 +14,31 @@
     "rewrites": [
       {
         "source": "/card/**",
-        "run": { "serviceId": "robotics-og", "region": "us-central1" }
+        "run": {
+          "serviceId": "robotics-og",
+          "region": "us-central1"
+        }
       },
       {
         "source": "/card-img/**",
-        "run": { "serviceId": "robotics-og", "region": "us-central1" }
+        "run": {
+          "serviceId": "robotics-og",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/graph-img/**",
+        "run": {
+          "serviceId": "robotics-og",
+          "region": "us-central1"
+        }
       },
       {
         "source": "/__session/**",
-        "run": { "serviceId": "arboryx-auth", "region": "us-central1" }
+        "run": {
+          "serviceId": "arboryx-auth",
+          "region": "us-central1"
+        }
       },
       {
         "source": "**",
@@ -33,13 +49,19 @@
       {
         "source": "assets/**",
         "headers": [
-          { "key": "Cache-Control", "value": "public, max-age=300, must-revalidate" }
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=300, must-revalidate"
+          }
         ]
       },
       {
         "source": "**/*.html",
         "headers": [
-          { "key": "Cache-Control", "value": "public, max-age=60, must-revalidate" }
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=60, must-revalidate"
+          }
         ]
       }
     ]

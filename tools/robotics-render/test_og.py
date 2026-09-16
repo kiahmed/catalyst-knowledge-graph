@@ -232,5 +232,37 @@ class ParseBatchBodyTests(unittest.TestCase):
         self.assertEqual(main._parse_batch_body(body), body)
 
 
+class TestGraphImageRoute(unittest.TestCase):
+    """/graph-img/<id>.png — the URL soljet-postiz attaches (docs/graph-posters.md)."""
+
+    def setUp(self):
+        main.app.config["TESTING"] = True
+        self.client = main.app.test_client()
+
+    def test_rejects_bad_id(self):
+        self.assertEqual(self.client.get("/graph-img/..%2Fetc.png").status_code, 404)
+
+    def test_streams_png_when_blob_exists(self):
+        blob = mock.MagicMock()
+        blob.exists.return_value = True
+        blob.download_as_bytes.return_value = b"\x89PNG_graph"
+        bucket = mock.MagicMock()
+        bucket.blob.return_value = blob
+        with mock.patch.object(main, "_cards_bucket", return_value=bucket):
+            r = self.client.get("/graph-img/ROB-071826-002.png")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.headers["Content-Type"], "image/png")
+        self.assertEqual(r.data, b"\x89PNG_graph")
+        bucket.blob.assert_called_once_with("graphs/ROB-071826-002.png")
+
+    def test_404_when_blob_missing(self):
+        blob = mock.MagicMock()
+        blob.exists.return_value = False
+        bucket = mock.MagicMock()
+        bucket.blob.return_value = blob
+        with mock.patch.object(main, "_cards_bucket", return_value=bucket):
+            r = self.client.get("/graph-img/ROB-071826-002.png")
+        self.assertEqual(r.status_code, 404)
+
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    unittest.main()
