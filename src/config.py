@@ -99,6 +99,21 @@ class GraphConfig:
 
 
 @dataclass(frozen=True)
+class InsightsConfig:
+    """graph_insights[] detectors (§2.9a). Windows are compared as RATES, so
+    window_days and baseline_days need not match."""
+    enabled: bool
+    window_days: int                 # the "recent" period a claim is about
+    baseline_days: int               # trailing period it is compared against
+    min_recent: int                  # floor for an entity claim (noise guard)
+    min_recent_rel: int              # floor for a relationship-type claim
+    min_growth_ratio: float          # below this it is not a story
+    min_baseline: int                # min prior-period edges before claiming a multiplier
+    top_n_entities: int
+    top_n_rel_types: int
+
+
+@dataclass(frozen=True)
 class LifecycleConfig:
     """Phase-2 edge-lifecycle detector knobs (§2.6)."""
     enabled: bool
@@ -157,6 +172,7 @@ class RoboticsConfig:
     resolution: ResolutionConfig
     export: ExportConfig
     graph: GraphConfig
+    insights: InsightsConfig
     lifecycle: LifecycleConfig
     backtest_dir: str
     vocab: dict[str, Any] = field(default_factory=dict)
@@ -198,6 +214,7 @@ def load_config() -> RoboticsConfig:
     storage_cfg = cfg.get("storage", {})
     export_cfg = cfg.get("export", {})
     graph_cfg = cfg.get("graph", {})
+    insights_cfg = cfg.get("insights", {})
     lifecycle_cfg = cfg.get("lifecycle", {})
     backtest_cfg = cfg.get("backtest", {})
     confidence = extraction.get("confidence", {})
@@ -291,6 +308,17 @@ def load_config() -> RoboticsConfig:
             min_edge_confidence=float(graph_cfg.get("min_edge_confidence", 0.0)),
             show_invalidated=bool(graph_cfg.get("show_invalidated", False)),
             graph_window_days=int(graph_cfg.get("graph_window_days", 90)),
+        ),
+        insights=InsightsConfig(
+            enabled=bool(insights_cfg.get("enabled", True)),
+            window_days=int(insights_cfg.get("window_days", 30)),
+            baseline_days=int(insights_cfg.get("baseline_days", 90)),
+            min_recent=int(insights_cfg.get("min_recent", 3)),
+            min_recent_rel=int(insights_cfg.get("min_recent_rel", 5)),
+            min_growth_ratio=float(insights_cfg.get("min_growth_ratio", 1.5)),
+            min_baseline=int(insights_cfg.get("min_baseline", 3)),
+            top_n_entities=int(insights_cfg.get("top_n_entities", 5)),
+            top_n_rel_types=int(insights_cfg.get("top_n_rel_types", 3)),
         ),
         lifecycle=LifecycleConfig(
             enabled=bool(lifecycle_cfg.get("enabled", False)),
