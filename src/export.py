@@ -10,9 +10,10 @@ so the frontend can render the graph without re-querying DuckDB. Edge
 tooltips use the `mechanism` field; colored-status overlays key off
 `status` + `confidence`. See spec §2.5 / §2.6.
 
-Graph-level insights (chokepoint/velocity/cluster-break) remain TODO
-until the detector tickets — emitted as an empty list so the frontend
-can render the overlay panel without special-casing a missing key.
+Graph-level insights (`graph_insights[]`) are computed by src/detect.py
+(§2.9a) — comparative, rate-normalised claims like "3.2x prior quarter".
+Always a list: detectors that find nothing (or fail) yield [], so the
+frontend and soljet-postiz never special-case a missing key.
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ from typing import Any
 
 import duckdb
 
-from . import db, handles
+from . import db, detect, handles
 from .config import RoboticsConfig
 
 
@@ -405,6 +406,10 @@ def build_payload(cfg: RoboticsConfig) -> dict[str, Any]:
             show_invalidated=cfg.graph.show_invalidated,
         )
         stats = _compute_stats(con, cfg.sector)
+        # §2.9a — comparative claims ("3.2x prior quarter"), the field
+        # soljet-postiz quotes verbatim. Computed here, inside the same
+        # connection, so it sees exactly the data this export ships.
+        insights = detect.graph_insights(con, cfg)
     finally:
         con.close()
 
@@ -432,7 +437,7 @@ def build_payload(cfg: RoboticsConfig) -> dict[str, Any]:
         },
         "cards": cards,
         "graph": graph,
-        "graph_insights": [],  # populated when detectors land (Phase 1 W4)
+        "graph_insights": insights,   # §2.9a detectors (src/detect.py)
     }
 
 

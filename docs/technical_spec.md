@@ -860,7 +860,30 @@ postiz:
   min_confidence: 0.75                  # Don't auto-post low-confidence cards
 ```
 
-#### 2.9a Proposed: `graph_insights[]` detectors (ask from soljet-postiz)
+#### 2.9a `graph_insights[]` detectors — BUILT 2026-09-20 (`src/detect.py`)
+
+> **Status: implemented.** Two detectors ship: `entity_velocity` (type
+> `chokepoint` — an entity's edge formation vs its own trailing rate) and
+> `relationship_velocity` (type `velocity` — a relationship type across the
+> sector). Both compare **rates**, not raw counts, so a 30-day window is
+> comparable to a 90-day baseline. Knobs live under `insights:` in
+> `config/config.yaml`; `enabled: false` restores the old empty array.
+>
+> **Editorial floor, learned from live data:** a baseline of one edge yields
+> "150.0x prior quarter" — true arithmetic, indefensible copy, and these
+> headlines are published verbatim. `min_baseline` (default 3) gates the
+> multiplier; thin-baseline entities still surface, phrased as counts
+> ("50 in 30 days (vs 1 in the prior 90)"). Invalidated edges never count
+> toward a trend. A detector failure returns `[]` — insights must never cost
+> the export.
+>
+> **Delivery:** the array rides the graph doc
+> (`CKG-<sector>/graph/sectors/<sector>`), not the per-card `items` docs —
+> it is one array per sector, and copying it onto 600+ card docs would bloat
+> every write for no new information. Consumer contract:
+> `soljet-postiz/docs/graph-posters.md`.
+
+The original ask, kept for context:
 
 > **Audience: this repo.** Not a change request against the pull-based
 > integration above — soljet-postiz's posting pipeline works today with or
