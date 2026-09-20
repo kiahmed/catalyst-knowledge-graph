@@ -822,7 +822,26 @@ Runs in `daily_run.py` after the JSON export. Idempotent: skips cards whose PNG 
 
 ### 2.9 Postiz integration
 
-Postiz is already deployed in the sibling `soljet-postiz` repo. The Robotics module posts via its public API.
+> **Status update (2026-09-20, from the soljet-postiz side):** the flow
+> below describes an early push-based design — this module calling Postiz's
+> `/posts` API directly from `daily_run.py`. **That's not what's actually
+> live.** The real, shipped integration is the other direction: **pull-based**.
+> soljet-postiz's own `bin/daily.py` reads this module's export directly
+> (`firestore_cards` — the `CKG-Robotics/catalysts/items` Firestore
+> subcollection described below, or `cards.json` locally) on its own
+> schedule, composes the post text itself (`compose_catalyst()` — see §2.5's
+> `share.linkedin_text`/`twitter_text` fields, used as the deterministic base
+> text, plus a "why it matters" sentence quoted from each relationship's own
+> `mechanism` field as of soljet-postiz's Phase 1 build), and calls Postiz's
+> API itself. This module never calls Postiz directly, has no `social_posts`
+> table, and does not pull analytics back (soljet-postiz doesn't do that
+> either yet — no analytics loop exists on either side today). Real
+> confidence gating lives in soljet-postiz as `X_MIN_CONFIDENCE="0.85"`
+> (X only; LinkedIn takes everything), not the `min_confidence: 0.75` shown
+> below. Left the original design below for history; treat the status note
+> as the actual contract. Full detail: soljet-postiz's
+> `docs/simmer_integration.md`/`docs/matrix_integration.md` (same pull
+> pattern, different products) and `docs/social-posting-strategy.md`.
 
 **Daily flow in `daily_run.py`:**
 1. Determine today's post queue — top N cards by `confidence × sector_relevance`, cap at 2-3 posts/day
@@ -840,6 +859,46 @@ postiz:
   daily_post_cap: 3
   min_confidence: 0.75                  # Don't auto-post low-confidence cards
 ```
+
+#### 2.9a Proposed: `graph_insights[]` detectors (ask from soljet-postiz)
+
+> **Audience: this repo.** Not a change request against the pull-based
+> integration above — soljet-postiz's posting pipeline works today with or
+> without this. This is the one item from soljet-postiz's content-quality
+> pass (`docs/social-posting-strategy.md` Part 2, 2026-09-19) that has to be
+> built here, not there: it needs data this module computes, not data
+> soljet-postiz receives.
+
+`src/export.py::build_payload()` already ships the field:
+```python
+"graph_insights": [],  # populated when detectors land (Phase 1 W4)
+```
+and the export schema (§2.5 above) already documents the intended shape:
+```jsonc
+{"type": "chokepoint", "entity": "NVIDIA", "growth_ratio": 3.2,
+ "headline": "NVIDIA: 12 new partnerships in 30 days (3.2× prior quarter)"}
+```
+Nobody has built the detector that fills it in. The two stats fields that
+DO ship today (`stats.top_chokepoint_entity`, `stats.fastest_accelerating_
+relationship` — `src/export.py::_compute_stats`) are coarse counts by
+comparison: most-connected entity **all-time**, most common relationship
+**type** in the last 14 days — no baseline, no ratio, no comparison to a
+prior period. soljet-postiz is starting to surface those honestly (a
+"state of the sector" post, framed as counts, not trends — see Part 2 §3
+of the doc above) precisely because `graph_insights[]` isn't populated yet
+to give it something better to say.
+
+`growth_ratio` (or an equivalent) — a real comparison against a trailing
+baseline window, per entity or per relationship type — is the highest-
+leverage content lever identified in that whole analysis: a comparative,
+superlative, inherently shareable claim ("3.2× prior quarter"), versus
+"NVIDIA has a lot of relationships" (true, but not news). Once populated,
+soljet-postiz's side needs no further coordination to consume it — a card-
+level or stats-level array is enough; it'll read `entity`/`growth_ratio`/
+`headline` verbatim, the same "quote the KG's own words" contract every
+other composer here already holds itself to (never re-derive a claim from
+raw numbers on the Postiz side — see that repo's `compose_catalyst()`
+entity-free-hook comment for why).
 
 ### 2.10 LLM choice
 
