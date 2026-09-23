@@ -280,6 +280,7 @@ pre-GA model.
   "significance_score": 0.82,        // catalyst-level LLM assessment
   "reasoning": "...",                // CoT, discarded after use
   "headline": "Boston Dynamics + Hyundai expand warehouse JV",
+  "hashtags": ["#WarehouseRobotics", "#LogisticsAutomation"], // 2-4 topical tags for THIS story
   "sentiment_label": "Bullish",      // pass-through from Arboryx
   "research_sources": ["url1", ...], // citations if Call 1 fired
   "entities": [
@@ -437,6 +438,20 @@ one, it records the materialization. That's the data underlying
 3. `headline` — 8–12 word compression for the card
 4. `significance_score` + `research_sources` — catalyst-level
    metadata
+5. `hashtags` — 2-4 topical tags for THIS specific catalyst, same call
+   as `headline` (no second LLM pass). Not the generic per-sector list
+   soljet-postiz already appends deterministically (`#Robotics`,
+   `#Automation`, `#Humanoids`) — those read wrong on an off-niche
+   story (an agriculture-robotics catalyst tagged `#Humanoids` helps
+   no one). Reflect the story's actual keywords/niche instead:
+   an Agtonomy/Kubota farm-robotics partnership gets
+   `#AutonomousAgriculture` / `#AgriRobotics`, not just `#Robotics`.
+   CamelCase, no spaces, CONSTRAINTS: ground every tag in a concept
+   actually present in the finding/headline — never invent a claim or
+   number to make a tag fit (same grounding discipline `mechanism`
+   already holds). soljet-postiz appends its own entity-name and
+   sector tags separately (`_relevant_hashtags`); these are additive,
+   not a replacement — dedupe is handled on the posting side.
 
 ### 2.3 Entity resolution
 
@@ -777,7 +792,14 @@ Two variants per card, exposed via the share overlay:
 | Copy link | `navigator.clipboard.writeText(cardUrl)` | card deeplink with hash |
 | Download PNG | `<a download href="card_images/{card_id}.png">` | pre-rendered PNG |
 
-The platform-specific `twitter_text` and `linkedin_text` are generated once during export (not at share time) by a lightweight LLM pass on the card data — same call that produces the headline. This keeps the frontend purely static.
+**Correction (2026-09-22):** `twitter_text` and `linkedin_text` are NOT an
+LLM pass — `src/export.py::_twitter_text`/`_linkedin_text` are deterministic
+templates (`headline` + `$TICKER`s, and `headline` + `subtitle` + `source_url`
+respectively), built once at export time. Only `headline`, `mechanism`, and
+now `hashtags` (above) are actually LLM-generated, all in the one extraction
+call in `src/extract.py`. This line previously claimed otherwise; caught
+2026-09-22 while spec'ing the `hashtags` field, cross-checking against the
+actual code before assuming another LLM call existed to extend.
 
 ### 2.7a Crawler access — robots.txt
 
