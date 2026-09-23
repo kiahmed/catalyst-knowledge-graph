@@ -478,6 +478,10 @@ CREATE TABLE catalysts (
     prompt_version    VARCHAR,                    -- which extractor version produced this row
     significance_score FLOAT,                     -- catalyst-level 0..1 inference gate (§2.2)
     research_sources  TEXT,                       -- JSON array of cited URIs from grounding call
+    hashtags          TEXT,                       -- JSON array, priority-ordered: ≤2 entity, 1 topic,
+                                                  --   ≤2 theme, sector floor (max 6). Deterministic, no LLM
+                                                  --   (src/hashtags.py); set in write_extraction's txn,
+                                                  --   NULL rows backfilled each ingest run
     extracted_at      TIMESTAMP DEFAULT now()
 );
 
@@ -622,6 +626,7 @@ The frontend constructs the URL from `entry_id` + bucket — no per-card URL fie
       "sentiment": "Very Bullish",
       "confidence": 0.92,
       "source_url": "https://...",
+      "hashtags": ["#Cognex", "#RealSense", "#Acquisition", "#PhysicalAI", "#Robotics"],
       "share": { "twitter_text": "...", "linkedin_text": "..." }
     }
   ],
