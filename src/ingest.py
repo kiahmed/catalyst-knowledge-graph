@@ -29,7 +29,7 @@ import duckdb
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from . import db
+from . import db, hashtags
 from .config import RoboticsConfig
 from .extract import ExtractionResult, extract, research_sources_json
 from .resolve import resolve_entity
@@ -222,6 +222,10 @@ def write_extraction(
                 source_refs=source_refs_json,
             )
 
+        # Tags are derived from the rows just written, so compute them inside
+        # the same transaction — a catalyst is never visible without them.
+        hashtags.store_for_catalyst(con, catalyst_id)
+
         con.execute("COMMIT")
         return catalyst_id
     except Exception:
@@ -251,6 +255,12 @@ def run_ingest(
             log.warning("orphan_sweep counts=%s", orphan_counts)
         else:
             log.info("orphan_sweep clean")
+
+        # One-time (then no-op) backfill for catalysts written before
+        # hashtags existed. Deterministic, local, milliseconds per row.
+        tagged = hashtags.backfill(con)
+        if tagged:
+            log.info("hashtags_backfill tagged=%d", tagged)
 
         last_date, last_id, _last_gen_unused = db.get_watermark(con, cfg.sector)
 

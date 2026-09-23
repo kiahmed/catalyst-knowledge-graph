@@ -106,7 +106,7 @@ def _load_cards(
         f"""
         SELECT catalyst_id, entry_id, timestamp, source_url, raw_finding,
                headline, sentiment_label, sentiment_takeaways,
-               significance_score, research_sources
+               significance_score, research_sources, hashtags
         FROM catalysts
         WHERE {' AND '.join(where_clauses)}
         ORDER BY timestamp DESC, entry_id DESC
@@ -120,7 +120,7 @@ def _load_cards(
         (
             catalyst_id, entry_id, ts, source_url, raw_finding,
             headline, sentiment, sent_takeaways,
-            significance_score, research_sources,
+            significance_score, research_sources, hashtags_json,
         ) = row
 
         # Entities that appear in this catalyst's relationships.
@@ -208,6 +208,9 @@ def _load_cards(
                 json.loads(research_sources) if research_sources else []
             ),
             "source_url": source_url,
+            # Priority-ordered (entity, topic, theme, sector); consumers take
+            # a prefix to fit their budget. See src/hashtags.py.
+            "hashtags": json.loads(hashtags_json) if hashtags_json else [],
             "share": {
                 "twitter_text": _twitter_text(headline, entities),
                 "linkedin_text": _linkedin_text(headline, subtitle, source_url),

@@ -159,6 +159,8 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
     # CREATE TABLE IF NOT EXISTS won't add columns to an existing DB.
     con.execute("ALTER TABLE entity_handles ADD COLUMN IF NOT EXISTS comment VARCHAR")
     con.execute("ALTER TABLE entity_handles ADD COLUMN IF NOT EXISTS audited_at TIMESTAMP")
+    # Per-catalyst hashtags (JSON array, priority-ordered) — src/hashtags.py.
+    con.execute("ALTER TABLE catalysts ADD COLUMN IF NOT EXISTS hashtags TEXT")
     seed_search_providers(con)
 
 
