@@ -8,7 +8,7 @@
         handles handles-lookup handles-unresolved handles-set reaudit search-budget \
         db db-query \
         frontend open \
-        deploy deploy-preflight deploy-frontend ship worktree-clean firebase-sa link-domain firestore-sync \
+        deploy deploy-preflight deploy-frontend rules-test ship worktree-clean firebase-sa link-domain firestore-sync \
         nuke prune test fmt
 
 SHELL := /bin/bash
@@ -79,6 +79,7 @@ help:
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "deploy-preflight" "" "Verify gcloud auth + IAM admin + .env.prod"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "firestore-sync" "" "One-time: local DuckDB to CKG-<sector> + PNGs to Storage"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "deploy-frontend" "" "Deploy frontend/ to Firebase Hosting"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "rules-test" "" "Firestore rules vs emulator (Docker; no deploy)"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "ship" "m=\"msg\" (if dirty)" "Commit + push branch + open PR (never pushes main)"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "worktree-clean" "<name|ship/..> [FORCE=1]" "Remove MERGED worktree/branch: dir + local + remote"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "firebase-sa" "" "One-time: create Firebase deploy SA + key"
@@ -435,6 +436,12 @@ endif
 # target. If the tree is dirty, m="message" is required and everything is
 # committed first. If on main, a ship/<UTC-stamp> branch is cut from HEAD
 # (never pushes main directly). Then: push -u + gh pr create --fill.
+# Emulator tests for tools/frontend-deploy/firestore.rules (whole-DB ruleset
+# shared with arboryx-admin). Runs in Docker, touches nothing live.
+rules-test:
+	@docker run --rm -v "$(CURDIR)/tools/frontend-deploy/rules-test:/t:ro" \
+	  -v "$(CURDIR)/tools/frontend-deploy:/rules:ro" node:22-bookworm bash /t/run.sh
+
 ship:
 	@command -v gh >/dev/null || { echo "!! gh CLI not installed"; exit 2; }
 	@git remote get-url origin >/dev/null 2>&1 || { echo "!! no origin remote — git remote add origin <url>"; exit 2; }

@@ -2,12 +2,18 @@ rules_version = '2';
 
 // Firestore Security Rules for the (default) database in sample-gcp-project-id.
 //
-// SCOPE: this database also holds Arboryx's `findings` collection, and
-// deploying replaces the WHOLE database ruleset — so these rules are
-// deliberately deny-by-default. That's safe: `findings` is touched only by
-// backend service accounts (the Arboryx pipeline, robotics-ingest), and the
-// Admin SDK BYPASSES security rules entirely. Rules only ever gate browser
-// clients — and the only browser client here is the robotics frontend.
+// SCOPE: this is the CANONICAL, WHOLE-DATABASE ruleset. The database is
+// shared by several frontends:
+//   • catalyst-knowledge-graph (this repo, robotics) → CKG-* + users/*
+//   • arboryx-admin                                  → users/* + products + config catalog
+// Deploying (`firebase deploy --only firestore`) from EITHER repo replaces
+// the whole ruleset, so arboryx-admin stages its changes in
+// dev-utils/firestore.rules and they are merged HERE, then deployed once as a
+// coordinated operation (see arboryx-admin docs/firestore-rules-canonical-merge.md).
+//
+// Deny-by-default. `findings` is intentionally absent → denied to browsers;
+// it is touched only by backend service accounts (Arboryx pipeline,
+// robotics-ingest), and the Admin SDK BYPASSES security rules entirely.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -26,12 +32,73 @@ service cloud.firestore {
     // User profiles — written by the frontend on each sign-in, one doc per
     // user. Each user may read and write only their own doc; the stored
     // `uid` field must match the authenticated uid. No client deletes.
+    //
+    // `entitlement` and `products` are backend-only: clients can neither
+    // create nor change them. `products` is a nested map
+    // (`products.{productId} = {member, access, since}`) and Rules has no loop
+    // construct to validate an open-ended map per entry — affectedKeys() only
+    // sees the top-level key — so blocking it outright is the only rule that
+    // closes self-granted `member/access`. The validated per-product record
+    // is the products/{productId} subdoc below.
+    //
+    // ⚠️  PRE-DEPLOY BLOCKER: arboryx-admin's frontend/assets/arboryx-auth.js
+    // and cloud_function_auth/main.py (GET me / POST link) still write/read
+    // `users/{uid}.products` directly. Deploying this before they migrate to
+    // the subcollection BREAKS arboryx.ai sign-in. Robotics is unaffected:
+    // frontend/assets/auth.js upsertProfile() never writes `products`.
     match /users/{uid} {
       allow read: if request.auth != null && request.auth.uid == uid;
-      allow create, update: if request.auth != null
-                            && request.auth.uid == uid
-                            && request.resource.data.uid == uid;
+
+      allow create: if request.auth != null
+                    && request.auth.uid == uid
+                    && request.resource.data.uid == uid
+                    && !('entitlement' in request.resource.data)
+                    && !('products' in request.resource.data);
+
+      allow update: if request.auth != null
+                    && request.auth.uid == uid
+                    && request.resource.data.uid == uid
+                    && !request.resource.data.diff(resource.data)
+                          .affectedKeys().hasAny(['entitlement', 'products']);
+
       allow delete: if false;
+
+      // Product membership subdocs, e.g. users/{uid}/products/arboryx =
+      // { productId, tier, joinedAt, joinedVia, lastSeenAt }. Owner may
+      // read/write except backend-only `entitlement`. `tier` must equal the
+      // catalog value (config/products/items/{productId}, server-seeded), so a
+      // client can't grant itself a higher tier; an unknown productId makes
+      // get() fail, which also rejects memberships for bogus products.
+      match /products/{productId} {
+        allow read: if request.auth != null && request.auth.uid == uid;
+
+        allow create: if request.auth != null
+                      && request.auth.uid == uid
+                      && !('entitlement' in request.resource.data)
+                      && request.resource.data.productId == productId
+                      && request.resource.data.tier == get(
+                           /databases/$(database)/documents/config/products/items/$(productId)
+                         ).data.tier;
+
+        allow update: if request.auth != null
+                      && request.auth.uid == uid
+                      && !request.resource.data.diff(resource.data)
+                            .affectedKeys().hasAny(['entitlement'])
+                      && request.resource.data.productId == productId
+                      && request.resource.data.tier == get(
+                           /databases/$(database)/documents/config/products/items/$(productId)
+                         ).data.tier;
+
+        allow delete: if false;
+      }
+    }
+
+    // Product catalog — world-readable metadata (displayName, tier,
+    // gateEnabled). Seeded server-side by arboryx-admin
+    // dev-utils/seed_products_config.py. Client writes denied.
+    match /config/products/items/{productId} {
+      allow read: if true;
+      allow write: if false;
     }
   }
 }

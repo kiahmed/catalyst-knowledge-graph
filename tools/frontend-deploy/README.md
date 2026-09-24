@@ -49,10 +49,14 @@ preview. `cards.json` is **not** deployed (it's in `firebase.json`'s `ignore`)
 2. Deploy the rules once, from the repo root:
    `firebase deploy --only firestore --project <GCP_PROJECT>`
 
-`firestore.rules` is deny-by-default: signed-in read on `CKG-*`, plus each
-user read/write on their own `users/{uid}` doc. `--only firestore` replaces
-the whole `(default)` database ruleset — safe, since Arboryx's `findings` is
-backend-only (Admin SDK bypasses rules).
+`firestore.rules` is the canonical whole-DB ruleset, shared with
+arboryx-admin: deny-by-default, signed-in read on `CKG-*`, each user
+read/write on their own `users/{uid}` doc (`entitlement`/`products` fields
+backend-only), `users/{uid}/products/{id}` with `tier` locked to the
+`config/products/items` catalog, and a read-only catalog. `--only firestore`
+replaces the whole `(default)` ruleset, so deploys are coordinated with
+arboryx-admin — see the PRE-DEPLOY BLOCKER in the file header before
+deploying. Verify changes with `make rules-test` (emulator, touches nothing live).
 
 ## What's in `firebase.json`
 
