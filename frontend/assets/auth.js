@@ -2,8 +2,8 @@
 //
 // The site requires sign-in. This module loads the Firebase Web SDK on
 // demand, renders a custom sign-in modal, gates the app behind it, and
-// upserts a users/{uid} profile doc in Firestore on every sign-in — so the
-// user base accrues for later follow / entity-relation features.
+// upserts a users/{uid} profile doc (central userbase shared with arboryx.ai)
+// plus users/{uid}/products/{arboryx,<sector>} membership subdocs on every sign-in.
 //
 // Sign-in methods: Google, email+password, and phone (SMS code). X and
 // GitHub are coded for but not rendered — add them to SOCIAL once their
@@ -435,6 +435,40 @@
     });
   }
 
+  // ── users/{uid}/products/{productId} memberships ───────────────────
+  // users/{uid} is the central Arboryx userbase: every signed-in user is an
+  // Arboryx member (tier 1 — the findings / arboryx.ai base). Signing in
+  // through a product ALSO grants that product's tier; the products
+  // subcollection is the list of everything the user can access. A robotics
+  // sign-in therefore records both `arboryx` and `robotics` (lowercased
+  // sector). Rules require `tier` == config/products/items/{id}.tier, so it
+  // is read from the catalog, never hardcoded. `joinedVia` names the product
+  // the user first came in through and is set only on create.
+  var BASE_PRODUCT = 'arboryx';
+
+  function upsertMembership(user, productId, via) {
+    var db = firebase.firestore();
+    var ref = db.collection('users').doc(user.uid).collection('products').doc(productId);
+    var catalogRef = db.collection('config').doc('products').collection('items').doc(productId);
+    return Promise.all([
+      ref.get().catch(function () { return null; }),
+      catalogRef.get(),
+    ]).then(function (snaps) {
+      var mine = snaps[0], catalog = snaps[1];
+      if (!catalog.exists) throw new Error('no catalog item for product ' + productId);
+      var data = {
+        productId: productId,
+        tier: catalog.data().tier,
+        lastSeenAt: firebase.firestore.FieldValue.serverTimestamp(),
+      };
+      if (!mine || !mine.exists) {
+        data.joinedAt = data.lastSeenAt;
+        data.joinedVia = via;
+      }
+      return ref.set(data, { merge: true });
+    });
+  }
+
   // ── Deferred-gate triggers ─────────────────────────────────────────
   function gateWasTripped() {
     try { return localStorage.getItem(GATE_KEY) === '1'; } catch (_) { return false; }
@@ -493,6 +527,13 @@
           showUserChip(user);
           upsertProfile(user).catch(function (e) {
             console.warn('user profile upsert failed:', e);
+          });
+          var product = cfg.sector ? String(cfg.sector).toLowerCase() : null;
+          [BASE_PRODUCT, product].forEach(function (pid) {
+            if (!pid) return;
+            upsertMembership(user, pid, product || BASE_PRODUCT).catch(function (e) {
+              console.warn('product membership upsert failed (' + pid + '):', e);
+            });
           });
           sessionLogin(user);  // Phase 2: mint the shared .arboryx.ai cookie
           done(user);          // load catalysts (once)

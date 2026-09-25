@@ -8,7 +8,7 @@
         handles handles-lookup handles-unresolved handles-set reaudit search-budget \
         db db-query \
         frontend open \
-        deploy deploy-preflight deploy-frontend rules-test ship worktree-clean firebase-sa link-domain firestore-sync \
+        deploy deploy-preflight deploy-frontend seed-product rules-test ship worktree-clean firebase-sa link-domain firestore-sync \
         nuke prune test fmt
 
 SHELL := /bin/bash
@@ -79,6 +79,7 @@ help:
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "deploy-preflight" "" "Verify gcloud auth + IAM admin + .env.prod"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "firestore-sync" "" "One-time: local DuckDB to CKG-<sector> + PNGs to Storage"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "deploy-frontend" "" "Deploy frontend/ to Firebase Hosting"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "seed-product" "[DRY=1]" "Create config/products/items/<sector> (also runs in deploy-frontend)"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "rules-test" "" "Firestore rules vs emulator (Docker; no deploy)"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "ship" "m=\"msg\" (if dirty)" "Commit + push branch + open PR (never pushes main)"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "worktree-clean" "<name|ship/..> [FORCE=1]" "Remove MERGED worktree/branch: dir + local + remote"
@@ -438,6 +439,13 @@ endif
 # (never pushes main directly). Then: push -u + gh pr create --fill.
 # Emulator tests for tools/frontend-deploy/firestore.rules (whole-DB ruleset
 # shared with arboryx-admin). Runs in Docker, touches nothing live.
+# Product catalog item for this sector (config/products/items/<sector>).
+# deploy-frontend runs this automatically; standalone for one-off/dry runs.
+seed-product:
+	@set -a; . ./.env.prod; set +a; \
+	  [ -n "$$FIREBASE_DEPLOY_KEY" ] && export GOOGLE_APPLICATION_CREDENTIALS="$$FIREBASE_DEPLOY_KEY"; \
+	  python3 tools/frontend-deploy/seed_product.py "$$GCP_PROJECT" "$$SECTOR" $(if $(DRY),--dry-run)
+
 rules-test:
 	@docker run --rm -v "$(CURDIR)/tools/frontend-deploy/rules-test:/t:ro" \
 	  -v "$(CURDIR)/tools/frontend-deploy:/rules:ro" node:22-bookworm bash /t/run.sh
