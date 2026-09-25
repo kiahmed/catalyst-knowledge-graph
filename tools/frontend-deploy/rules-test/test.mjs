@@ -16,6 +16,7 @@ async function seed() {
   await env.withSecurityRulesDisabled(async (c) => {
     const db = c.firestore();
     await setDoc(doc(db, "config/products/items/arboryx"), { displayName: "Arboryx", tier: 1 });
+    await setDoc(doc(db, "config/products/items/robotics"), { displayName: "Robotics", tier: 2 });
     await setDoc(doc(db, "CKG-Robotics/catalysts/items/ROB-1"), { headline: "h" });
     await setDoc(doc(db, "findings/ROB-1"), { x: 1 });
     await setDoc(doc(db, "users/bob"), { uid: "bob" });
@@ -69,6 +70,17 @@ await t("create mismatched productId denied", () => assertFails(setDoc(sub("arbo
 await t("create unknown product denied", () => assertFails(setDoc(sub("bogus"), { productId: "bogus", tier: 1 })));
 await t("other user's subdoc denied", () => assertFails(getDoc(doc(alice(), "users/bob/products/arboryx"))));
 await t("no subdoc delete", () => assertFails(deleteDoc(sub("arboryx"))));
+
+console.log("robotics membership (auth.js upsertMembership)");
+await seed();
+const rob = () => doc(alice(), "users/alice/products/robotics");
+const robData = (extra) => ({ productId: "robotics", tier: 2, lastSeenAt: serverTimestamp(), ...extra });
+const first = { joinedAt: serverTimestamp(), joinedVia: "robotics" };
+await t("first sign-in creates tier-2 robotics membership", () => assertSucceeds(setDoc(rob(), robData(first), { merge: true })));
+await t("first sign-in creates tier-1 arboryx base membership", () => assertSucceeds(setDoc(doc(alice(), "users/alice/products/arboryx"),
+  { productId: "arboryx", tier: 1, lastSeenAt: serverTimestamp(), ...first }, { merge: true })));
+await t("repeat sign-in merge update ok", () => assertSucceeds(setDoc(rob(), robData(), { merge: true })));
+await t("tier 1 on robotics denied", () => assertFails(setDoc(rob(), robData({ tier: 1 }), { merge: true })));
 
 console.log("catalog");
 await t("anon reads catalog", () => assertSucceeds(getDoc(doc(anon(), "config/products/items/arboryx"))));

@@ -143,6 +143,14 @@ sys.exit(0 if s else 1)'; then
   firebase hosting:sites:create "$GCP_PROJECT" --project "$GCP_PROJECT"
 fi
 
+# ── Product catalog item — config/products/items/<sector> ──────────
+# Firestore rules validate user membership (users/{uid}/products/{id}.tier)
+# against this doc, so a product's first deploy must create it. Idempotent,
+# never overwrites existing fields. Fatal: a product without its catalog
+# item can't record memberships.
+echo "Ensuring product catalog item..."
+python3 tools/frontend-deploy/seed_product.py "$GCP_PROJECT" "$SECTOR"
+
 # ── Public preview — newest few real cards baked into the bundle ────
 # The landing page shows these to visitors who haven't signed in yet (a
 # peek at real data behind the sign-in modal). The full catalyst set + the
