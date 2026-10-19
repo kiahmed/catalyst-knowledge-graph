@@ -36,7 +36,11 @@ from src.firestore_export import export_to_firestore  # noqa: E402
 from src.ingest import run_ingest as run_ingest_pipeline  # noqa: E402
 
 
+# force=True: functions_framework configures the root logger before this
+# runs, which made basicConfig a no-op and left the root at WARNING — every
+# _log() event (incl. firestore_export_failed) was silently dropped.
 logging.basicConfig(
+    force=True,
     level=os.environ.get("LOG_LEVEL", "INFO"),
     format='{"ts":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s","msg":%(message)s}',
 )

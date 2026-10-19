@@ -63,11 +63,13 @@ resource "google_storage_bucket_iam_member" "render_data_rw" {
 }
 
 # Render uploads PNGs to the public cards bucket after each successful render.
-# Read access is via uniform bucket-level public-read (see bucket.tf); the
-# render SA only needs write.
+# Read access is via uniform bucket-level public-read (see bucket.tf).
+# objectUser (not objectCreator): forced re-renders REPLACE existing posters,
+# and overwriting a GCS object needs delete — objectCreator 403'd the
+# 2026-10 poster backfill. Scoped to this bucket only.
 resource "google_storage_bucket_iam_member" "render_cards_write" {
   bucket = google_storage_bucket.robotics_cards.name
-  role   = "roles/storage.objectCreator"
+  role   = "roles/storage.objectUser"
   member = "serviceAccount:${google_service_account.robotics_render.email}"
 }
 

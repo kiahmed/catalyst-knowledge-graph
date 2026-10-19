@@ -392,6 +392,47 @@ def _build_graph_projection(cards: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+# Firestore caps a document at 1 MiB (1,048,576 B). Budget well under it:
+# JSON length only approximates Firestore's stored size, and the graph doc
+# also carries stats + graph_insights + layout coordinates.
+GRAPH_DOC_BUDGET = 900_000
+
+
+def _graph_bytes(cards: list[dict[str, Any]]) -> int:
+    """Approximate serialized size of the graph built from ``cards`` (no layout)."""
+    edges = 0
+    names: set[str] = set()
+    for c in cards:
+        for r in c.get("relationships", []):
+            edges += len(json.dumps(r, default=str)) + 80   # + catalyst_id/date/keys
+        names.update(e["name"] for e in c.get("entities", []))
+    return edges + 140 * len(names)                          # node dict incl. x/y
+
+
+def _fit_graph_budget(
+    cards: list[dict[str, Any]], budget: int = GRAPH_DOC_BUDGET,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Newest-first prefix of ``cards`` whose graph fits ``budget`` bytes.
+
+    Returns (cards, oldest date kept). Binary search over the prefix length —
+    _graph_bytes is cheap; layout runs once afterwards on the result only.
+    """
+    ordered = sorted(cards, key=lambda c: (str(c.get("date", "")), c.get("card_id", "")),
+                     reverse=True)
+    if _graph_bytes(ordered) <= budget:
+        kept = ordered
+    else:
+        lo, hi = 0, len(ordered)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if _graph_bytes(ordered[:mid]) <= budget:
+                lo = mid
+            else:
+                hi = mid - 1
+        kept = ordered[:lo]
+    return kept, (str(kept[-1].get("date")) if kept else None)
+
+
 def build_payload(cfg: RoboticsConfig) -> dict[str, Any]:
     """Build the canonical export payload (cards + graph + stats).
 
@@ -425,6 +466,11 @@ def build_payload(cfg: RoboticsConfig) -> dict[str, Any]:
         graph_cards = [c for c in cards if str(c.get("date", "")) >= cutoff]
     else:
         graph_cards = cards
+    # The day window alone doesn't bound the doc: news volume grew and the
+    # 90d graph hit 2.2 MiB, so every Firestore write was rejected from
+    # 2026-08-18 on (silently — graph froze, cards kept updating). Keep the
+    # NEWEST catalysts whose graph fits GRAPH_DOC_BUDGET, oldest dropped first.
+    graph_cards, graph_since = _fit_graph_budget(graph_cards)
     graph = _build_graph_projection(graph_cards)
 
     return {
@@ -437,6 +483,9 @@ def build_payload(cfg: RoboticsConfig) -> dict[str, Any]:
             "min_edge_confidence": cfg.graph.min_edge_confidence,
             "show_invalidated": cfg.graph.show_invalidated,
             "graph_window_days": cfg.graph.graph_window_days,
+            # Oldest catalyst date actually in the graph after the size cap
+            # (may be later than graph_window_days implies).
+            "graph_since": graph_since,
         },
         "cards": cards,
         "graph": graph,

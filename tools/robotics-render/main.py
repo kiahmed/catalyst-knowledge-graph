@@ -31,6 +31,7 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -290,7 +291,6 @@ def _load_card(card_id: str) -> dict[str, Any] | None:
 
 def _render_png(card: dict[str, Any]) -> bytes:
     from jinja2 import Environment, FileSystemLoader, select_autoescape
-    from playwright.sync_api import sync_playwright
 
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATES_DIR)),
@@ -310,55 +310,56 @@ def _render_png(card: dict[str, Any]) -> bytes:
             f"<style>{css}</style>",
         )
 
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(args=["--no-sandbox"])
-        try:
-            # Social platforms crop previews to ~1.91:1 (1200x630). The card's
-            # natural layout is narrow/portrait (~480px), so neither an
-            # element screenshot (head gets cropped) nor shrink-to-fit (card
-            # floats small in margins, blurry once platforms downscale) reads
-            # well. Instead: relayout the card WIDE so it fills the frame —
-            # width pinned near the canvas, content reflows, then a final
-            # scale-to-fit guard for unusually tall cards. device_scale_factor
-            # 2 renders at 2400x1260 for a crisp downscale on the platforms.
-            page = browser.new_page(
-                viewport={"width": VIEWPORT_W, "height": VIEWPORT_H},
-                device_scale_factor=2,
-            )
-            page.set_content(html, wait_until="networkidle")
-            page.evaluate(
-                """([w, h]) => {
-                  const card = document.querySelector('.sp-card');
-                  document.documentElement.style.cssText +=
-                    `;width:${w}px;height:${h}px;overflow:hidden;`;
-                  document.body.style.cssText +=
-                    `;width:${w}px;height:${h}px;margin:0;padding:0;` +
-                    'display:flex;align-items:center;justify-content:center;overflow:hidden;';
-                  // Share previews display ~550px wide in the feed, so the
-                  // image must read like a poster, not a webpage: drop the
-                  // secondary sections and lay out narrow (640px), then scale
-                  // up ~1.8x to fill the canvas — headline/subtitle land at
-                  // roughly 2x their site size, readable even after the
-                  // platforms downscale and recompress.
-                  for (const sel of ['.sp-related', '.sp-card-footer']) {
-                    const el = card.querySelector(sel);
-                    if (el) el.style.display = 'none';
-                  }
-                  card.style.width = '640px';
-                  card.style.maxWidth = 'none';
-                  card.style.margin = '0';
-                  const r = card.getBoundingClientRect();
-                  const s = Math.min((w * 0.97) / r.width, (h * 0.97) / r.height);
-                  card.style.transform = `scale(${s})`;
-                  card.style.transformOrigin = 'center center';
-                }""",
-                [VIEWPORT_W, VIEWPORT_H],
-            )
-            png = page.screenshot(
-                clip={"x": 0, "y": 0, "width": VIEWPORT_W, "height": VIEWPORT_H}
-            )
-        finally:
-            browser.close()
+    # Social platforms crop previews to ~1.91:1 (1200x630). The card's
+    # natural layout is narrow/portrait (~480px), so neither an
+    # element screenshot (head gets cropped) nor shrink-to-fit (card
+    # floats small in margins, blurry once platforms downscale) reads
+    # well. Instead: relayout the card WIDE so it fills the frame —
+    # width pinned near the canvas, content reflows, then a final
+    # scale-to-fit guard for unusually tall cards. device_scale_factor
+    # 2 renders at 2400x1260 for a crisp downscale on the platforms.
+    # Same per-thread browser as the graph posters: a second sync_playwright()
+    # on a thread that already runs one fails ("Sync API inside the asyncio
+    # loop"), which dropped every card render after a poster in a batch.
+    page = _shared_browser().new_page(
+        viewport={"width": VIEWPORT_W, "height": VIEWPORT_H},
+        device_scale_factor=2,
+    )
+    try:
+        page.set_content(html, wait_until="networkidle")
+        page.evaluate(
+            """([w, h]) => {
+              const card = document.querySelector('.sp-card');
+              document.documentElement.style.cssText +=
+                `;width:${w}px;height:${h}px;overflow:hidden;`;
+              document.body.style.cssText +=
+                `;width:${w}px;height:${h}px;margin:0;padding:0;` +
+                'display:flex;align-items:center;justify-content:center;overflow:hidden;';
+              // Share previews display ~550px wide in the feed, so the
+              // image must read like a poster, not a webpage: drop the
+              // secondary sections and lay out narrow (640px), then scale
+              // up ~1.8x to fill the canvas — headline/subtitle land at
+              // roughly 2x their site size, readable even after the
+              // platforms downscale and recompress.
+              for (const sel of ['.sp-related', '.sp-card-footer']) {
+                const el = card.querySelector(sel);
+                if (el) el.style.display = 'none';
+              }
+              card.style.width = '640px';
+              card.style.maxWidth = 'none';
+              card.style.margin = '0';
+              const r = card.getBoundingClientRect();
+              const s = Math.min((w * 0.97) / r.width, (h * 0.97) / r.height);
+              card.style.transform = `scale(${s})`;
+              card.style.transformOrigin = 'center center';
+            }""",
+            [VIEWPORT_W, VIEWPORT_H],
+        )
+        png = page.screenshot(
+            clip={"x": 0, "y": 0, "width": VIEWPORT_W, "height": VIEWPORT_H}
+        )
+    finally:
+        page.close()
     return png
 
 
@@ -393,12 +394,15 @@ def _bucket_graph_ids() -> set[str]:
             if b.name.endswith(".png")}
 
 
-def _upload_graph_png(card_id: str, local_path: Path) -> dict[str, Any]:
+def _upload_graph_png(card_id: str, local_path: Path,
+                      overwrite: bool = False) -> dict[str, Any]:
+    """overwrite=True (force runs) replaces a stale poster; default keeps the
+    upload-once behaviour so routine sweeps never rewrite existing images."""
     bucket = _storage_bucket()
     if bucket is None:
         return {"uploaded": False, "reason": "upload_disabled"}
     blob = bucket.blob(f"{STORAGE_GRAPHS_PREFIX}/{card_id}.png")
-    if blob.exists():
+    if not overwrite and blob.exists():
         return {"uploaded": False, "reason": "already_exists"}
     blob.upload_from_filename(str(local_path), content_type="image/png")
     return {"uploaded": True, "blob": blob.name}
@@ -427,21 +431,86 @@ def _card_entity_names(card_id: str) -> list[str]:
     return [r[0] for r in rows]
 
 
-_pw_singleton = None
-_browser_singleton = None
+_browser_tls = threading.local()
 
 
 def _shared_browser():
-    """One Chromium for the life of the process. Launching per render costs
-    ~2-3s each, which turns a 500-card backfill into hours."""
-    global _pw_singleton, _browser_singleton
-    if _browser_singleton is not None and _browser_singleton.is_connected():
-        return _browser_singleton
+    """One Chromium PER THREAD, reused across renders. Launching per render
+    costs ~2-3s each, which turns a 500-card backfill into hours. Per-thread,
+    not per-process: Playwright's sync API is bound to the thread (greenlet)
+    that started it, and gunicorn runs --threads 2 — a process-wide singleton
+    made every request on the other thread fail ("Cannot switch to a
+    different thread"), silently failing whole render batches."""
+    b = getattr(_browser_tls, "browser", None)
+    if b is not None and b.is_connected():
+        return b
+    # Chromium died (OOM, crash): stop this thread's old Playwright before
+    # starting another — a second live sync_playwright() on the thread raises
+    # "Sync API inside the asyncio loop" and every later render would fail
+    # until the instance recycled.
+    old_pw = getattr(_browser_tls, "pw", None)
+    if old_pw is not None:
+        try:
+            old_pw.stop()
+        except Exception:
+            pass
+        _browser_tls.pw = _browser_tls.browser = None
     from playwright.sync_api import sync_playwright
 
-    _pw_singleton = sync_playwright().start()
-    _browser_singleton = _pw_singleton.chromium.launch(args=["--no-sandbox"])
-    return _browser_singleton
+    _browser_tls.pw = sync_playwright().start()
+    _browser_tls.browser = _browser_tls.pw.chromium.launch(args=["--no-sandbox"])
+    return _browser_tls.browser
+
+
+def _with_card_edges(graph: dict[str, Any], card_id: str) -> dict[str, Any]:
+    """Graph doc + this catalyst's own edges from DuckDB, when the doc lacks them.
+
+    The graph doc is a size-capped recent window (src/export.py
+    _fit_graph_budget), so older catalysts' edges aren't in it — and while
+    the doc was frozen (2026-08-18 → 10-14) newer ones weren't either. The
+    template then fell back to unrelated historical edges between the card's
+    entities, drawing e.g. Google isolated. DuckDB is the source of truth;
+    inject the card's edges (catalyst_id-tagged) so the template's primary
+    `e.catalyst_id === CARD_ID` path always draws the right subgraph.
+    """
+    edges = graph.get("edges") or []
+    if any(e.get("catalyst_id") == card_id for e in edges):
+        return graph
+    import duckdb
+
+    con = duckdb.connect(DUCKDB_PATH, read_only=True)
+    try:
+        rows = con.execute(
+            """
+            SELECT ea.name, ea.ticker, ea.type, eb.name, eb.ticker, eb.type,
+                   r.rel_type, r.confidence, r.evidence_type, r.status,
+                   r.mechanism, c.timestamp
+            FROM catalysts c
+            JOIN relationships r ON r.catalyst_id = c.catalyst_id
+            JOIN entities ea ON ea.entity_id = r.entity_a_id
+            JOIN entities eb ON eb.entity_id = r.entity_b_id
+            WHERE c.entry_id = ? AND r.status IN ('active', 'materialized')
+            """,
+            [card_id],
+        ).fetchall()
+    finally:
+        con.close()
+    if not rows:
+        return graph
+    nodes = list(graph.get("nodes") or [])
+    have = {n.get("id") for n in nodes}
+    extra_edges = []
+    for (a, at, aty, b, bt, bty, rel, conf, ev, status, mech, ts) in rows:
+        for name, ticker, typ in ((a, at, aty), (b, bt, bty)):
+            if name not in have:
+                have.add(name)
+                nodes.append({"id": name, "name": name, "ticker": ticker,
+                              "type": typ, "heat": 0.0, "edge_count": 0})
+        extra_edges.append({"from": a, "to": b, "rel": rel,
+                            "confidence": float(conf or 0.0), "evidence_type": ev,
+                            "status": status, "mechanism": mech,
+                            "catalyst_id": card_id, "catalyst_date": str(ts)})
+    return {**graph, "nodes": nodes, "edges": edges + extra_edges}
 
 
 def _render_graph_png(card_id: str, card: dict[str, Any]) -> bytes:
@@ -454,6 +523,7 @@ def _render_graph_png(card_id: str, card: dict[str, Any]) -> bytes:
     graph = _graph_doc(sector)
     if not graph:
         raise RuntimeError(f"no graph doc for sector {sector}")
+    graph = _with_card_edges(graph, card_id)
 
     names = _card_entity_names(card_id)
     env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)),
@@ -491,17 +561,25 @@ def _render_graph_png(card_id: str, card: dict[str, Any]) -> bytes:
 
 @app.post("/render-graph")
 def render_graph():
+    # Same guard as /render and /render-batch: robotics-og is public and
+    # shares this SA (objectUser on the cards bucket) — never write from it.
+    if OG_ONLY:
+        return jsonify({"ok": False, "error": "not found"}), 404
     body = request.get_json(silent=True) or {}
     card_id = (body.get("card_id") or "").strip()
     if not _CARD_ID_RE.match(card_id):
         return {"ok": False, "error": "bad card_id"}, 400
+    # Cold instances have no local DuckDB until a pull (was a 500 otherwise).
+    _pull_duckdb()
+    _graph_doc_cache.clear()
     card = _load_card(card_id)
     if not card:
         return {"ok": False, "error": "unknown card_id"}, 404
     GRAPH_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     out = GRAPH_IMAGES_DIR / f"{card_id}.png"
     out.write_bytes(_render_graph_png(card_id, card))
-    up = _upload_graph_png(card_id, out)
+    # Explicit single-card request → replace whatever poster is there.
+    up = _upload_graph_png(card_id, out, overwrite=True)
     _log("graph_ok", card_id=card_id, bytes=out.stat().st_size, **up)
     return {"ok": True, "card_id": card_id, "bytes": out.stat().st_size, **up}, 200
 
@@ -745,6 +823,11 @@ def render_batch():
     from_id = (body.get("from_id") or "").strip() or None
 
     _log("duckdb_pull", **_pull_duckdb())
+    # Warm instances outlive batches; re-read the graph doc every batch.
+    _graph_doc_cache.clear()
+    # cards=false → posters only (e.g. a forced graph re-render backfill
+    # without re-rendering every card PNG).
+    cards_on = bool(body.get("cards", True))
 
     if from_id:
         # Mode 3: from a specific entry_id, oldest-forward. DuckDB can't
@@ -780,7 +863,7 @@ def render_batch():
     # re-render the whole catalog on every cold start. One bucket listing
     # up front makes skip-detection survive instance churn.
     in_bucket: set[str] = set()
-    if not force:
+    if not force and cards_on:
         try:
             in_bucket = _bucket_png_ids()
         except Exception as exc:
@@ -807,7 +890,9 @@ def render_batch():
         # still run for catalysts whose card PNG is already done (which is
         # every backfilled card), otherwise graphs never render at all.
         card_upload_needed = True
-        if not force and (out_path.exists() or entry_id in in_bucket):
+        if not cards_on:
+            card_upload_needed = False
+        elif not force and (out_path.exists() or entry_id in in_bucket):
             skipped += 1
             card_upload_needed = out_path.exists()   # local file → may need upload
         else:
@@ -856,7 +941,7 @@ def render_batch():
                 _log("graph_failed", card_id=entry_id, error=str(exc))
                 continue
         try:
-            if _upload_graph_png(entry_id, g_path).get("uploaded"):
+            if _upload_graph_png(entry_id, g_path, overwrite=force).get("uploaded"):
                 g_uploaded += 1
         except Exception as exc:
             _log("graph_upload_failed", card_id=entry_id, error=str(exc))
