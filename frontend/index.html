@@ -1,6 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<!-- Google Analytics (GA4 property 538475687, stream G-ETZ620898J) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-ETZ620898J"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-ETZ620898J');
+</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
@@ -2709,8 +2717,15 @@ async function renderTeaser() {
 // #card-<id> hash before boot so every existing deep-link path — teaser
 // pre-auth open, post-sign-in open, gate counting — just works.
 (function () {
-  const id = new URLSearchParams(location.search).get("card");
-  if (id) history.replaceState(null, "", `${location.pathname}#card-${id}`);
+  // Keep the other query params (utm_* from social posts) — GA reads the
+  // page URL when gtag.js finishes loading, which can be after this runs.
+  const q = new URLSearchParams(location.search);
+  const id = q.get("card");
+  if (id) {
+    q.delete("card");
+    const rest = q.toString();
+    history.replaceState(null, "", `${location.pathname}${rest ? "?" + rest : ""}#card-${id}`);
+  }
 })();
 
 if (firestoreConfigured()) {

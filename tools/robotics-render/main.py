@@ -35,6 +35,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from flask import Flask, jsonify, redirect, request
 
@@ -639,8 +640,16 @@ def _png_blob_generation(card_id: str) -> int | None:
         return None
 
 
+def _utm_query() -> str:
+    """The request's utm_* params as a '?…' suffix ('' if none), so the human
+    redirect keeps the post's campaign tags and GA can attribute the visit.
+    urlencode percent-escapes every value, so it's safe in href/JS too."""
+    utm = [(k, v) for k, v in request.args.items(multi=True) if k.startswith("utm_")]
+    return "?" + urlencode(utm) if utm else ""
+
+
 def _og_page(card_id: str, title: str, description: str,
-             generation: int | None = None) -> str:
+             generation: int | None = None, utm: str = "") -> str:
     """OG/Twitter tag page. Every injected value is HTML-escaped; card_id is
     already validated against _CARD_ID_RE by the route."""
     esc = html_mod.escape
@@ -648,7 +657,7 @@ def _og_page(card_id: str, title: str, description: str,
     if generation:
         image_url += f"?g={generation}"
     page_url = f"{CANONICAL_ORIGIN}/card/{card_id}"
-    redirect_path = f"/?card={card_id}"
+    redirect_path = f"/?card={card_id}" + (("&" + utm[1:]) if utm else "")
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -697,10 +706,11 @@ def og_card_page(card_id: str):
         # generic text rather than a dead preview.
         title, description = GENERIC_TITLE, GENERIC_DESCRIPTION
     else:
-        return redirect(CANONICAL_ORIGIN, code=302)
+        utm = _utm_query()
+        return redirect(CANONICAL_ORIGIN + ("/" + utm if utm else ""), code=302)
 
     return (
-        _og_page(card_id, title, description, generation),
+        _og_page(card_id, title, description, generation, _utm_query()),
         200,
         {"Content-Type": "text/html; charset=utf-8",
          "Cache-Control": "public, max-age=300"},

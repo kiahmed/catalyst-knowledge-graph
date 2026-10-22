@@ -106,6 +106,17 @@ class OgRouteTests(unittest.TestCase):
         self.assertIn(f'location.replace("/?card={CARD_ID}")', body)
         self.assertIn(f'href="/?card={CARD_ID}"', body)
 
+    def test_utm_params_survive_human_redirect(self):
+        # Social posts link /card/<id>?utm_…; the redirect must carry the
+        # utm_* params (and only those) or GA files the visit as direct.
+        resp = self.client.get(
+            f"/card/{CARD_ID}?utm_source=x&utm_campaign=a<b&ref=drop")
+        body = resp.get_data(as_text=True)
+        target = f"/?card={CARD_ID}&utm_source=x&utm_campaign=a%3Cb"
+        self.assertIn(f'location.replace("{target}")', body)
+        self.assertIn(f'href="{target.replace("&", "&amp;")}"', body)
+        self.assertNotIn("ref=drop", body)
+
     def test_firestore_miss_but_png_exists_gets_generic_page(self):
         mock.patch.object(main, "_fetch_card_doc", lambda cid: None).start()
         resp = self.client.get(f"/card/{CARD_ID}")
