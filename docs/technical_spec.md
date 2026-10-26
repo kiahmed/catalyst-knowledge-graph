@@ -950,6 +950,136 @@ other composer here already holds itself to (never re-derive a claim from
 raw numbers on the Postiz side — see that repo's `compose_catalyst()`
 entity-free-hook comment for why).
 
+#### 2.9b Comparative recap visuals — PROPOSAL (analysis 2026-10-26, nothing built)
+
+> **Status: proposal only. No code changed.** Audience: this repo. Origin:
+> soljet-postiz now posts a weekly text digest of `graph_insights[]` (Mondays,
+> LinkedIn + X, no image, no per-card URL). The digest names 2–3 entities and
+> a sector trend; a reader gets a sentence and nothing to *look at*. This
+> section asks what picture would add information the node/edge graph and the
+> per-edge confidence do **not** already show. Consumer note:
+> `soljet-postiz/docs/graph-posters.md`; notice-board entry in
+> `docs/soljet_postiz_posters_updates.md`.
+
+**Scope (hard limit).** Weekly recap only. Charts are produced **only for the
+entities and sector trend the week's digest actually names** (e.g. the week of
+Oct 26: Booster Robotics, LG Innotek, and the "technical dependencies" trend) —
+at most ~3 entity panels + 1 sector panel per week. Each chart uses the same
+window/baseline as its headline (30d vs 90d); no per-entity pages for the whole
+graph, no historical backfill, no "all related entities" views. Anything beyond
+that is a separate proposal.
+
+**Why the graph poster can't do this job.** The graph poster answers *"who is
+connected to whom, with what evidence"* — topology. The digest's claims are
+*aggregates over time* ("16 partnerships in 30 days, 9.6x"). The picture that
+belongs next to an aggregate is a comparison chart, not a sub-graph. Today
+that aggregate has no visual at all.
+
+**What the live data says is buried in it** (read-only look at
+`CKG-Robotics/graph/sectors/Robotics`, 695 nodes / 1,479 edges, 2026-10-22).
+Each line is a finding no current surface shows:
+
+| Hidden signal | Number in the live graph | Why the node/edge view misses it |
+|---|---|---|
+| **Single-supplier dependence** | NVIDIA is the source of 33 of 180 `supplies` edges (18%) to 32 distinct customers; the next supplier has 9. Sector-wide HHI is only 0.047 — i.e. fragmented *except* for one name | A hub looks like any other big node; concentration is a share-of-total, which needs the denominator |
+| **Who is being competed against** | `competes_with` is 552 of 1,479 edges (37%). Targets: XPeng 39, Tesla 33, Figure 23, NVIDIA 21 | Rivalry edges are drawn the same as partnerships; nobody sees that over a third of the graph is rivalry, or who sits at the receiving end |
+| **Relationship-mix shift** | Last 14d vs the 14d before: `competes_with` +5.4pp of all edges, `deploys` +3.1pp, `partners_with` −2.2pp, `invests_in` −2.3pp | A *change in the kind of activity* is invisible in a static graph and in a single-type velocity headline |
+| **Signal grounding per entity** | Share of an entity's edges that are `inferred`/`speculative` vs `direct`/`web_grounded`: Figure 65%, Tesla 62%, NVIDIA 37%, Agility 39% | Per-edge confidence exists; the *entity-level* answer to "how much of this story is stated fact vs our inference" does not |
+| **New entrants** | LG Innotek: 16 edges, first seen in the last 14d; Infineon 9; Mujin 5 | The graph has no first-seen axis; a brand-new hub and a long-standing one look identical |
+| **Ecosystem overlap** (not yet measured) | needs a pass over shared neighbours | Two rivals' shared partners/customers are two clusters far apart in a force layout |
+
+**Candidate visuals, ranked by (information not shown elsewhere) ÷ (build cost):**
+
+| # | Visual | Chart type | Answers | New data needed | Cost |
+|---|---|---|---|---|---|
+| **A** | **Relationship mix, this window vs prior** per featured entity | 100%-stacked horizontal bars, two bars per entity (small multiples), 5 colours max + "other" | "Is HD Hyundai's surge partnerships or deployments? Did the *kind* of activity change?" | none — aggregate `relationships` by `rel_type` per window in DuckDB | Low |
+| **B** | **Dependency concentration** | Ranked bars of share-of-edges for one rel type (`supplies`, `built_on`), top 6 + "all others", with the HHI/top-1 share as the headline number; annotate customer count | "How exposed is the sector to one supplier / one platform?" | none for share; a `layer` tag on entities (silicon / module / platform / OEM / deployer) would let it be per-layer rather than sector-wide | Low (sector-wide) / Med (per-layer) |
+| **C** | **Signal grounding** | One 100% bar per entity (direct ▸ web_grounded ▸ inferred ▸ speculative); a donut is acceptable here **only because there are ≤4 slices** | "Is this momentum confirmed reporting or our own inference?" — a credibility signal no competitor chart has | none — `evidence_type` already on every edge | Low |
+| **D** | **Rank-change slope chart** | Slope/bump chart of top-10 entities by edge count, window vs prior window, new entrants flagged | "Who moved up, who entered, who dropped" | `first_seen` per entity (min `catalyst_date`) — derivable | Low–Med |
+| **E** | **Rivalry heat strip** | 6×6 heatmap of `competes_with` + `displaces` counts among the top entities, plus "times targeted" bar | "Who is going after whom" | none | Med |
+| **F** | **Sentiment skew** | Diverging bar per entity of Bullish vs Bearish catalyst counts by week | "Is the news flow around this name turning?" | none — `sentiment_label` is on each catalyst | Low–Med |
+| **G** | **Ecosystem overlap / supply sankey** | Two-set overlap bar (shared vs exclusive partners) or sankey supplier → customer type | "Whose ecosystem is a company inside, and where do rivals overlap?" | `layer`/customer-type tag for the sankey | Med–High |
+| **H** | **Track record** ("flagged N days before it was confirmed") | Timeline strip | Credibility of inferred edges | needs `lifecycle` detector (currently `enabled: false`) | High — blocked on §2.6a |
+
+**Recommendation.** Build **A + B + C** first, as one weekly image set. They
+share one data pass, need no new extraction fields, are the cheapest, and each
+answers a different question the digest text raises but cannot show:
+
+- digest bullet 🔺 *"HD Hyundai: 16 partnerships in 30 days (9.6x)"* → **A**
+  shows what that entity's activity is *made of* and how it differs from the
+  prior window;
+- digest bullet 📈 *"Deployments across the sector: 154 in 30 days (1.8x)"* →
+  **B**/**E** show where the weight sits;
+- the standing credibility question → **C** shows how much is stated vs inferred.
+
+Defer **D/F** (cheap follow-ups), **E/G** (nice but heavier), **H** (blocked).
+
+**Pie charts — recommendation: avoid them for comparison.** Humans compare
+bar lengths far better than angles, and 8–14 relationship types makes a pie
+unreadable. Use horizontal bars / 100% stacked bars everywhere; allow a donut
+only for the ≤4-slice evidence-grounding split (C). Bars are also what a
+"this window vs prior" comparison needs: two aligned bars, not two pies.
+
+**Design constraints (carry over from `graph-posters.md`):**
+1. **Numbers come from the same counts as the headline.** Every figure on the
+   chart is computed from the same window/baseline that produced the
+   `graph_insights[]` row — never re-derived downstream, never a different
+   window. A chart that disagrees with its own headline is worse than no chart.
+2. **Thin baseline rule applies.** If `baseline_count < insights.min_baseline`,
+   render counts, not ratios (same editorial floor as §2.9a).
+3. **Inferred is labelled as inferred.** Edges with `evidence_type` ∈
+   {inferred, speculative} are drawn hatched/lighter and the legend says
+   *model-inferred*. Never render them as reported fact.
+4. **No investment framing.** Charts name real companies. Footer line
+   *"Information only — not investment advice"* on every recap image.
+5. **Colour by meaning, 5 hues max**, consistent across the three charts
+   (same relationship type = same colour everywhere) and legible in the
+   1200×630 / LinkedIn crop. Reuse `templates/cards/base.css` tokens.
+6. **Honest scale.** Bars start at zero; the headline number is printed on the
+   chart (`33 of 180 supply links · 32 customers`), not left to the eye.
+
+**Data/contract design (proposal):**
+- New **sector-level** block on the graph doc, computed at export in DuckDB
+  (not client-side — the exported edge list currently spans only
+  2026-09-24 → 2026-10-22, so a "vs prior" view built from `graph.edges`
+  would silently compare against a truncated baseline):
+  ```jsonc
+  "recap": {
+    "week": "2026-W43", "window_days": 30, "baseline_days": 90,
+    "mix":        [{"entity": "HD Hyundai", "now": {"partners_with": 16}, "prior_rate": {"partners_with": 5}}],
+    "concentration": [{"rel": "supplies", "total": 180, "top": [{"entity":"NVIDIA","edges":33,"customers":32}], "hhi": 0.047}],
+    "grounding":  [{"entity": "Figure", "direct": 0.20, "web_grounded": 0.15, "inferred": 0.40, "speculative": 0.25}]
+  }
+  ```
+  keyed to the **same** `week` and the **same** entities as the picked
+  insights, so the digest can only ever show charts for what it names.
+- **Render:** new templates `templates/recaps/{mix,concentration,grounding}.html`
+  → the existing Playwright path (§2.8) → `gs://robotics-cards/recaps/<sector>/<YYYY-Www>/<kind>.png`.
+  **Week-keyed, write-once paths** — deliberately *not* the overwrite-in-place
+  scheme the graph posters use, so consumers can cache on the URL safely (see
+  the 2026-10-19 stale-cache entry in `soljet_postiz_posters_updates.md`).
+- **Deep link:** `https://robotics.arboryx.ai/recap/<YYYY-Www>` — a static
+  page rendering the three charts at full size with the entity list, plus
+  per-entity anchors (`#entity=NVIDIA`) that open the dependency view. This
+  replaces today's bare site-root link in the digest and gives the post a
+  reason to click. The per-entity view also fixes the "no valid card URL"
+  gap: the digest has no single card, but it can have a canonical page.
+- **Consumer side (soljet-postiz, later):** digest attaches 1 image (A by
+  default; rotate B/C weekly so consecutive weeks aren't repetitive), links to
+  the recap page. LinkedIn takes a multi-image post; X gets the single image.
+  No composer change is needed until this ships — the digest keeps working
+  text-only.
+
+**Open questions (need an owner decision before building):**
+1. Do we add an entity `layer` tag (silicon/module/platform/OEM/deployer) at
+   extraction or via the seed list? It upgrades B from "sector-wide" to
+   "per-layer", the most insightful form of the dependency view.
+2. Is surfacing per-entity *inferred share* (C) acceptable publicly? It is
+   honest and differentiating, but it also advertises that ~⅓–⅔ of a name's
+   edges are model-inferred.
+3. One image per week (rotating) or the full A+B+C set on the recap page only?
+   Recommend: one rotating image in the post, full set on the page.
+
 ### 2.10 LLM choice
 
 Primary: **Gemini 2.0 Flash** (authenticated via Arboryx's GCP project). Fallback: **Gemini 2.5 Pro** for ambiguous cases. Alternative: Claude API for A/B eval if Gemini precision is below threshold on the 200-edge set.

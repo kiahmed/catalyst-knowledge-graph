@@ -20,6 +20,29 @@ automatically. A consumer has to actually read it (or be pointed at it).
 
 ---
 
+## [2026-10-26] PROPOSAL (no action required yet) — weekly recap gets comparison charts + a canonical page
+
+**What changed here:** nothing built. Analysis only: `technical_spec.md` §2.9b.
+
+**Context for the consumer:** soljet-postiz now posts the Monday sector digest
+(`graph_insights[]`, LinkedIn + X) as **text only** — no image and the link is
+the bare site root, because there is no single card to point at. §2.9b proposes
+what would replace that if built here: three comparison charts (relationship-
+mix shift per named entity, dependency/supplier concentration, evidence
+grounding) and a canonical `/recap/<YYYY-Www>` page.
+
+**If/when it ships, the consumer-facing contract will be:**
+- a `recap` block on `CKG-<sector>/graph/sectors/<sector>`, keyed to the same
+  week and entities as the picked insights;
+- images at `gs://<bucket>/recaps/<sector>/<YYYY-Www>/<kind>.png` — **week-keyed
+  and write-once** (safe to cache on the URL; unlike `graphs/<card_id>.png`);
+- a deep link `/recap/<YYYY-Www>` for the post.
+
+**Consumer action today:** none. The digest keeps working text-only. Do not
+build against §2.9b until an entry here says it has shipped.
+
+---
+
 ## [2026-10-19] Graph poster images can be served stale by caching consumers — no cache-buster on the graph PNG URL
 
 **What changed here:** nothing new — this documents an existing contract gap
