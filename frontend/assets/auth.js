@@ -238,6 +238,36 @@
     applyMode();
   }
 
+  // ── GA4 sign-up funnel (tracking only) ─────────────────────────────
+  // sign_up fires only when Firebase reports a brand-new account
+  // (additionalUserInfo.isNewUser), so returning Google/email/phone sign-ins
+  // aren't counted. sign_up_start = first keystroke in "Create account"
+  // mode (email only; popup/phone have no separate sign-up step).
+  // Observers hang off the auth promise on their own branch: they never
+  // alter its result or error handling. Nothing personal is sent.
+  var GA_PRODUCT = 'robotics';
+  var gaSignupStarted = false;
+  function gaEvent(name, method) {
+    try {
+      if (typeof window.gtag === 'function') {
+        window.gtag('event', name, { product: GA_PRODUCT, method: method });
+      }
+    } catch (_) {}
+  }
+  function gaSignup(promise, method) {
+    promise.then(function (cred) {
+      if (cred && cred.additionalUserInfo && cred.additionalUserInfo.isNewUser) {
+        gaEvent('sign_up', method);
+      }
+    }, function () {});
+  }
+  function gaFormInput() {
+    if (mode === 'signup' && !gaSignupStarted) {
+      gaSignupStarted = true;
+      gaEvent('sign_up_start', 'email');
+    }
+  }
+
   // ── Social (popup) sign-in ─────────────────────────────────────────
   function providerFor(id) {
     if (id === 'google')  return new firebase.auth.GoogleAuthProvider();
@@ -251,7 +281,9 @@
     if (!p) return;
     setBusy(true, btn);
     showMsg('', '');
-    trackBusy(firebase.auth().signInWithPopup(p))
+    var popup = firebase.auth().signInWithPopup(p);
+    gaSignup(popup, id);
+    trackBusy(popup)
       .catch(function (e) { showMsg(friendlyError(e), 'error'); })
       .then(function () { setBusy(false); });
   }
@@ -267,6 +299,7 @@
     var op = (mode === 'signup')
       ? auth.createUserWithEmailAndPassword(email, pw)
       : auth.signInWithEmailAndPassword(email, pw);
+    gaSignup(op, 'email');
     trackBusy(op)
       .catch(function (e) { showMsg(friendlyError(e), 'error'); })
       .then(function () { setBusy(false); });
@@ -324,7 +357,9 @@
     if (!code) { showMsg('Enter the 6-digit code.', 'error'); return; }
     setBusy(true, els.submit);
     showMsg('Verifying…', 'info');
-    trackBusy(confirmation.confirm(code))
+    var confirmed = confirmation.confirm(code);
+    gaSignup(confirmed, 'phone');
+    trackBusy(confirmed)
       .catch(function (e) {
         showMsg(friendlyError(e), 'error');
         setBusy(false);
@@ -375,6 +410,7 @@
       })(provBtns[i]);
     }
     gate.querySelector('#rauthForm').addEventListener('submit', onSubmit);
+    gate.querySelector('#rauthForm').addEventListener('input', gaFormInput);
     els.toggle.addEventListener('click', function () {
       setMode(mode === 'signin' ? 'signup' : 'signin');
     });
