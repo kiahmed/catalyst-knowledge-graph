@@ -138,15 +138,25 @@ def entity_velocity(
             """,
             [sector, entity],
         ).fetchone()
-        rel_word = _phrase(top_rel[0], recent_n) if top_rel else "new edges"
+        # recent_n counts ALL of the entity's edges. Only call them by one type
+        # when they all ARE that type; otherwise say "new connections" and name
+        # the leading type with its own count. (Before 2026-10-26 this read
+        # "16 competitive collisions" when only 8 of the 16 were competes_with.)
+        top_type, top_n_edges = (top_rel[0], top_rel[1]) if top_rel else (None, 0)
+        if top_type and top_n_edges == recent_n:
+            what, led_by = _phrase(top_type, recent_n), ""
+        else:
+            what = "new connection" if recent_n == 1 else "new connections"
+            led_by = (f", led by {top_n_edges} {_phrase(top_type, top_n_edges)}"
+                      if top_type else "")
         if ratio is None:
             prior = (f"vs {base_n} in the prior {baseline_days}" if base_n
                      else "first activity on record")
-            headline = (f"{entity}: {recent_n} {rel_word} in {window_days} days "
-                        f"({prior})")
+            headline = (f"{entity}: {recent_n} {what} in {window_days} days "
+                        f"({prior}){led_by}")
         else:
-            headline = (f"{entity}: {recent_n} {rel_word} in {window_days} days "
-                        f"({_fmt_ratio(ratio)} prior {baseline_days}-day rate)")
+            headline = (f"{entity}: {recent_n} {what} in {window_days} days "
+                        f"({_fmt_ratio(ratio)} prior {baseline_days}-day rate){led_by}")
         out.append({
             "type": "chokepoint",
             "entity": entity,
@@ -155,6 +165,8 @@ def entity_velocity(
             "recent_count": recent_n,
             "baseline_count": base_n,
             "growth_ratio": round(ratio, 2) if ratio is not None else None,
+            "top_rel": top_type,
+            "top_rel_count": top_n_edges,
             "headline": headline,
         })
 

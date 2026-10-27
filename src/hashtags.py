@@ -103,6 +103,13 @@ _LEGAL_SUFFIX = re.compile(
     r"[,\s]+(inc|ltd|llc|plc|corp|corporation|co|gmbh|ag|sa|se|nv|holdings?)\.?\s*$", re.I)
 
 
+def is_generic(name: str) -> bool:
+    """A category ("Physical AI Sector", "Chinese Robotics Companies"), not a
+    named company — shared with src/recap.py so charts drop the same noise."""
+    base = re.sub(r"\(.*?\)", " ", name or "")
+    return bool(_GENERIC_TAIL.search(_LEGAL_SUFFIX.sub("", base.strip())))
+
+
 def camel_tag(name: str) -> str | None:
     """'Figure AI' -> '#FigureAI'. None for names that make bad tags."""
     if not name:

@@ -115,8 +115,34 @@ def _write_graph(cfg: RoboticsConfig, payload: dict[str, Any]) -> None:
             "graph_config": payload.get("graph_config"),
             "graph": payload.get("graph"),
             "graph_insights": payload.get("graph_insights", []),
+            "recap": payload.get("recap"),
         },
     )
+
+
+def _write_recap_week(cfg: RoboticsConfig, recap: dict[str, Any] | None) -> str:
+    """Archive the week's recap at {collection}/recaps/weeks/{YYYY-Www}.
+
+    WRITE-ONCE: the first export of an ISO week (Monday's run) wins and later
+    runs leave it alone — the recap images rendered from it are week-keyed
+    and write-once too, so doc and images always agree. The graph doc's
+    `recap` field stays the live, daily-refreshed copy.
+    """
+    if not recap or not recap.get("cards"):
+        return "none"
+    from google.api_core.exceptions import AlreadyExists
+
+    client = _firestore_client(cfg)
+    ref = (client.collection(cfg.firestore_export.collection)
+           .document("recaps").collection("weeks").document(recap["week"]))
+    try:
+        ref.create({**recap, "sector": cfg.sector})
+        return "created"
+    except AlreadyExists:
+        return "exists"
+    except Exception as exc:          # recap is a bonus lane: never abort the export
+        log.warning("recap_week_write_failed week=%s error=%s", recap.get("week"), exc)
+        return "error"
 
 
 def _write_meta(cfg: RoboticsConfig, summary: dict[str, Any]) -> None:
@@ -229,6 +255,7 @@ def export_to_firestore(
     if cfg.firestore_export.enabled:
         written = _write_catalysts(cfg, cards)
         _write_graph(cfg, payload)
+        summary["recap_week"] = _write_recap_week(cfg, payload.get("recap"))
         summary["firestore_catalysts_written"] = written
         summary["firestore_collection"] = cfg.firestore_export.collection
         log.info(

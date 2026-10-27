@@ -178,6 +178,21 @@ class TestEntityVelocity(unittest.TestCase):
         self.assertIn("acquisitions", h)
         self.assertNotIn("acquires", h)
 
+    def test_mixed_types_never_labelled_as_one_type(self):
+        # 2026-10-26 regression: 16 edges, 8 of them competes_with, was
+        # headlined "16 competitive collisions". The count must be the total
+        # and the leading type must carry its own count.
+        for i in range(5):
+            self.fx.edge("Mixd", f"R{i}", "competes_with", days_ago=5)
+        for i in range(3):
+            self.fx.edge("Mixd", f"P{i}", "partners_with", days_ago=5)
+        for i in range(3):
+            self.fx.edge("Mixd", f"O{i}", "partners_with", days_ago=60)
+        m = next(i for i in self._run() if i["entity"] == "Mixd")
+        self.assertIn("Mixd: 8 new connections in 30 days", m["headline"])
+        self.assertTrue(m["headline"].endswith("led by 5 competitive collisions"))
+        self.assertEqual((m["top_rel"], m["top_rel_count"]), ("competes_with", 5))
+
     def test_singular_phrasing_helper(self):
         self.assertEqual(detect._phrase("acquires", 1), "acquisition")
         self.assertEqual(detect._phrase("acquires", 2), "acquisitions")

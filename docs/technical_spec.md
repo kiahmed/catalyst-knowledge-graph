@@ -950,7 +950,7 @@ other composer here already holds itself to (never re-derive a claim from
 raw numbers on the Postiz side — see that repo's `compose_catalyst()`
 entity-free-hook comment for why).
 
-#### 2.9b Comparative recap visuals — PROPOSAL (analysis 2026-10-26, nothing built)
+#### 2.9b Comparative recap visuals — BUILT 2026-10-26 (A+B+C, not yet deployed)
 
 > **Status: proposal only. No code changed.** Audience: this repo. Origin:
 > soljet-postiz now posts a weekly text digest of `graph_insights[]` (Mondays,
@@ -960,6 +960,40 @@ entity-free-hook comment for why).
 > per-edge confidence do **not** already show. Consumer note:
 > `soljet-postiz/docs/graph-posters.md`; notice-board entry in
 > `docs/soljet_postiz_posters_updates.md`.
+
+> **Built 2026-10-26 (pending deploy).** `src/recap.py` → `recap` block on the
+> graph doc (live, daily) + write-once archive `CKG-<sector>/recaps/weeks/<YYYY-Www>`
+> (first export of the ISO week wins). Cards: `mix-<entity>` (A), `concentration-<rel>`
+> (B), `grounding-<entity>` (C) for the top 2 chokepoint insights + top velocity
+> insight; each card = title question, big number, one sentence, one chart
+> (`templates/cards/recap.html`). Rendered by robotics-render each sweep to
+> `gs://robotics-cards/recaps/<sector>/<week>/<card_id>.png`, write-once.
+> `cards[0]` = the post/free-tier image; the rest = full set (future paid unlock).
+> Also fixed: chokepoint headlines no longer label ALL of an entity's edges
+> with its top type ("16 new connections …, led by 8 competitive collisions";
+> new fields `top_rel`, `top_rel_count`). Generic category nodes are excluded
+> from B via `hashtags.is_generic`. Each card leads with a **verdict** — a
+> ≤10-word rule-based "so what" (e.g. *"Booster Robotics is now a target: rivals
+> are lining up."*), then the supporting number, sentence and chart. No
+> investment framing ("valuable", "buy") by rule.
+>
+> **Hashtags (no guessing downstream):** each `graph_insights[]` row gets
+> `hashtags`; `recap.hashtags` is the digest default; each card has its own —
+> all from `src/hashtags.py` vocab, priority-ordered, ≤6.
+> **Now vs before:** concentration charts draw two bars per name, "now"
+> (solid) on top and "before" (faded) directly under it, same scale.
+>
+> **Web:** third tab **Recap** (Cards · Graph · Recap), `#view=recap`, rendered
+> natively from `payload.recap`. A `/recap/<week>` standalone page is not built.
+>
+> **Access (premium):** `PREMIUM_FEATURES_OPEN` in `.env.prod` →
+> `frontend/features.js` (regenerated every `make deploy-frontend`). `true`
+> (current) = open to every signed-in user; `false` = only users whose
+> `users/{uid}.entitlement` is `admin` or `paid` (backend-written; rules block
+> client writes). This is a **UI gate**: the recap rides the graph doc, which
+> any signed-in user can read. True enforcement (when paid tiers launch) =
+> move premium data to a doc whose rules check `entitlement`, and gate the
+> recap images behind a signed URL or the og service.
 
 **Scope (hard limit).** Weekly recap only. Charts are produced **only for the
 entities and sector trend the week's digest actually names** (e.g. the week of

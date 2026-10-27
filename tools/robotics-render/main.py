@@ -70,6 +70,11 @@ STORAGE_CARDS_PREFIX = os.environ.get("STORAGE_CARDS_PREFIX", "cards")
 # Catalyst subgraph posters live beside the cards under their own prefix.
 STORAGE_GRAPHS_PREFIX = os.environ.get("STORAGE_GRAPHS_PREFIX", "graphs")
 GRAPH_IMAGES_DIR = Path(os.environ.get("GRAPH_IMAGES_DIR", "/data/exports/graph_images"))
+# Weekly recap chart cards (spec §2.9b): recaps/<sector>/<YYYY-Www>/<card>.png —
+# week-keyed and WRITE-ONCE (unlike graphs/, which force runs overwrite), so
+# consumers can cache on the URL.
+STORAGE_RECAPS_PREFIX = os.environ.get("STORAGE_RECAPS_PREFIX", "recaps")
+RECAP_IMAGES_DIR = Path(os.environ.get("RECAP_IMAGES_DIR", "/data/exports/recap_images"))
 # Node/edge/font sizes in the site's mini-graph are tuned for a ~240px panel;
 # the poster canvas is ~5x that, so scale them up to keep the same look.
 GRAPH_SCALE = float(os.environ.get("GRAPH_SCALE", "1.7"))
@@ -362,6 +367,78 @@ def _render_png(card: dict[str, Any]) -> bytes:
     finally:
         page.close()
     return png
+
+
+# ── Weekly recap chart cards (spec §2.9b) ──────────────────────────
+
+def _recap_week_doc(sector: str) -> dict[str, Any] | None:
+    """This week's ARCHIVED recap (CKG-<sector>/recaps/weeks/<week>), the
+    write-once copy — not the graph doc's daily-refreshed one — so the images
+    always match what the week doc says."""
+    from google.cloud import firestore
+
+    collection = os.environ.get("FIRESTORE_EXPORT_COLLECTION", f"CKG-{sector}")
+    db = firestore.Client()
+    live = (db.collection(collection).document("graph").collection("sectors")
+            .document(sector).get())
+    week = ((live.to_dict() or {}).get("recap") or {}).get("week") if live.exists else None
+    if not week:
+        return None
+    snap = (db.collection(collection).document("recaps").collection("weeks")
+            .document(week).get())
+    return snap.to_dict() if snap.exists else None
+
+
+def _render_recap_png(card: dict[str, Any], recap: dict[str, Any], sector: str) -> bytes:
+    from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+    env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)),
+                      autoescape=select_autoescape())
+    html = env.get_template("recap.html").render(
+        week=recap["week"], sector=sector,
+        width=VIEWPORT_W, height=VIEWPORT_H,
+        # Objects, not pre-dumped JSON: the template embeds them with Jinja's
+        # `tojson`, which escapes < > & ' — entity names come from LLM
+        # extraction, so a "</script>" in one must not break out of the tag.
+        card=card, groups=recap.get("groups") or [],
+    )
+    page = _shared_browser().new_page(
+        viewport={"width": VIEWPORT_W, "height": VIEWPORT_H}, device_scale_factor=2)
+    try:
+        page.set_content(html, wait_until="load")
+        page.wait_for_function("window.__recapReady === true", timeout=15000)
+        return page.screenshot(clip={"x": 0, "y": 0, "width": VIEWPORT_W, "height": VIEWPORT_H})
+    finally:
+        page.close()
+
+
+def _render_recaps(sector: str, force: bool = False) -> dict[str, Any]:
+    """Render + upload every card of this week's recap. Write-once per week:
+    existing images are skipped (force=True re-renders and replaces)."""
+    recap = _recap_week_doc(sector)
+    if not recap or not recap.get("cards"):
+        return {"recap_week": None, "recaps_rendered": 0}
+    week = recap["week"]
+    bucket = _storage_bucket()
+    out_dir = RECAP_IMAGES_DIR / sector / week
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rendered = skipped = failed = 0
+    for card in recap["cards"]:
+        name = f"{STORAGE_RECAPS_PREFIX}/{sector}/{week}/{card['id']}.png"
+        try:
+            if bucket is not None and not force and bucket.blob(name).exists():
+                skipped += 1
+                continue
+            path = out_dir / f"{card['id']}.png"
+            path.write_bytes(_render_recap_png(card, recap, sector))
+            if bucket is not None:
+                bucket.blob(name).upload_from_filename(str(path), content_type="image/png")
+            rendered += 1
+        except Exception as exc:
+            failed += 1
+            _log("recap_failed", card_id=card.get("id"), week=week, error=str(exc))
+    return {"recap_week": week, "recaps_rendered": rendered,
+            "recaps_skipped": skipped, "recaps_failed": failed}
 
 
 # ── Catalyst subgraph posters ──────────────────────────────────────
@@ -956,6 +1033,17 @@ def render_batch():
         except Exception as exc:
             _log("graph_upload_failed", card_id=entry_id, error=str(exc))
 
+    # Weekly recap cards ride every sweep; write-once makes repeats free.
+    recap_summary: dict[str, Any] = {}
+    if bool(body.get("recaps", True)):
+        try:
+            # Own flag: a `force` card/poster backfill must not rewrite the
+            # write-once recap images consumers cache on the URL.
+            recap_summary = _render_recaps(SECTOR, force=bool(body.get("recaps_force", False)))
+        except Exception as exc:
+            recap_summary = {"recaps_error": str(exc)}
+            _log("recaps_failed", error=str(exc))
+
     duration = round(time.monotonic() - start, 2)
     _log("batch_ok", total=len(rows), rendered=rendered, skipped=skipped,
          failed=failed, uploaded=uploaded, upload_skipped=upload_skipped,
@@ -967,6 +1055,7 @@ def render_batch():
         "graphs_rendered": g_rendered, "graphs_skipped": g_skipped,
         "graphs_failed": g_failed, "graphs_uploaded": g_uploaded,
         "failed": failed, "uploaded": uploaded, "upload_skipped": upload_skipped,
+        **recap_summary,
         "duration_s": duration,
     }), 200
 

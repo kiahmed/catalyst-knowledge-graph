@@ -24,7 +24,7 @@ from typing import Any
 
 import duckdb
 
-from . import db, detect, handles
+from . import db, detect, handles, recap
 from .config import RoboticsConfig
 
 
@@ -454,6 +454,10 @@ def build_payload(cfg: RoboticsConfig) -> dict[str, Any]:
         # soljet-postiz quotes verbatim. Computed here, inside the same
         # connection, so it sees exactly the data this export ships.
         insights = detect.graph_insights(con, cfg)
+        # §2.9b — weekly chart cards for exactly what the digest names,
+        # from the same windows as `insights` (same connection, same data).
+        recap.tag_insights(insights, cfg.sector)   # per-row `hashtags` for the digest
+        recap_block = recap.build_recap(con, cfg.sector, insights)
     finally:
         con.close()
 
@@ -490,6 +494,7 @@ def build_payload(cfg: RoboticsConfig) -> dict[str, Any]:
         "cards": cards,
         "graph": graph,
         "graph_insights": insights,   # §2.9a detectors (src/detect.py)
+        "recap": recap_block,          # §2.9b weekly chart cards (src/recap.py)
     }
 
 

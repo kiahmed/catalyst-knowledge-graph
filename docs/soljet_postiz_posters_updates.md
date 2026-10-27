@@ -20,6 +20,36 @@ automatically. A consumer has to actually read it (or be pointed at it).
 
 ---
 
+## [2026-10-26b] BUILT, NOT YET DEPLOYED — weekly recap chart cards (§2.9b)
+
+**Heads-up, no action until a "shipped" entry follows.** Two things change once deployed:
+1. **Entity insight headlines change wording** (correctness fix): mixed-type
+   counts now read `"HD Hyundai: 16 new connections in 30 days (9.6x prior
+   90-day rate), led by 9 partnerships"` instead of labelling all 16 as
+   partnerships. Single-type entities read as before. New fields on chokepoint
+   insights: `top_rel`, `top_rel_count`. If the composer parses the headline,
+   switch to these fields.
+2. **`recap` block** on `CKG-<sector>/graph/sectors/<sector>`:
+   `{week, as_of, window_days, baseline_days, groups, cards:[{id, kind, entity|rel_type,
+   insight_headline, title, verdict, big, sub, sentence, data}]}`. `verdict` is the
+   ≤10-word takeaway — use it as the post's opening line next to the image.
+3. **Hashtags are generated here — don't guess them.**
+   - every `graph_insights[]` row gets `hashtags` (entity, its topic, sector;
+     sector trends: topic + sector). The digest should union the `hashtags` of
+     exactly the rows it posts (after your 21-day skip), in row order, deduped;
+   - `recap.hashtags` = a ready-made digest default (named entities + trend
+     topic + sector);
+   - every recap card has its own `hashtags` for when its image is posted.
+   All are priority-ordered and capped at 6 — take a prefix to fit the channel.
+4. **Matching a card to what you post:** cards carry `entity` (mix/grounding)
+   or `rel_type` (concentration); pick the card whose `entity` is the row you
+   chose, image = `recaps/<sector>/<week>/<card.id>.png`. Images at
+   `gs://robotics-cards/recaps/<sector>/<week>/<card.id>.png` — week-keyed,
+   write-once, safe to cache. Post `cards[0]` (one image per post); the rest
+   are the full set.
+
+---
+
 ## [2026-10-26] PROPOSAL (no action required yet) — weekly recap gets comparison charts + a canonical page
 
 **What changed here:** nothing built. Analysis only: `technical_spec.md` §2.9b.
