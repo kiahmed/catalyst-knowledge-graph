@@ -93,7 +93,7 @@ GENERIC_DESCRIPTION = (
     "what across the robotics ecosystem."
 )
 
-_CARD_ID_RE = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+_CARD_ID_RE = re.compile(r"^[A-Za-z0-9-]{1,64}\Z")
 
 
 def _log(event: str, **fields: Any) -> None:
@@ -568,6 +568,7 @@ def _with_card_edges(graph: dict[str, Any], card_id: str) -> dict[str, Any]:
             JOIN entities ea ON ea.entity_id = r.entity_a_id
             JOIN entities eb ON eb.entity_id = r.entity_b_id
             WHERE c.entry_id = ? AND r.status IN ('active', 'materialized')
+              AND r.entity_a_id <> r.entity_b_id
             """,
             [card_id],
         ).fetchall()
@@ -916,7 +917,21 @@ def render_batch():
     # without re-rendering every card PNG).
     cards_on = bool(body.get("cards", True))
 
-    if from_id:
+    # Mode 4: explicit card_ids list — targeted re-render (e.g. only the
+    # posters affected by a template fix), no date-range sweep needed.
+    card_ids: list[str] = []
+    if "card_ids" in body:
+        raw_ids = body.get("card_ids")
+        if not isinstance(raw_ids, list):
+            return jsonify({"ok": False, "error": "card_ids must be a list"}), 400
+        card_ids = [c for c in raw_ids if isinstance(c, str) and _CARD_ID_RE.match(c)]
+        if not card_ids:
+            # Never fall through to a full sweep: a typo'd targeted call with
+            # force=true would otherwise re-render the whole catalog.
+            return jsonify({"ok": False, "error": "no valid card_ids"}), 400
+    if card_ids:
+        rows = [(c,) for c in card_ids][: limit or None]
+    elif from_id:
         # Mode 3: from a specific entry_id, oldest-forward. DuckDB can't
         # compare a row tuple against a multi-column subquery directly —
         # join the anchor row and compare fields instead.
@@ -933,16 +948,17 @@ def render_batch():
         # Modes 1 + 2: newest-first
         sql = "SELECT entry_id FROM catalysts ORDER BY timestamp DESC, entry_id DESC"
         params = []
-    if limit:
-        sql += f" LIMIT {limit}"
+    if not card_ids:
+        if limit:
+            sql += f" LIMIT {limit}"
 
-    import duckdb
+        import duckdb
 
-    con = duckdb.connect(DUCKDB_PATH, read_only=True)
-    try:
-        rows = con.execute(sql, params).fetchall()
-    finally:
-        con.close()
+        con = duckdb.connect(DUCKDB_PATH, read_only=True)
+        try:
+            rows = con.execute(sql, params).fetchall()
+        finally:
+            con.close()
 
     CARD_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 

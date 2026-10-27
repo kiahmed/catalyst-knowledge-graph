@@ -2646,19 +2646,16 @@ function renderMiniGraph(container, card) {
     if ((e.confidence || 0) < f.minConfidence) return false;
     return true;
   };
-  // Primary: only edges emitted for THIS catalyst. Strict === so edges with a
-  // null catalyst_id never match; skip entirely when the card has no card_id.
-  let edgesSlice = card.card_id
-    ? allEdges.filter(e => e.catalyst_id === card.card_id && passesFilters(e))
-    : [];
-  // Fallback: cards outside the export's graph window (graph_window_days) have
-  // no catalyst_id-tagged edges — for those, keep edges whose BOTH endpoints
-  // are this card's entities (never the one-endpoint neighborhood match, which
-  // floods the mini-graph with unrelated catalysts).
-  if (edgesSlice.length === 0) {
-    edgesSlice = allEdges.filter(e =>
-      names.has(e.from) && names.has(e.to) && passesFilters(e));
-  }
+  // This card's OWN relationships (card._rels, from its Firestore doc) — the
+  // same edges the card dialog lists. Not the graph doc: that is a size-capped
+  // recent window, so older cards have no catalyst-tagged edges there, and the
+  // old "both endpoints are this card's entities" fallback drew UNRELATED
+  // catalysts' edges (2026-10-27: ROB-031826-001 showed 2 foreign edges incl.
+  // an NVIDIA→NVIDIA loop instead of its 21). Self-loops are extraction noise.
+  const edgesSlice = (card._rels || [])
+    .filter(r => r.from && r.to && r.from !== r.to)
+    .map(r => Object.assign({}, r, { catalyst_id: card.card_id }))
+    .filter(passesFilters);
 
   const keep = new Set();
   edgesSlice.forEach(e => { keep.add(e.from); keep.add(e.to); });

@@ -36,7 +36,7 @@ The bundle is **static** — it carries no data. The deployed page **requires
 sign-in** (`assets/auth.js` — Google / X / GitHub / email+password), then
 reads catalysts + graph live from Firestore (`CKG-Robotics`) via
 `assets/firestore-source.js` + the Firebase Web SDK. Each sign-in upserts a
-`users/{uid}` profile doc. Make sure `make deploy` + `make firestore-sync`
+`users/{uid}` profile doc. Make sure `make deploy` + a prod ingest (`make ingest-prod`)
 have populated `CKG-Robotics` first, or the page loads its built-in offline
 preview. `cards.json` is **not** deployed (it's in `firebase.json`'s `ignore`)
 — it's the local-dev data source only, and local dev has no sign-in gate.

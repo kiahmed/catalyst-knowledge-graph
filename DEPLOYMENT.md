@@ -90,18 +90,21 @@ IAM-locked. Shipping a change to the /card routes needs `make deploy`
 is skipped when the tag already exists) **and** `make deploy-frontend` for
 the Hosting rewrites.
 
-### First-time data backfill (optional)
+### First-time data population
 
-To put your local graph live immediately instead of waiting for the first
-scheduled ingest:
+Prod Firestore (`CKG-Robotics`) is written only by the cloud ingest from
+`gs://robotics-data/robotics.duckdb`. To populate it without waiting for the
+scheduled run:
 
 ```bash
-make firestore-sync
+make ingest-prod
 ```
 
-Pushes the current **local** DuckDB's catalysts + graph to Firestore
-`CKG-Robotics`, and local PNGs to Firebase Storage. One-time — after this,
-prod ingest keeps Firestore current on its own.
+`make firestore-sync` (push the LOCAL DuckDB) is retired since the
+2026-07-28 cloud handover — it refuses to run, because it would overwrite
+prod with stale data that delta export would never repair. Only for a
+brand-new environment: `ALLOW_LOCAL_FIRESTORE_SYNC=1 make firestore-sync`,
+then run the next prod export with `FIRESTORE_EXPORT_FULL_SYNC=true`.
 
 ### Frontend
 
