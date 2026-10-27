@@ -116,5 +116,28 @@ class TestLayoutStability(unittest.TestCase):
         self.assertIn("Aardvark", c)
 
 
+class TestLayoutAtomicWrite(unittest.TestCase):
+    def test_failed_insert_keeps_previous_layout(self):
+        t = TestExportTagging(); t.setUp()
+        try:
+            t._card("ROB-A1", "A deal", "A partners with B", [("A", "partners_with", "B")])
+            first = export.full_history_layout(t.con, "Robotics")
+            t._card("ROB-A2", "C joins", "C partners with A", [("C", "partners_with", "A")])
+            class FailingInsert:                   # proxy: only the layout INSERT fails
+                def __init__(self, con): self._c = con
+                def __getattr__(self, k): return getattr(self._c, k)
+                def execute(self, sql, *a, **k):
+                    if sql.startswith("INSERT INTO graph_layout"):
+                        raise RuntimeError("disk full")
+                    return self._c.execute(sql, *a, **k)
+            with self.assertRaises(RuntimeError):
+                export.full_history_layout(FailingInsert(t.con), "Robotics")
+            kept = dict((n, [x, y]) for n, x, y in t.con.execute(
+                "SELECT name, x, y FROM graph_layout WHERE sector='Robotics'").fetchall())
+            self.assertEqual(set(kept), set(first))            # old rows intact, not wiped
+        finally:
+            t.tearDown()
+
+
 if __name__ == "__main__":
     unittest.main()

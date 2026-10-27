@@ -452,13 +452,21 @@ def full_history_layout(con: duckdb.DuckDBPyConnection, sector: str,
         temp -= cool
 
     out = {nm: [round(float(pos[i, 0]), 1), round(float(pos[i, 1]), 1)] for nm, i in names.items()}
-    # Bulk write (executemany is row-by-row slow in DuckDB).
-    con.execute("DELETE FROM graph_layout WHERE sector = ?", [sector])
-    con.execute(
-        "INSERT INTO graph_layout (sector, name, x, y) "
-        "SELECT ?, unnest(?::VARCHAR[]), unnest(?::DOUBLE[]), unnest(?::DOUBLE[])",
-        [sector, list(out), [v[0] for v in out.values()], [v[1] for v in out.values()]],
-    )
+    # Bulk write (executemany is row-by-row slow in DuckDB), atomically: if the
+    # INSERT fails the DELETE rolls back, so the stored layout survives and the
+    # next run stays warm instead of re-laying out (reshuffling) everything.
+    con.execute("BEGIN TRANSACTION")
+    try:
+        con.execute("DELETE FROM graph_layout WHERE sector = ?", [sector])
+        con.execute(
+            "INSERT INTO graph_layout (sector, name, x, y) "
+            "SELECT ?, unnest(?::VARCHAR[]), unnest(?::DOUBLE[]), unnest(?::DOUBLE[])",
+            [sector, list(out), [v[0] for v in out.values()], [v[1] for v in out.values()]],
+        )
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
     return out
 
 
