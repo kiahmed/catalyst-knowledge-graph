@@ -170,7 +170,7 @@ Full runbook: **`DEPLOYMENT.md`**. Short version:
 ```bash
 cp .env.prod.example .env.prod && $EDITOR .env.prod   # prod values + secrets
 make deploy                                           # build + push + terraform apply
-make firestore-sync                                   # one-time: local graph → CKG-Robotics
+# (make firestore-sync is retired — prod Firestore is written only by the cloud ingest)
 make deploy-frontend                                  # frontend → Firebase Hosting
 ```
 
@@ -354,6 +354,7 @@ Its final `terraform apply` waits for a typed `yes`; review the plan.
 | Prod: Recap tab missing | No recap today (no insight cleared thresholds in today's export), or `PREMIUM_FEATURES_OPEN=false` and the user has no `entitlement` admin/paid; `frontend/features.js` on the live site shows the flag (§9b) |
 | Prod: recap images missing for this week | `gcloud storage ls gs://robotics-cards/recaps/Robotics/<YYYY-Www>/`; week doc exists? (`CKG-Robotics/recaps/weeks/<week>`); render-batch response `recaps_rendered/skipped/failed` |
 | Prod: graph tab stale / posters wrong (graph doc not updating) | graph doc `generated_at`; size cap `src/export.py` `GRAPH_DOC_BUDGET` (Firestore 1 MiB/doc — 2026-08 incident, workbench 2026-10-18) |
+| Prod: a card doc in Firestore is wrong/missing but DuckDB is right | Exports are delta-only (`export_state` hashes in the GCS DB): a hand-edited/deleted doc isn't noticed. Set `FIRESTORE_EXPORT_FULL_SYNC=true` on the ingest function for one run (or redeploy with it), then unset |
 | Who signed up / edit a user profile | `python3 tools/user-admin/main.py list` / `set <uid> field=value` (§9) |
 
 ## 12. Not in this manual

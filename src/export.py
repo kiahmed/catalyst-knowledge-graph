@@ -169,7 +169,7 @@ def _load_cards(
             WHERE r.catalyst_id = ?
               AND r.confidence >= ?
               AND {status_filter}
-            ORDER BY r.confidence DESC
+            ORDER BY r.confidence DESC, r.rel_type, ea.name, eb.name
             """,
             [catalyst_id, min_edge_confidence],
         ).fetchall()

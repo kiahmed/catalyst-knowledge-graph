@@ -77,7 +77,7 @@ help:
 	@echo "Prod deploy  (see DEPLOYMENT.md — reads .env.prod)"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "deploy" "" "Build + push images/source + terraform apply (preflight first)"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "deploy-preflight" "" "Verify gcloud auth + IAM admin + .env.prod"
-	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "firestore-sync" "" "One-time: local DuckDB to CKG-<sector> + PNGs to Storage"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "firestore-sync" "" "RETIRED: cloud owns Firestore (needs ALLOW_LOCAL_FIRESTORE_SYNC=1)"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "deploy-frontend" "" "Deploy frontend/ to Firebase Hosting"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "seed-product" "[DRY=1]" "Create config/products/items/<sector> (also runs in deploy-frontend)"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "rules-test" "" "Firestore rules vs emulator (Docker; no deploy)"
@@ -504,7 +504,21 @@ deploy: deploy-preflight
 # graph to Firestore CKG-<sector>, and local PNGs to Firebase Storage —
 # without an ingest run. After this, prod ingest keeps Firestore current.
 # Needs `make up` running and credentials with Firestore + Storage write.
+#
+# RETIRED (2026-10-27): the cloud owns the pipeline since the 2026-07-28
+# handover — gs://robotics-data/robotics.duckdb is authoritative and the
+# local DB is stale. This target would overwrite prod Firestore with stale
+# cards, and since exports became delta-only (export_state hashes live in the
+# GCS DB, not the local one) prod would never self-heal it. Blocked unless
+# ALLOW_LOCAL_FIRESTORE_SYNC=1 for a deliberate new-environment bootstrap;
+# afterwards run the next prod export with FIRESTORE_EXPORT_FULL_SYNC=true.
 firestore-sync:
+	@[ "$(ALLOW_LOCAL_FIRESTORE_SYNC)" = "1" ] || { \
+	  echo "!! firestore-sync is retired: prod Firestore is written by the cloud ingest from"; \
+	  echo "   gs://robotics-data/robotics.duckdb. Syncing the stale LOCAL DB would overwrite"; \
+	  echo "   prod cards, and delta export would not repair them. Use: make ingest-prod"; \
+	  echo "   (Fresh-environment bootstrap only: ALLOW_LOCAL_FIRESTORE_SYNC=1, then run the next"; \
+	  echo "   prod export with FIRESTORE_EXPORT_FULL_SYNC=true.)"; exit 1; }
 	@test -f .env.prod || (echo "!! .env.prod missing — cp .env.prod.example .env.prod" && exit 1)
 	@echo "One-time backfill: local DuckDB → Firestore CKG-<sector> + PNGs → Firebase Storage"
 	@set -a; . ./.env.prod; set +a; \

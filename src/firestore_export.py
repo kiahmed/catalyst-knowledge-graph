@@ -28,6 +28,8 @@ Idempotency:
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -59,42 +61,81 @@ def _storage_client(cfg: RoboticsConfig):
 # ── Firestore writes ───────────────────────────────────────────────
 
 
-def _write_catalysts(cfg: RoboticsConfig, cards: list[dict[str, Any]]) -> int:
-    """Upsert one doc per catalyst into {collection}/catalysts/{entry_id}.
+# ── Delta export state (what Firestore already has, tracked locally) ──
+# One row per exported card: the hash of exactly what we last wrote. Lives in
+# DuckDB, which goes back to GCS after every run, so the next run knows what
+# changed WITHOUT reading Firestore. Only new/changed cards are written.
+_STATE_DDL = """
+CREATE TABLE IF NOT EXISTS export_state (
+    doc_key      VARCHAR PRIMARY KEY,   -- 'catalysts/<card_id>'
+    content_hash VARCHAR NOT NULL,      -- sha256 of the canonical card JSON
+    exported_at  TIMESTAMP DEFAULT now()
+)
+"""
+_BATCH = 400   # Firestore caps a batch at 500 writes
 
-    Returns the number of docs written.
+
+def _card_hash(card: dict[str, Any]) -> str:
+    blob = json.dumps(card, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def _full_sync() -> bool:
+    """FIRESTORE_EXPORT_FULL_SYNC=true rewrites every card (e.g. after docs
+    were deleted/edited by hand in Firestore, which the local state can't see)."""
+    return os.environ.get("FIRESTORE_EXPORT_FULL_SYNC", "").strip().lower() in ("1", "true", "yes")
+
+
+def _write_catalysts(cfg: RoboticsConfig, cards: list[dict[str, Any]]) -> dict[str, int]:
+    """Write only new/changed cards to {collection}/catalysts/items/{card_id}.
+
+    Change detection is local: each card's hash vs `export_state` in DuckDB.
+    State is recorded per batch only AFTER Firestore commits it, so a failed
+    write is retried on the next run (self-healing, like the old full sync).
+    Returns {"written", "unchanged", "total"}.
     """
-    client = _firestore_client(cfg)
-    base = (
-        client.collection(cfg.firestore_export.collection)
-        .document(cfg.firestore_export.catalysts_subpath)
-    )
-    # We use a sub-collection structure: collection/{subpath}/<entry_id>.
-    # Firestore models that as collection/{subpath}/items/{entry_id} when the
-    # parent doc holds metadata. To keep things simple and addressable, we
-    # store catalysts as a sub-collection of the `catalysts` doc:
-    #   {collection}/catalysts/items/{entry_id}
-    # The parent doc holds `count` + `updated_at` for cheap top-of-collection
-    # reads on the frontend.
-    items = base.collection("items")
-    written = 0
-    for card in cards:
-        entry_id = card.get("card_id")  # export.py keys the id as "card_id"
-        if not entry_id:
-            continue
-        items.document(entry_id).set(card, merge=True)
-        written += 1
+    import duckdb
 
-    # Top-of-subpath summary doc for cheap "any cards yet?" checks.
-    base.set(
-        {
-            "count": written,
-            "sector": cfg.sector,
-            "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
-        },
-        merge=True,
-    )
-    return written
+    keyed = [(c["card_id"], c, _card_hash(c)) for c in cards if c.get("card_id")]
+    con = duckdb.connect(cfg.duckdb_path)
+    try:
+        con.execute(_STATE_DDL)
+        known = {} if _full_sync() else dict(con.execute(
+            "SELECT doc_key, content_hash FROM export_state WHERE doc_key LIKE 'catalysts/%'"
+        ).fetchall())
+        changed = [(cid, c, h) for cid, c, h in keyed if known.get(f"catalysts/{cid}") != h]
+
+        client = _firestore_client(cfg)
+        base = (client.collection(cfg.firestore_export.collection)
+                .document(cfg.firestore_export.catalysts_subpath))
+        # Sub-collection layout: {collection}/catalysts/items/{card_id}; the
+        # parent doc holds count + updated_at for cheap "any cards yet?" reads.
+        items = base.collection("items")
+        written = 0
+        for i in range(0, len(changed), _BATCH):
+            chunk = changed[i:i + _BATCH]
+            batch = client.batch()
+            for cid, card, _h in chunk:
+                batch.set(items.document(cid), card, merge=True)
+            batch.commit()
+            con.executemany(
+                "INSERT OR REPLACE INTO export_state (doc_key, content_hash, exported_at) "
+                "VALUES (?, ?, now())",
+                [(f"catalysts/{cid}", h) for cid, _c, h in chunk],
+            )
+            written += len(chunk)
+
+        base.set(
+            {
+                "count": len(keyed),       # cards in the export, not this run's writes
+                "sector": cfg.sector,
+                "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            },
+            merge=True,
+        )
+    finally:
+        con.close()
+    return {"written": written, "unchanged": len(keyed) - written, "total": len(keyed)}
 
 
 def _write_graph(cfg: RoboticsConfig, payload: dict[str, Any]) -> None:
@@ -253,14 +294,15 @@ def export_to_firestore(
     }
 
     if cfg.firestore_export.enabled:
-        written = _write_catalysts(cfg, cards)
+        cstats = _write_catalysts(cfg, cards)
         _write_graph(cfg, payload)
         summary["recap_week"] = _write_recap_week(cfg, payload.get("recap"))
-        summary["firestore_catalysts_written"] = written
+        summary["firestore_catalysts_written"] = cstats["written"]
+        summary["firestore_catalysts_unchanged"] = cstats["unchanged"]
         summary["firestore_collection"] = cfg.firestore_export.collection
         log.info(
-            "firestore_export_done collection=%s catalysts=%d graph=ok",
-            cfg.firestore_export.collection, written,
+            "firestore_export_done collection=%s catalysts_written=%d unchanged=%d graph=ok",
+            cfg.firestore_export.collection, cstats["written"], cstats["unchanged"],
         )
     else:
         summary["firestore_skipped"] = True
