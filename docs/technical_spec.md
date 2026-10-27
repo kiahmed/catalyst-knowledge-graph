@@ -972,6 +972,37 @@ entity-free-hook comment for why).
   export keeps writes small. Layout positions persist in DuckDB `graph_layout`
   (warm start → stable across days; cold anneal only on first run).
 
+- **Graph-tab UX (2026-10-27):**
+  - Company search shows ALL of a company's links inside the chosen window
+    (cap 300 for extreme hubs, stated under the box: "most recent 300 of N").
+    Was a silent cap of 20 (Samsung→Tesollo vanished; 127 companies affected).
+  - Picking a company with no links in the window auto-steps back 7 → 30 →
+    60 → 90 → 120 … days (30-day steps; All only past the oldest catalyst),
+    with a note; ◀ older / newer ▶ walk the same sequence. A window the user
+    chose (`twx=1` in the hash) is honoured even when empty ("0 links").
+  - Clearing the search (×) returns to the light 7-day overview — never an
+    accidental "load everything".
+  - Big overviews (All / >30d, no company) load progressively: newest slice
+    first, older slices appended per animation frame; a bottom-left chip
+    shows progress with Pause/Resume. Any filter change cancels it.
+  - Views ≤400 nodes get their own quick force layout (readable, fits the
+    screen); bigger views use full-history positions compressed into the
+    zoom range (minZoom 0.1) and fit to the 5–95% core so outliers don't
+    shrink the picture. (Fixed the empty 7-day view.)
+- **FUTURE — static data bundle for scale (not built).** Today every page load
+  reads all card docs (~825 reads, ~10 MB) plus the layout doc from Firestore:
+  ~$150 per 100k loads (reads + egress) and slow first paint on mobile. Plan:
+  the daily export also publishes the same JSON (cards + layout + graph doc)
+  as one versioned static file on Firebase Hosting/CDN (cached at the edge,
+  gzip ~1–2 MB); the browser loads it and builds the SAME interactive,
+  draggable graph client-side — data delivery change only, not pre-rendered
+  images. Access: premium/sign-in gating must move to a signed URL or a
+  Hosting function in front of the file before this ships.
+- **FUTURE — layout doc as a single JSON string field.** `positions` is a map;
+  Firestore indexes each key (~4–5 entries/node, 40k/doc cap → fails at
+  ~8–10k nodes). Store as one string field (or exempt it from indexing);
+  the 1 MiB doc size then caps at ~30k nodes, beyond which move it to GCS.
+
 #### 2.9b Comparative recap visuals — BUILT 2026-10-26 (A+B+C, not yet deployed)
 
 > **Status: proposal only. No code changed.** Audience: this repo. Origin:

@@ -573,6 +573,17 @@ input[type="date"]:focus { border-color: var(--border-focus); }
   position: absolute; top: 12px; left: 284px; z-index: 420;
   width: 230px;
 }
+.graph-load-chip { position: fixed; left: 16px; bottom: 48px; z-index: 60; display: flex; align-items: center; gap: 10px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 999px; box-shadow: var(--shadow);
+  padding: 6px 8px 6px 14px; font-size: 12px; color: var(--text-secondary); }
+.graph-load-chip[hidden] { display: none; }
+.glc-btn { font: inherit; font-size: 12px; border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  border-radius: 999px; padding: 3px 10px; cursor: pointer; }
+.gf-step { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 8px; font-size: 11px; color: var(--text-secondary); }
+.gf-step[hidden] { display: none; }
+.gf-step-btn { font: inherit; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text);
+  border-radius: 6px; padding: 2px 8px; cursor: pointer; }
+.gs-note { font-size: 11px; color: var(--text-secondary); margin-top: 6px; max-width: 320px; }
 .gs-label {
   font-size: 10px; font-weight: 600; color: var(--text-muted);
   text-transform: uppercase; letter-spacing: 0.5px;
@@ -1141,6 +1152,11 @@ input[type="date"]:focus { border-color: var(--border-focus); }
         <button class="gf-seg-btn" data-tw="90">90d</button>
         <button class="gf-seg-btn" data-tw="0">All</button>
       </div>
+      <div class="gf-step" id="gfStep" hidden>
+        <button type="button" class="gf-step-btn" data-dir="older">◀ older</button>
+        <span class="gf-step-lbl" id="gfStepLbl"></span>
+        <button type="button" class="gf-step-btn" data-dir="newer">newer ▶</button>
+      </div>
     </div>
     <div class="gf-section">
       <div class="gf-label">Min confidence</div>
@@ -1527,9 +1543,46 @@ function graphEdgeCountFor(f) {
 // An explicit user choice stays strict — empty is empty.
 const GRAPH_WIDEN_STEPS = [30, 90, 0];
 
+// Company search step-back: 7 → 30 → 60 → 90 → 120 … (30-day steps, never a
+// jump straight to All) until the company has links; All only past the
+// oldest catalyst. Also the sequence the ◀ older / newer ▶ buttons walk.
+function egoStepSequence() {
+  const gen = new Date((PAYLOAD && PAYLOAD.generated_at) || Date.now());
+  let oldest = gen;
+  ((PAYLOAD && PAYLOAD.graph && PAYLOAD.graph.edges) || []).forEach(e => {
+    const d = new Date(e.catalyst_date); if (!isNaN(d) && d < oldest) oldest = d;
+  });
+  const maxDays = Math.ceil((gen - oldest) / 86400000);
+  const seq = [7];
+  for (let d = 30; d < maxDays + 30; d += 30) seq.push(d);
+  seq.push(0);
+  return seq;
+}
+
+function egoEdgeCount(f, q) {
+  if (!PAYLOAD || !window.RoboticsGraph || !RoboticsGraph.filterPayload) return 0;
+  return RoboticsGraph.filterPayload(PAYLOAD,
+    Object.assign({}, f, { egoEntity: q, egoMaxEdges: Infinity })).edges.length;
+}
+
 function effectiveGraphFilters() {
   const f = currentGraphFilters();
   const strict = { filters: f, widenedFrom: null };
+  const q = parseHash().q;
+  if (q && PAYLOAD) {
+    // twx=1: the user chose this window (segment / ◀ ▶) — honour it, even if
+    // empty. Auto step-back only right after picking a company.
+    if (parseHash().twx) return strict;
+    if (egoEdgeCount(f, q) > 0) return strict;
+    const cur = f.timeWindowDays || 0;
+    if (cur === 0) return strict;                       // All and still none: honest empty
+    for (const w of egoStepSequence()) {
+      if (w !== 0 && w <= cur) continue;
+      const cand = Object.assign({}, f, { timeWindowDays: w });
+      if (egoEdgeCount(cand, q) > 0) return { filters: cand, widenedFrom: cur };
+    }
+    return strict;
+  }
   if (parseHash().tw != null || !PAYLOAD) return strict;
   if (graphEdgeCountFor(f) > 0) return strict;
   for (const w of GRAPH_WIDEN_STEPS) {
@@ -1556,10 +1609,30 @@ function updateWidenNote(widenedFrom, tw) {
 }
 
 // ══ Graph entity search (ego view) ══
-// Selecting an entity renders only it + its 1-hop neighbours (capped to the
-// EGO_MAX_EDGES most recent edges), with all other filters still applied.
+// Selecting an entity renders it + ALL its 1-hop links inside the chosen time
+// window (the window is the scope — "All" really is all), with the other
+// filters still applied. Only extreme hubs hit EGO_MAX_EDGES (most recent
+// kept), and the search box then says so — nothing is cut silently.
+// (Was a silent cap of 20: Samsung→Tesollo, link #25, vanished; 127
+// companies affected. 2026-10-27.)
 // State lives in the hash (q=) so it's shareable and survives tab switches.
-const EGO_MAX_EDGES = 20;
+const EGO_MAX_EDGES = 300;
+
+function updateEgoNote(filters) {
+  const box = document.getElementById("graphSearch");
+  if (!box) return;
+  let note = box.querySelector(".gs-note");
+  if (!note) { note = document.createElement("div"); note.className = "gs-note"; box.appendChild(note); }
+  const q = filters && filters.egoEntity;
+  if (!q || !PAYLOAD || !window.RoboticsGraph || !RoboticsGraph.filterPayload) { note.hidden = true; return; }
+  const total = RoboticsGraph.filterPayload(PAYLOAD,
+    Object.assign({}, filters, { egoMaxEdges: Infinity })).edges.length;
+  const shown = Math.min(total, filters.egoMaxEdges);
+  note.textContent = total > shown
+    ? `Showing the ${shown} most recent of ${total} links — narrow the time window for a focused view`
+    : `${total} link${total === 1 ? "" : "s"} in this time window`;
+  note.hidden = false;
+}
 
 function syncGraphSearchUI() {
   const input = document.getElementById("graphSearchInput");
@@ -1614,7 +1687,7 @@ function syncGraphSearchUI() {
     input.value = name;
     closeSugg();
     clearBtn.hidden = false;
-    writeHash({ q: name, node: "", edge: "", from: "", to: "", rel: "" });
+    writeHash({ q: name, twx: "", node: "", edge: "", from: "", to: "", rel: "" });
     onFilterChange();
   }
 
@@ -1622,7 +1695,8 @@ function syncGraphSearchUI() {
     input.value = "";
     clearBtn.hidden = true;
     closeSugg();
-    writeHash({ q: "" });
+    // Back to the light 7-day overview — never an accidental "load everything".
+    writeHash({ q: "", tw: "7", twx: "" });
     onFilterChange();
   }
 
@@ -1685,7 +1759,51 @@ function renderGraphFromPayload() {
   let filters = effectiveGraphFilters().filters;
   const q = parseHash().q;
   if (q) filters = Object.assign({}, filters, { egoEntity: q, egoMaxEdges: EGO_MAX_EDGES });
+  updateEgoNote(q ? filters : null);
+  const tw = filters.timeWindowDays || 0;
+  if (!q && (tw === 0 || tw > 30)) {
+    // Big overview: newest first, older slices appended in the background.
+    const steps = [7, 30, 90, 0].filter(d => d !== 0 ? (tw === 0 || d < tw) : tw === 0);
+    if (tw !== 0) steps.push(tw);
+    return RoboticsGraph.renderProgressive(PAYLOAD, filters, steps, updateLoadChip);
+  }
+  hideLoadChip();
   return RoboticsGuards.withBusy(RoboticsGraph.render(PAYLOAD, filters));
+}
+
+// Bottom-left loading chip for progressive graph loads (Pause / Resume).
+function _loadChip() {
+  let c = document.getElementById("graphLoadChip");
+  if (!c) {
+    c = document.createElement("div");
+    c.id = "graphLoadChip"; c.className = "graph-load-chip"; c.hidden = true;
+    c.innerHTML = '<span class="glc-text"></span><button type="button" class="glc-btn"></button>';
+    c.querySelector(".glc-btn").addEventListener("click", () => {
+      if (RoboticsGraph.isPaused()) RoboticsGraph.resume(); else RoboticsGraph.pause();
+      _paintChipBtn(c);
+      const t = c.querySelector(".glc-text");
+      t.textContent = t.textContent.replace(/^(Paused|Loading older links)/,
+        RoboticsGraph.isPaused() ? "Paused" : "Loading older links");
+    });
+    (document.getElementById("graphView") || document.body).appendChild(c);
+  }
+  return c;
+}
+function _paintChipBtn(c) {
+  c.querySelector(".glc-btn").textContent = RoboticsGraph.isPaused() ? "Resume" : "Pause";
+}
+function updateLoadChip(p) {
+  const c = _loadChip();
+  if (p.done) { c.hidden = true; return; }
+  const span = p.step ? `${p.step} days` : "all time";
+  c.querySelector(".glc-text").textContent =
+    `${RoboticsGraph.isPaused() ? "Paused" : "Loading older links"} · ${p.added.toLocaleString()} / ${p.total.toLocaleString()} (up to ${span})`;
+  _paintChipBtn(c);
+  c.hidden = false;
+}
+function hideLoadChip() {
+  const c = document.getElementById("graphLoadChip");
+  if (c) c.hidden = true;
 }
 
 function setView(view, opts = {}) {
@@ -1840,7 +1958,20 @@ function buildFullGraph(payload) {
   const docNode = new Map((doc.nodes || []).map(n => [n.id, n]));
   // Full-history positions (export full_history_layout) so the Graph tab can
   // always use the zero-cost preset layout; fall back to the doc's positions.
-  const fullPos = (payload.layout && payload.layout.positions) || {};
+  const rawPos = (payload.layout && payload.layout.positions) || {};
+  // Shrink the full-history layout into a ~6000-unit box so any subset can be
+  // fit within the graph's zoom range (minZoom 0.1). Uncompressed it spans
+  // ~27k units and a 7-day subset landed off-screen (2026-10-27).
+  const fullPos = (() => {
+    const vals = Object.values(rawPos);
+    if (!vals.length) return {};
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    vals.forEach(([x, y]) => { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); });
+    const sc = 6000 / Math.max(1, x1 - x0, y1 - y0);
+    const out = {};
+    Object.entries(rawPos).forEach(([n, [x, y]]) => { out[n] = [(x - x0) * sc, (y - y0) * sc]; });
+    return out;
+  })();
   const nodes = new Map();
   const edges = [];
   const seen = new Set();
@@ -2192,6 +2323,12 @@ function hydrateFilterPanel() {
   const eff = effectiveGraphFilters();
   const f = eff.filters;
   updateWidenNote(eff.widenedFrom, f.timeWindowDays);
+  const step = document.getElementById("gfStep");
+  if (step) {
+    step.hidden = !parseHash().q;
+    const tw = f.timeWindowDays || 0;
+    document.getElementById("gfStepLbl").textContent = tw ? `last ${tw} days` : "all time";
+  }
   // Time-window segmented
   document.querySelectorAll("#gfTimeSeg .gf-seg-btn").forEach(btn => {
     const tw = parseInt(btn.dataset.tw, 10);
@@ -2229,12 +2366,30 @@ function onFilterChange() {
   });
 }
 
+document.querySelectorAll("#gfStep .gf-step-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const seq = egoStepSequence();                       // e.g. [7, 30, 60, …, 0]
+    const cur = effectiveGraphFilters().filters.timeWindowDays || 0;
+    const finite = seq.filter(d => d > 0);
+    let next;
+    if (btn.dataset.dir === "older") {
+      // nearest step strictly older than the current window (All past the end)
+      next = cur === 0 ? 0 : (finite.find(d => d > cur) ?? 0);
+    } else {
+      // nearest step strictly newer; from All → the largest finite step
+      next = cur === 0 ? finite[finite.length - 1] : ([...finite].reverse().find(d => d < cur) ?? finite[0]);
+    }
+    writeHash({ tw: String(next), twx: "1" });
+    onFilterChange();
+  });
+});
+
 document.querySelectorAll("#gfTimeSeg .gf-seg-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     const tw = parseInt(btn.dataset.tw, 10);
     document.querySelectorAll("#gfTimeSeg .gf-seg-btn").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
-    writeHash({ tw: String(tw) });
+    writeHash({ tw: String(tw), twx: parseHash().q ? "1" : "" });
     onFilterChange();
   });
 });

@@ -24,6 +24,12 @@
   const EDGE_MAX_W = 5;
   const MECH_TRUNC = 160;
   const CHUNK_NODES = 15;
+  // Views this small get their own quick force layout (readable, always fits
+  // the screen) instead of full-history preset positions, which scatter a
+  // small subset across the whole canvas (2026-10-27: Tesollo off-screen).
+  const SMALL_LAYOUT_NODES = 400;
+  // Progressive loading: elements appended per animation frame.
+  const PROGRESSIVE_BATCH = 400;
 
   const state = {
     cy: null,
@@ -35,6 +41,7 @@
     bilkentRegistered: false,
     renderToken: 0,
     lastSignature: null,
+    paused: false,
   };
 
   function lerp(a, b, t) { return a + (b - a) * t; }
@@ -160,7 +167,8 @@
     return withPos / nodes.length >= 0.9;
   }
 
-  function buildElements(nodes, edges, usePositions) {
+  function buildElements(nodes, edges, usePositions, idPrefix) {
+    const pfx = idPrefix || '';
     const maxEdgeCount = nodes.reduce((m, n) => Math.max(m, n.edge_count || 0), 1);
     const denom = Math.max(1, maxEdgeCount - 1);
 
@@ -244,7 +252,7 @@
       els.push({
         group: 'edges',
         data: {
-          id: `e${idx}-${e.from}-${e.to}-${e.catalyst_id || idx}`,
+          id: `${pfx}e${idx}-${e.from}-${e.to}-${e.catalyst_id || idx}`,
           source: e.from,
           target: e.to,
           rel: e.rel || '',
@@ -587,7 +595,8 @@
           requestAnimationFrame(step);
         } else {
           try {
-            state.cy.layout({ name: 'preset', fit: true, padding: 40, animate: false }).run();
+            state.cy.layout({ name: 'preset', fit: false, animate: false }).run();
+            fitCore(state.cy);
           } catch (_) {}
           state.hasFitted = true;
           resolve(true);
@@ -595,6 +604,20 @@
       };
       requestAnimationFrame(step);
     });
+  }
+
+  // Fit the view to the CORE of a preset-position graph (5th–95th percentile
+  // box): a few far-away outliers from the full-history layout must not shrink
+  // the whole picture. Outliers stay reachable by zooming out.
+  function fitCore(cy) {
+    const ns = cy.nodes();
+    if (ns.length < 20) { cy.fit(undefined, 40); return; }
+    const xs = ns.map(n => n.position('x')).sort((a, b) => a - b);
+    const ys = ns.map(n => n.position('y')).sort((a, b) => a - b);
+    const q = (arr, p) => arr[Math.floor(p * (arr.length - 1))];
+    const [x1, x2, y1, y2] = [q(xs, 0.05), q(xs, 0.95), q(ys, 0.05), q(ys, 0.95)];
+    const core = ns.filter(n => { const p = n.position(); return p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2; });
+    cy.fit(core.length ? core : undefined, 40);
   }
 
   // Fallback for payloads without positions: single-shot cose(-bilkent)
@@ -650,7 +673,7 @@
         elements: [],
         style: stylesheet(),
         wheelSensitivity: 0.3,
-        minZoom: 0.2,
+        minZoom: 0.1,
         maxZoom: 3,
       });
 
@@ -684,7 +707,7 @@
       state.cy.elements().remove();
 
       const { nodes, edges } = filterPayload(payload, filters);
-      const paint = mostHavePositions(nodes)
+      const paint = (nodes.length > SMALL_LAYOUT_NODES && mostHavePositions(nodes))
         ? renderChunked(nodes, edges, token)
         : renderSingleShot(nodes, edges);
       const ego = (filters || {}).egoEntity;
@@ -718,6 +741,98 @@
       state.hasFitted = false;
     },
 
+    // Progressive load for big views. Elements are built ONCE for the final
+    // view (global node sizing + parallel-edge fan-out, preset positions — one
+    // stable coordinate system, no force layout), then added in date slices,
+    // newest first (steps = window days, e.g. [7, 30, 90, 0]), a batch per
+    // animation frame. The page never freezes; pause() holds the loader (what's
+    // drawn stays); any newer render()/renderProgressive() cancels it via the
+    // token taken at the START. Re-entering with the same final view is a
+    // no-op (tab switches don't reload). onProgress({added,total,step,done}).
+    renderProgressive(payload, filters, steps, onProgress) {
+      if (!state.cy) throw new Error('[RoboticsGraph] init() must be called before renderProgressive()');
+      const base = Object.assign({}, filters || {});
+      const finalF = Object.assign({}, base, { timeWindowDays: steps[steps.length - 1] });
+      const finalSig = renderSignature(payload, finalF);
+      if (finalSig === state.lastSignature && state.cy.elements().length > 0) {
+        const n = state.cy.edges().length;
+        if (onProgress) onProgress({ added: n, total: n, step: finalF.timeWindowDays, done: true });
+        return Promise.resolve(false);
+      }
+      state.renderToken += 1;
+      const token = state.renderToken;
+      state.paused = false;
+      state.lastSignature = null;
+      hideTip();
+      state.cy.elements().remove();
+
+      const { nodes, edges } = filterPayload(payload, finalF);
+      // No usable positions (layout doc missing/failed to load) → presets would
+      // pile everything at (0,0). Fall back to a normal render (force layout):
+      // slower, but readable.
+      if (!mostHavePositions(nodes)) {
+        if (onProgress) onProgress({ added: edges.length, total: edges.length, step: finalF.timeWindowDays, done: true });
+        return this.render(payload, finalF);
+      }
+      const els = buildElements(nodes, edges, true);
+      // Slice index per edge by its catalyst date (0 = newest window).
+      const gen = parseDate(payload.generated_at) || new Date();
+      const cuts = steps.map(d => (d > 0 ? new Date(gen.getTime() - d * 86400000) : null));
+      const sliceOfDate = s => {
+        const d = parseDate(s);
+        for (let i = 0; i < cuts.length; i++) if (!cuts[i] || !d || d >= cuts[i]) return i;
+        return cuts.length - 1;
+      };
+      const slices = steps.map(() => ({ nodes: [], edges: [] }));
+      const nodeSlice = new Map();
+      els.filter(el => el.group === 'edges').forEach(el => {
+        const i = sliceOfDate(el.data.catalystDate);
+        slices[i].edges.push(el);
+        [el.data.source, el.data.target].forEach(id =>
+          nodeSlice.set(id, Math.min(nodeSlice.has(id) ? nodeSlice.get(id) : i, i)));
+      });
+      els.filter(el => el.group === 'nodes').forEach(el =>
+        slices[nodeSlice.has(el.data.id) ? nodeSlice.get(el.data.id) : 0].nodes.push(el));
+
+      const total = edges.length;
+      let added = 0;
+      const report = (step, done) => onProgress && onProgress({ added, total, step, done });
+      const sleep = ms => new Promise(r => setTimeout(r, ms));
+      const frame = () => new Promise(r => requestAnimationFrame(r));
+      const live = () => token === state.renderToken && !!state.cy;
+
+      return (async () => {
+        for (let si = 0; si < slices.length; si++) {
+          const batchEls = slices[si].nodes.concat(slices[si].edges);   // nodes first
+          for (let i = 0; i < batchEls.length; i += PROGRESSIVE_BATCH) {
+            while (state.paused) {
+              if (!live()) return false;
+              await sleep(200);
+            }
+            if (!live()) return false;
+            const chunk = batchEls.slice(i, i + PROGRESSIVE_BATCH);
+            state.cy.batch(() => { state.cy.add(chunk); });
+            added += chunk.filter(el => el.group === 'edges').length;
+            report(steps[si], false);
+            await frame();
+          }
+          if (si === 0 && live()) { try { fitCore(state.cy); } catch (_) {} }
+        }
+        if (!live()) return false;
+        state.lastSignature = finalSig;                 // tab switch back → no-op
+        state.hasFitted = true;
+        try { fitCore(state.cy); } catch (_) {}
+        report(steps[steps.length - 1], true);
+        return true;
+      })();
+    },
+
+    pause() { state.paused = true; },
+    resume() { state.paused = false; },
+    isPaused() { return state.paused; },
+
+    instance() { return state.cy; },   // read-only access (tests / diagnostics)
+
     fit() {
       if (state.cy) {
         try { state.cy.fit(undefined, 40); } catch (_) {}
@@ -738,5 +853,8 @@
 
   };
 
+  // Exposed so the page can report exactly what the ego view keeps vs drops
+  // (same filters as render — no second, drifting implementation).
+  RoboticsGraph.filterPayload = filterPayload;
   window.RoboticsGraph = RoboticsGraph;
 })();
