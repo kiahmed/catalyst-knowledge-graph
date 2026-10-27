@@ -540,17 +540,46 @@ def _shared_browser():
     return _browser_tls.browser
 
 
-def _with_card_edges(graph: dict[str, Any], card_id: str) -> dict[str, Any]:
-    """Graph doc + this catalyst's own edges from DuckDB, when the doc lacks them.
+def _fresh_card_doc(card_id: str) -> dict[str, Any] | None:
+    """Uncached card-doc read (posters must reflect the latest export —
+    _fetch_card_doc's instance cache is for the OG route only)."""
+    global _firestore_client_singleton
+    try:
+        if _firestore_client_singleton is None:
+            from google.cloud import firestore
+            _firestore_client_singleton = firestore.Client()
+        collection = os.environ.get("FIRESTORE_EXPORT_COLLECTION", f"CKG-{SECTOR}")
+        snap = (_firestore_client_singleton.collection(collection).document("catalysts")
+                .collection("items").document(card_id).get())
+        return snap.to_dict() if snap.exists else None
+    except Exception as exc:
+        _log("card_doc_read_failed", card_id=card_id, error=str(exc))
+        return None
 
-    The graph doc is a size-capped recent window (src/export.py
-    _fit_graph_budget), so older catalysts' edges aren't in it — and while
-    the doc was frozen (2026-08-18 → 10-14) newer ones weren't either. The
-    template then fell back to unrelated historical edges between the card's
-    entities, drawing e.g. Google isolated. DuckDB is the source of truth;
-    inject the card's edges (catalyst_id-tagged) so the template's primary
-    `e.catalyst_id === CARD_ID` path always draws the right subgraph.
+
+def _with_card_edges(graph: dict[str, Any], card_id: str,
+                     doc: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Graph doc + THIS card's own edges.
+
+    Source of truth, in order: the card's Firestore doc (exactly what the
+    site's card + mini-graph show, carries `in_story`), else DuckDB. The
+    graph doc is a size-capped recent window, so older catalysts' edges
+    aren't in it; the template's primary `e.catalyst_id === CARD_ID` path
+    then always draws the right subgraph, never other cards' edges.
     """
+    if doc and doc.get("relationships"):
+        others = [e for e in (graph.get("edges") or []) if e.get("catalyst_id") != card_id]
+        own = [dict(r, catalyst_id=card_id, catalyst_date=doc.get("date"))
+               for r in doc["relationships"]
+               if r.get("from") and r.get("to") and r["from"] != r["to"]]
+        nodes = list(graph.get("nodes") or [])
+        have = {n.get("id") for n in nodes}
+        for e in doc.get("entities") or []:
+            if e.get("name") and e["name"] not in have:
+                have.add(e["name"])
+                nodes.append({"id": e["name"], "name": e["name"], "ticker": e.get("ticker"),
+                              "type": e.get("type"), "heat": 0.0, "edge_count": 0})
+        return {**graph, "nodes": nodes, "edges": others + own}
     edges = graph.get("edges") or []
     if any(e.get("catalyst_id") == card_id for e in edges):
         return graph
@@ -595,24 +624,34 @@ def _with_card_edges(graph: dict[str, Any], card_id: str) -> dict[str, Any]:
 def _render_graph_png(card_id: str, card: dict[str, Any]) -> bytes:
     """Screenshot the catalyst's subgraph using the SAME cytoscape code and
     styles as the site's mini-graph (templates/cards/graph.html)."""
-    import json as _json
     from jinja2 import Environment, FileSystemLoader, select_autoescape
 
     sector = card.get("sector") or os.environ.get("SECTOR", "Robotics")
     graph = _graph_doc(sector)
     if not graph:
         raise RuntimeError(f"no graph doc for sector {sector}")
-    graph = _with_card_edges(graph, card_id)
+    # ONE card-doc read per poster, shared by edges and story names, so both
+    # always come from the same snapshot.
+    doc = _fresh_card_doc(card_id) or {}
+    graph = _with_card_edges(graph, card_id, doc)
 
     names = _card_entity_names(card_id)
+    # Story membership from the exported card doc (src/story.py). None (doc
+    # missing / pre-in_story export) = no dimming rather than guessing.
+    ents = doc.get("entities") or []
+    story_names = ([e["name"] for e in ents if e.get("in_story")]
+                   if any("in_story" in e for e in ents) else None)
+    names_no_story = doc.get("story_names_entities") is False
     env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)),
                       autoescape=select_autoescape())
     html = env.get_template("graph.html").render(
         card_id=card_id, headline=card.get("headline", ""),
         date=card.get("date", ""), sector=sector,
         width=VIEWPORT_W, height=VIEWPORT_H, scale=GRAPH_SCALE,
-        graph_json=_json.dumps(graph), card_id_json=_json.dumps(card_id),
-        entity_names_json=_json.dumps(names),
+        # Objects + Jinja `tojson` (escapes < > & '): entity names and edge
+        # mechanisms are LLM output — a "</script>" must not break the tag.
+        graph=graph, entity_names=names, story_names=story_names,
+        no_story_names=names_no_story,
         min_confidence=float(os.environ.get("GRAPH_MIN_CONFIDENCE", "0")),
         show_invalidated=False,
     )

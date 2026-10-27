@@ -161,6 +161,32 @@ def _write_graph(cfg: RoboticsConfig, payload: dict[str, Any]) -> None:
     )
 
 
+def _write_layout(cfg: RoboticsConfig, layout: dict[str, Any] | None) -> str:
+    """Full-history node positions → {collection}/graph/layout/{sector}.
+    Separate from the graph doc (1 MiB cap); ~80 KB at 2k nodes. Written only
+    when the positions changed (hash in export_state, like card docs)."""
+    import duckdb
+
+    if not layout or not layout.get("positions"):
+        return "none"
+    h = _card_hash(layout)
+    con = duckdb.connect(cfg.duckdb_path)
+    try:
+        con.execute(_STATE_DDL)
+        row = con.execute("SELECT content_hash FROM export_state WHERE doc_key = 'graph/layout'").fetchone()
+        if row and row[0] == h and not _full_sync():
+            return "unchanged"
+        client = _firestore_client(cfg)
+        (client.collection(cfg.firestore_export.collection)
+         .document(cfg.firestore_export.graph_subpath).collection("layout")
+         .document(cfg.sector)).set({**layout, "sector": cfg.sector})
+        con.execute("INSERT OR REPLACE INTO export_state (doc_key, content_hash, exported_at) "
+                    "VALUES ('graph/layout', ?, now())", [h])
+        return "written"
+    finally:
+        con.close()
+
+
 def _write_recap_week(cfg: RoboticsConfig, recap: dict[str, Any] | None) -> str:
     """Archive the week's recap at {collection}/recaps/weeks/{YYYY-Www}.
 
@@ -297,6 +323,7 @@ def export_to_firestore(
         cstats = _write_catalysts(cfg, cards)
         _write_graph(cfg, payload)
         summary["recap_week"] = _write_recap_week(cfg, payload.get("recap"))
+        summary["layout"] = _write_layout(cfg, payload.get("layout"))
         summary["firestore_catalysts_written"] = cstats["written"]
         summary["firestore_catalysts_unchanged"] = cstats["unchanged"]
         summary["firestore_collection"] = cfg.firestore_export.collection

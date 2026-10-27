@@ -15,6 +15,7 @@
   #cy { flex:1; margin:0 28px 10px; background:var(--bg-detail); }
   #foot { padding:0 56px 20px; font-size:17px; color:var(--muted);
           display:flex; justify-content:space-between; align-items:center; }
+  #brand { white-space:nowrap; flex:none; margin-right:28px; }
   #legend { display:flex; align-items:center; gap:18px; font-size:15px; }
   #legend .key { display:flex; align-items:center; gap:6px; white-space:nowrap; }
   #legend .key i { width:22px; height:4px; border-radius:2px; display:inline-block; }
@@ -34,7 +35,9 @@
       <span class="key"><i style="background:#10b981"></i>web-grounded</span>
       <span class="key"><i style="background:#d97706"></i>inferred</span>
       <span class="key"><i style="background:repeating-linear-gradient(90deg,#ef4444 0 6px,transparent 6px 10px)"></i>speculative</span>
-      <span class="key note">node size = connections · fill = heat</span>
+      <span class="key" id="bgKey" style="display:none"><i style="background:#1c1917;opacity:.3"></i>faded = not in this news</span>
+      <span class="key note" id="noStory" style="display:none">no company named · links from research</span>
+      <span class="key note" id="sizeNote">node size = connections · fill = heat</span>
     </span>
   </div>
 </div>
@@ -68,9 +71,14 @@ function _heatHex(h){
 }
 
 const SCALE = {{ scale }};
-const GRAPH = {{ graph_json | safe }};
-const CARD_ID = {{ card_id_json | safe }};
-const NAMES = new Set({{ entity_names_json | safe }});
+const GRAPH = {{ graph | tojson }};
+const CARD_ID = {{ card_id | tojson }};
+const NAMES = new Set({{ entity_names | tojson }});
+// Names the card's own news text mentions (export in_story). null = unknown →
+// no dimming. Everything else is background research: drawn faded, not hidden.
+const STORY_LIST = {{ story_names | tojson }};
+const STORY = STORY_LIST ? new Set(STORY_LIST) : null;
+const NO_STORY_NAMES = {{ 'true' if no_story_names else 'false' }};
 const MIN_CONF = {{ min_confidence }};
 const SHOW_INVALIDATED = {{ 'true' if show_invalidated else 'false' }};
 
@@ -103,6 +111,7 @@ nodesSlice.forEach(n => {
   elements.push({ group:"nodes", data:{ id:n.id,
     label: n.ticker ? `${n.name} (${n.ticker})` : n.name,
     _size: _lerp(18, 42, t) * SCALE, _fill: _heatHex(n.heat || 0),
+    _nodeOp: (STORY && !NO_STORY_NAMES && !STORY.has(n.id)) ? 0.4 : 1,
     _labelMargin: 7*SCALE + _lerp(18, 42, t) * SCALE * 0.14 }});
 });
 edgesSlice.forEach((e, idx) => {
@@ -112,10 +121,19 @@ edgesSlice.forEach((e, idx) => {
   if (e.evidence_type === "speculative") ls = "dashed";
   if (e.status === "invalidated") { ls = "dashed"; op = 0.3; }
   else if (e.status === "stale") op = 0.4;
+  if (e.in_story === false && !NO_STORY_NAMES) op *= 0.3;   // background research
   elements.push({ group:"edges", data:{ id:`m${idx}-${e.from}-${e.to}`,
     source:e.from, target:e.to, _width:_lerp(1,4,conf) * SCALE,
     _color:color, _opacity:op, _lineStyle:ls }});
 });
+
+// Explicit display (not `hidden`): `#legend .key{display:flex}` overrides the attribute.
+const _hint = NO_STORY_NAMES ? "noStory"
+  : (edgesSlice.some(e => e.in_story === false) ? "bgKey" : null);
+if (_hint) {
+  document.getElementById(_hint).style.display = "flex";
+  document.getElementById("sizeNote").style.display = "none";   // footer room
+}
 
 const cy = cytoscape({
   container: document.getElementById("cy"),
@@ -123,7 +141,7 @@ const cy = cytoscape({
   style: [
     { selector:"node", style:{
       "width":"data(_size)", "height":"data(_size)",
-      "background-color":"data(_fill)",
+      "background-color":"data(_fill)", "opacity":"data(_nodeOp)",
       "border-width":1.5*SCALE, "border-color":"#ddd8cf",
       "label":"data(label)", "font-family":"Inter, sans-serif",
       "font-size":9*SCALE, "font-weight":500, "color":"#57534e",

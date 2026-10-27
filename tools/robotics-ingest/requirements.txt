@@ -11,3 +11,4 @@ ijson>=3.3.0
 pydantic>=2.8.0
 httpx>=0.27.0
 trafilatura>=1.12.0
+numpy>=1.26  # full-history graph layout (src/export.full_history_layout)

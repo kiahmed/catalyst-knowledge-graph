@@ -300,7 +300,7 @@ def load_config() -> RoboticsConfig:
                 "CARDS_JSON_PATH", export_cfg.get("cards_json_path", "/data/exports/cards.json")
             ),
             schema_version=int(export_cfg.get("schema_version", 1)),
-            card_limit=int(export_cfg.get("card_limit", 200)),
+            card_limit=int(export_cfg.get("card_limit", 100000)),   # all cards (see config.yaml.example)
             public_base_url=export_cfg.get("public_base_url", "/"),
         ),
         graph=GraphConfig(

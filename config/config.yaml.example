@@ -151,7 +151,8 @@ storage:
 export:
   cards_json_path: /data/exports/cards.json  # env: CARDS_JSON_PATH
   schema_version: 1
-  card_limit: 200           # most recent N cards in the grid
+  card_limit: 100000        # all cards (src/config.py default too) — at 500 the oldest froze
+                            # in Firestore; delta export keeps writes small
   public_base_url: "/"      # frontend relative base; prod = https://robotics.arboryx.ai/
 
 # ── Backtest / dev-utils ──────────────────────────────────────────

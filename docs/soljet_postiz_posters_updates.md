@@ -20,6 +20,21 @@ automatically. A consumer has to actually read it (or be pointed at it).
 
 ---
 
+## [2026-10-27b] Card relationships gain `in_story`; posters fade background links
+
+**What changed (after the next KG deploy):** every card doc's
+`relationships[]` and `entities[]` carry `in_story` (true = named in the
+card's own news text), and the card has `story_names_entities` (false =
+market/sector news naming no company). Graph posters fade background links
+and say so in the legend; ~440 posters are re-rendered in place (graphs/ is
+overwrite-in-place, as before).
+
+**Consumer action:** none required. If you build text from a card's
+relationships (e.g. "who's involved"), prefer `in_story == true` ones — the
+rest is the extractor's background research, still valid but not this news.
+
+---
+
 ## [2026-10-27] SHIPPED — 465 edgeless graph posters re-rendered (cards ROB-03xx → mid-Aug)
 
 **What changed here:** every `graphs/<card_id>.png` last written in 2026-09

@@ -28,15 +28,22 @@
       .doc(cfg.catalystsSubpath)           // "catalysts"
       .collection('items');
 
-    return Promise.all([graphRef.get(), itemsRef.get()]).then(function (results) {
+    // Full-history node positions (own doc; may not exist on older exports).
+    var layoutRef = db.collection(cfg.collection).doc(cfg.graphSubpath)
+      .collection('layout').doc(cfg.sector);
+
+    return Promise.all([graphRef.get(), itemsRef.get(),
+                        layoutRef.get().catch(function () { return null; })]).then(function (results) {
       var graphSnap = results[0];
       var itemsSnap = results[1];
+      var layoutSnap = results[2];
       if (!graphSnap.exists) {
         throw new Error('graph doc missing in ' + cfg.collection +
                         ' — run make deploy / firestore-sync first');
       }
       var payload = graphSnap.data() || {};
       payload.cards = itemsSnap.docs.map(function (d) { return d.data(); });
+      payload.layout = (layoutSnap && layoutSnap.exists) ? layoutSnap.data() : null;
       return payload;
     });
   }

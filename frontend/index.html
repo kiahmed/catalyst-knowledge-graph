@@ -142,6 +142,7 @@ body {
   box-shadow: 0 1px 2px rgba(0,0,0,0.05);
 }
 
+.mini-story-hint { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
 /* ══ Recap view (spec §2.9b) — premium: see features.js / canSeePremium() ══ */
 #recapView { max-width: 1100px; margin: 0 auto; padding: 84px 16px 64px; position: relative; z-index: 1; }
 .recap-head { margin: 4px 0 18px; }
@@ -1450,6 +1451,8 @@ function transformCard(c, idx, sector) {
     source_url: c.source_url || null,
     share: c.share || { twitter_text: c.headline, linkedin_text: c.headline },
     _rels: rels,
+    _ents: ents,                 // raw entities incl. in_story (story dimming)
+    _storyNamesEntities: c.story_names_entities,
   };
 }
 
@@ -1823,6 +1826,53 @@ async function fetchPayload() {
   return res.json();
 }
 
+// The exported graph doc is a size-capped RECENT window (Firestore 1 MiB/doc),
+// so on its own the Graph tab could not show history: "90d"/"All" and
+// "Explore in full graph" from an older card came up empty (2026-10-27:
+// Krafton, March card → 0 edges). Every card doc already carries its own
+// complete relationships, and all cards are loaded here — so build the graph
+// from them: full history, each edge still tagged with its own card + date.
+// The doc still contributes precomputed positions for recent nodes.
+function buildFullGraph(payload) {
+  const doc = payload.graph || { nodes: [], edges: [] };
+  const cards = payload.cards || [];
+  if (!cards.length) return doc;
+  const docNode = new Map((doc.nodes || []).map(n => [n.id, n]));
+  // Full-history positions (export full_history_layout) so the Graph tab can
+  // always use the zero-cost preset layout; fall back to the doc's positions.
+  const fullPos = (payload.layout && payload.layout.positions) || {};
+  const nodes = new Map();
+  const edges = [];
+  const seen = new Set();
+  const node = (name, meta) => {
+    if (!nodes.has(name)) {
+      const d = docNode.get(name) || {};
+      nodes.set(name, { id: name, name, ticker: (meta && meta.ticker) || d.ticker || null,
+                        type: (meta && meta.type) || d.type || "",
+                        x: fullPos[name] ? fullPos[name][0] : d.x,
+                        y: fullPos[name] ? fullPos[name][1] : d.y,
+                        heat: 0, edge_count: 0 });
+    }
+    return nodes.get(name);
+  };
+  cards.forEach(c => {
+    const meta = new Map((c.entities || []).map(e => [e.name, e]));
+    (c.relationships || []).forEach(r => {
+      if (!r.from || !r.to || r.from === r.to) return;        // self-loops = extraction noise
+      const key = [c.card_id, r.from, r.rel, r.to].join("\u241F");
+      if (seen.has(key)) return;
+      seen.add(key);
+      edges.push(Object.assign({}, r, { catalyst_id: c.card_id, catalyst_date: c.date }));
+      const conf = Number(r.confidence) || 0;
+      [r.from, r.to].forEach(n => { const nd = node(n, meta.get(n)); nd.heat += conf; nd.edge_count += 1; });
+    });
+  });
+  let maxHeat = 0;
+  nodes.forEach(n => { if (n.heat > maxHeat) maxHeat = n.heat; });
+  nodes.forEach(n => { n.heat = maxHeat ? Math.round(1000 * n.heat / maxHeat) / 1000 : 0; });
+  return { nodes: [...nodes.values()].sort((a, b) => b.heat - a.heat), edges };
+}
+
 async function loadCards() {
   RoboticsGuards.showLoading("Loading catalysts…");
   try {
@@ -1836,6 +1886,7 @@ async function loadCards() {
       return;
     }
     PAYLOAD = payload;
+    PAYLOAD.graph = buildFullGraph(payload);
     STATS = payload.stats || null;
     const sector = payload.sector || "Robotics";
     CARDS = (payload.cards || []).map((c, i) => transformCard(c, i, sector));
@@ -2583,8 +2634,9 @@ function _addMiniEdgeTip(container, cy) {
     tip.querySelector(".mini-tip-meta").textContent =
       `evidence: ${d.evidenceType} · confidence: ${Number(d.confidence).toFixed(2)}`;
     const mechEl = tip.querySelector(".mini-tip-mech");
-    mechEl.textContent = d.mechanism ? _truncate(d.mechanism, 120) : "";
-    mechEl.style.display = d.mechanism ? "" : "none";
+    mechEl.textContent = (d._background ? "Background: from research, not named in this news. " : "")
+      + (d.mechanism ? _truncate(d.mechanism, 120) : "");
+    mechEl.style.display = (d.mechanism || d._background) ? "" : "none";
     tip.classList.add("is-visible"); // visible first so position() can measure
     position(evt);
   };
@@ -2625,6 +2677,19 @@ function exploreCardInGraph(card) {
   closeExpanded();
   writeHash({ tw: String(tw), q: primary, card: "", node: "", edge: "", from: "", to: "", rel: "" });
   setView("graph");
+}
+
+// One-line explanation under the mini-graph when something is faded, or when
+// the news names no company at all (market/sector reports).
+function _miniStoryHint(container, noStoryNames, hasBackground) {
+  const host = container.parentNode;
+  if (!host) return;
+  let el = host.querySelector(".mini-story-hint");
+  if (!el) { el = document.createElement("div"); el.className = "mini-story-hint"; host.appendChild(el); }
+  el.textContent = noStoryNames
+    ? "This news names no specific company — links shown come from our research on the topic."
+    : hasBackground ? "Faded links come from our research and aren't named in this news." : "";
+  el.style.display = el.textContent ? "" : "none";
 }
 
 function renderMiniGraph(container, card) {
@@ -2674,6 +2739,12 @@ function renderMiniGraph(container, card) {
     return;
   }
 
+  // Story membership from the export (card.entities[].in_story).
+  const ents = card._ents || [];
+  const storyKnown = ents.some(e => "in_story" in e);
+  const storyNames = new Set(ents.filter(e => e.in_story).map(e => e.name));
+  const noStoryNames = card._storyNamesEntities === false;
+
   const elements = [];
   const maxEc = nodesSlice.reduce((m, n) => Math.max(m, n.edge_count || 0), 1);
   const denom = Math.max(1, maxEc - 1);
@@ -2687,7 +2758,8 @@ function renderMiniGraph(container, card) {
         id: n.id,
         label: n.ticker ? `${n.name} (${n.ticker})` : n.name,
         _size: size,
-        _fill: _heatHex(n.heat || 0)
+        _fill: _heatHex(n.heat || 0),
+        _nodeOp: (storyKnown && !noStoryNames && !storyNames.has(n.id)) ? 0.4 : 1
       }
     });
   });
@@ -2699,6 +2771,10 @@ function renderMiniGraph(container, card) {
     if (e.evidence_type === "speculative") ls = "dashed";
     if (e.status === "invalidated") { ls = "dashed"; op = 0.3; }
     else if (e.status === "stale") op = 0.4;
+    // Background = the extractor's research, not named in this news. Faded,
+    // never hidden; relevance, not truth (that's evidence_type).
+    const background = e.in_story === false && !noStoryNames;
+    if (background) op *= 0.3;
     elements.push({
       group: "edges",
       data: {
@@ -2713,7 +2789,8 @@ function renderMiniGraph(container, card) {
         _color: color,
         _opacity: op,
         _lineStyle: ls,
-        _label: e.rel || ""
+        _label: e.rel || "",
+        _background: e.in_story === false
       }
     });
   });
@@ -2725,7 +2802,7 @@ function renderMiniGraph(container, card) {
       style: [
         { selector: "node", style: {
           "width": "data(_size)", "height": "data(_size)",
-          "background-color": "data(_fill)",
+          "background-color": "data(_fill)", "opacity": "data(_nodeOp)",
           "border-width": 1.5, "border-color": "#ddd8cf",
           "label": "data(label)",
           "font-family": "Inter, sans-serif",
@@ -2753,6 +2830,7 @@ function renderMiniGraph(container, card) {
       userPanningEnabled: true
     });
     _addMiniEdgeTip(container, _miniCy);
+    _miniStoryHint(container, noStoryNames, edgesSlice.some(e => e.in_story === false));
     const layoutName = (typeof window.cytoscapeCoseBilkent === "function") ? "cose-bilkent" : "cose";
     _miniCy.layout({
       name: layoutName,

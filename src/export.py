@@ -24,7 +24,7 @@ from typing import Any
 
 import duckdb
 
-from . import db, detect, handles, recap
+from . import db, detect, handles, recap, story
 from .config import RoboticsConfig
 
 
@@ -115,6 +115,7 @@ def _load_cards(
         [*params, limit],
     ).fetchall()
 
+    aliases = story.load_aliases(con)   # once per export, for in_story tagging
     cards = []
     for row in catalyst_rows:
         (
@@ -134,10 +135,16 @@ def _load_cards(
             """,
             [catalyst_id],
         ).fetchall()
+        # in_story: named in THIS card's own news text (src/story.py). Not a
+        # truth signal — background entities come from the extractor's
+        # research and are shown dimmed on the card, in full on the graph.
+        story_text = f"{headline}\n{raw_finding}"
         entities = [
-            {"name": n, "ticker": t, "type": ty}
+            {"name": n, "ticker": t, "type": ty,
+             "in_story": story.mentioned(n, story_text, aliases)}
             for (n, t, ty) in ent_rows
         ]
+        in_story = {e["name"] for e in entities if e["in_story"]}
 
         # Verified social handles from the shared entity_handles cache
         # (contract A of docs/handle-resolution-spec.md). None = abstained —
@@ -185,6 +192,7 @@ def _load_cards(
                 "flagged": bool(fl),
                 "source_refs": json.loads(sr) if sr else [],
                 "status": st or "active",
+                "in_story": a in in_story or b in in_story,
             }
             for (a, rt, b, c, et, mech, ms, im, fl, sr, st) in rel_rows
         ]
@@ -200,6 +208,9 @@ def _load_cards(
             "subtitle": subtitle,
             "entities": entities,
             "relationships": rels,
+            # False = market/sector news naming no company: every link on the
+            # card is background research (UI shows a hint instead of a story).
+            "story_names_entities": bool(in_story),
             "sentiment": sentiment,
             "confidence": round(top_conf, 2),
             "significance": (
@@ -334,6 +345,123 @@ def _precompute_layout(nodes: list[dict[str, Any]], edges: list[dict[str, Any]])
         nd["y"] = round(pos[i][1], 1)
 
 
+_LAYOUT_DDL = """
+CREATE TABLE IF NOT EXISTS graph_layout (
+    sector     VARCHAR NOT NULL,
+    name       VARCHAR NOT NULL,
+    x          DOUBLE  NOT NULL,
+    y          DOUBLE  NOT NULL,
+    updated_at TIMESTAMP DEFAULT now(),
+    PRIMARY KEY (sector, name)
+)
+"""
+
+
+def _name_seed_xy(name: str, side: float) -> tuple[float, float]:
+    """Deterministic start position from the NAME alone (independent of how
+    many other nodes exist or where the name sorts)."""
+    import hashlib
+
+    h = hashlib.sha256(name.encode()).digest()
+    return (int.from_bytes(h[:4], "big") / 2**32 * side,
+            int.from_bytes(h[4:8], "big") / 2**32 * side)
+
+
+def full_history_layout(con: duckdb.DuckDBPyConnection, sector: str,
+                        iters: int = 60, block: int = 256) -> dict[str, list[float]]:
+    """x/y for EVERY entity in any live relationship of the sector — the
+    Graph tab's full history (built client-side from card docs; see frontend
+    buildFullGraph). Sourced from DuckDB, NOT the exported cards, so it never
+    depends on export.card_limit.
+
+    Stable across days: positions persist in DuckDB `graph_layout`. Warm runs
+    FREEZE every known node; only new nodes move — they start at the mean of
+    their already-placed neighbours (+ a small name-hashed offset) and settle
+    against the fixed graph. No new nodes → nothing moves, nothing recomputed.
+    A cold run (first time, <80% known, or LAYOUT_RESET=true) does the full
+    Fruchterman-Reingold anneal. numpy, repulsion in row blocks (O(block·n) memory).
+    (A browser force layout at 2k nodes never finished; 2026-10-27.)
+    """
+    import os
+
+    import numpy as np
+
+    rows = con.execute(
+        """
+        SELECT DISTINCT ea.name, eb.name
+        FROM relationships r
+        JOIN catalysts c ON c.catalyst_id = r.catalyst_id
+        JOIN entities ea ON ea.entity_id = r.entity_a_id
+        JOIN entities eb ON eb.entity_id = r.entity_b_id
+        WHERE c.sector = ? AND r.status IN ('active', 'materialized')
+          AND r.entity_a_id <> r.entity_b_id
+        """,
+        [sector],
+    ).fetchall()
+    order = sorted({x for pair in rows for x in pair})
+    names = {nm: i for i, nm in enumerate(order)}
+    n = len(names)
+    if n == 0:
+        return {}
+    con.execute(_LAYOUT_DDL)
+    reset = os.environ.get("LAYOUT_RESET", "").strip().lower() in ("1", "true", "yes")
+    prev = {} if reset else {nm: (x, y) for nm, x, y in con.execute(
+        "SELECT name, x, y FROM graph_layout WHERE sector = ?", [sector]).fetchall()}
+
+    k = 100.0
+    side = k * np.sqrt(max(1000, -(-n // 1000) * 1000))      # grows in 1k-node steps
+    ij = np.array(sorted({(min(names[a], names[b]), max(names[a], names[b])) for a, b in rows}),
+                  dtype=np.int64).reshape(-1, 2)
+    known = np.array([nm in prev for nm in order])
+    warm = known.sum() >= 0.8 * n
+
+    pos = np.array([prev.get(nm) or _name_seed_xy(nm, side) for nm in order], dtype=float)
+    if warm:
+        new_idx = np.flatnonzero(~known)
+        if len(new_idx) == 0:
+            # Nothing new: keep positions exactly (identical data → zero movement).
+            return {nm: [round(prev[nm][0], 1), round(prev[nm][1], 1)] for nm in order}
+        nbrs: dict[int, list[int]] = {}
+        for a, b in ij:
+            nbrs.setdefault(int(a), []).append(int(b)); nbrs.setdefault(int(b), []).append(int(a))
+        for i in new_idx:                                # start next to placed neighbours
+            placed = [j for j in nbrs.get(int(i), []) if known[j]]
+            if placed:
+                jx, jy = _name_seed_xy(order[i], 2 * k)
+                pos[i] = pos[placed].mean(0) + (jx - k, jy - k)
+        movable, temp = new_idx, k * 2.0
+    else:
+        movable, temp = np.arange(n), side / 10.0
+    cool = temp / (iters + 1)
+    for _ in range(iters):
+        disp = np.zeros_like(pos)
+        for s0 in range(0, len(movable), block):                       # repulsion, blocked
+            rows_i = movable[s0:s0 + block]
+            delta = pos[rows_i, None, :] - pos[None, :, :]
+            d2 = np.maximum((delta ** 2).sum(-1), 0.01)
+            disp[rows_i] = (delta * (k * k / d2)[..., None]).sum(1)
+        if len(ij):                                                    # attraction
+            dv = pos[ij[:, 0]] - pos[ij[:, 1]]
+            d = np.maximum(np.sqrt((dv ** 2).sum(-1)), 0.1)
+            f = dv * (d / k)[:, None]
+            np.add.at(disp, ij[:, 0], -f)
+            np.add.at(disp, ij[:, 1], f)
+        sub = disp[movable]
+        length = np.maximum(np.sqrt((sub ** 2).sum(-1)), 0.1)
+        pos[movable] += sub / length[:, None] * np.minimum(length, temp)[:, None]
+        temp -= cool
+
+    out = {nm: [round(float(pos[i, 0]), 1), round(float(pos[i, 1]), 1)] for nm, i in names.items()}
+    # Bulk write (executemany is row-by-row slow in DuckDB).
+    con.execute("DELETE FROM graph_layout WHERE sector = ?", [sector])
+    con.execute(
+        "INSERT INTO graph_layout (sector, name, x, y) "
+        "SELECT ?, unnest(?::VARCHAR[]), unnest(?::DOUBLE[]), unnest(?::DOUBLE[])",
+        [sector, list(out), [v[0] for v in out.values()], [v[1] for v in out.values()]],
+    )
+    return out
+
+
 def _build_graph_projection(cards: list[dict[str, Any]]) -> dict[str, Any]:
     """Flatten cards into a node-and-edge graph suitable for direct UI render.
 
@@ -458,6 +586,8 @@ def build_payload(cfg: RoboticsConfig) -> dict[str, Any]:
         # §2.9b — weekly chart cards for exactly what the digest names,
         # from the same windows as `insights` (same connection, same data).
         recap.tag_insights(insights, cfg.sector)   # per-row `hashtags` for the digest
+        # Graph-tab positions for every entity in the DB (independent of card_limit).
+        layout = {"positions": full_history_layout(con, cfg.sector)}
         recap_block = recap.build_recap(con, cfg.sector, insights)
     finally:
         con.close()
@@ -494,6 +624,9 @@ def build_payload(cfg: RoboticsConfig) -> dict[str, Any]:
         },
         "cards": cards,
         "graph": graph,
+        # Positions for the Graph tab's full-history view (built client-side
+        # from card docs). Own Firestore doc — never inside the capped graph doc.
+        "layout": layout,
         "graph_insights": insights,   # §2.9a detectors (src/detect.py)
         "recap": recap_block,          # §2.9b weekly chart cards (src/recap.py)
     }

@@ -950,6 +950,28 @@ other composer here already holds itself to (never re-derive a claim from
 raw numbers on the Postiz side — see that repo's `compose_catalyst()`
 entity-free-hook comment for why).
 
+#### 2.6b Card story scope, Graph-tab history (2026-10-27)
+
+- **`in_story`** (export, `src/story.py`, deterministic): an entity is in the
+  story when the card's own news text (headline + raw finding) names it — by
+  name, alias, or name without "(TICKER)", whole word. An edge is in the story
+  when either end is. Relevance only; truth is `evidence_type`.
+  Card fields: `entities[].in_story`, `relationships[].in_story`,
+  `story_names_entities` (false = market/sector news naming no company).
+- **Card mini-graph + poster:** draw ONLY that card's own relationships (never
+  other cards' edges); background edges/nodes are faded with a hint
+  ("from our research, not named in this news"), never hidden. Self-loops are
+  dropped at export.
+- **Graph tab:** built client-side from ALL card docs (full history; each edge
+  keeps its own card + date), not from the size-capped graph doc. Positions
+  come from `CKG-<sector>/graph/layout/<sector>` (export
+  `full_history_layout`, numpy FR, written only when changed) so every window
+  uses cytoscape's preset layout. The graph doc remains for posters/insights.
+- **Export scope:** `export.card_limit` covers all cards (deployed config had
+  500, tracked default 200 — the oldest cards had frozen in Firestore). Delta
+  export keeps writes small. Layout positions persist in DuckDB `graph_layout`
+  (warm start → stable across days; cold anneal only on first run).
+
 #### 2.9b Comparative recap visuals — BUILT 2026-10-26 (A+B+C, not yet deployed)
 
 > **Status: proposal only. No code changed.** Audience: this repo. Origin:
