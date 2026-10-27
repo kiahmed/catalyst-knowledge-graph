@@ -190,25 +190,50 @@ def _write_layout(cfg: RoboticsConfig, layout: dict[str, Any] | None) -> str:
 def _write_recap_week(cfg: RoboticsConfig, recap: dict[str, Any] | None) -> str:
     """Archive the week's recap at {collection}/recaps/weeks/{YYYY-Www}.
 
-    WRITE-ONCE: the first export of an ISO week (Monday's run) wins and later
-    runs leave it alone — the recap images rendered from it are week-keyed
-    and write-once too, so doc and images always agree. The graph doc's
-    `recap` field stays the live, daily-refreshed copy.
+    Write-once per week: the first export of the ISO week that has recap
+    cards (normally Monday's) wins, and later runs leave it alone — the recap
+    images rendered from it are week-keyed and write-once too, so doc and
+    images agree. ONE exception: when the card shape is NEWER (`recap.schema`
+    higher than the stored one) the doc is rewritten once, atomically, so
+    consumers never read a stale shape; an older build never downgrades it.
+    Consumers should key caches on (week, schema). The graph doc's `recap`
+    field stays the live, daily-refreshed copy.
     """
     if not recap or not recap.get("cards"):
         return "none"
     from google.api_core.exceptions import AlreadyExists
+    from google.cloud import firestore
 
     client = _firestore_client(cfg)
     ref = (client.collection(cfg.firestore_export.collection)
            .document("recaps").collection("weeks").document(recap["week"]))
+    data = {**recap, "sector": cfg.sector}
+    want = recap.get("schema", 1)
     try:
-        ref.create({**recap, "sector": cfg.sector})
+        ref.create(data)
         return "created"
     except AlreadyExists:
-        return "exists"
+        pass
     except Exception as exc:          # recap is a bonus lane: never abort the export
         log.warning("recap_week_write_failed week=%s error=%s", recap.get("week"), exc)
+        return "error"
+
+    # Existing week doc: upgrade only to a NEWER schema, read+write in one
+    # transaction so concurrent runs (daily + manual ingest-prod) can't
+    # interleave and leave images and doc from different writers.
+    @firestore.transactional
+    def _upgrade(tx) -> str:
+        snap = ref.get(transaction=tx)
+        have = (snap.to_dict() or {}).get("schema", 1)
+        if have < want:
+            tx.set(ref, data)
+            return f"upgraded:{have}->{want}"
+        return "exists"
+
+    try:
+        return _upgrade(client.transaction())
+    except Exception as exc:
+        log.warning("recap_week_upgrade_failed week=%s error=%s", recap.get("week"), exc)
         return "error"
 
 

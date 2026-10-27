@@ -1022,6 +1022,12 @@ entity-free-hook comment for why).
 > (`templates/cards/recap.html`). Rendered by robotics-render each sweep to
 > `gs://robotics-cards/recaps/<sector>/<week>/<card_id>.png`, write-once.
 > `cards[0]` = the post/free-tier image; the rest = full set (future paid unlock).
+> **Schema 2 (2026-10-27):** one `kind: "entity"` card per company (top 5
+> chokepoint insights) with the confirmation panel on the same card
+> (`confirmation`, `data.mix`, `data.grounding`), plus `kind: "sector"`; the
+> verdict is hedged ("may be", `hedged: true`) when <40% of the company's links
+> are reported/cited. Week archives with an older `schema` are upgraded once.
+> Images use the site's light theme.
 > Also fixed: chokepoint headlines no longer label ALL of an entity's edges
 > with its top type ("16 new connections …, led by 8 competitive collisions";
 > new fields `top_rel`, `top_rel_count`). Generic category nodes are excluded

@@ -4,30 +4,36 @@
 <meta charset="utf-8">
 <title>{{ card.title }}</title>
 <style>
-/* Tokens mirror templates/cards/base.css. One card = one question, one big
-   number, one sentence, one chart (spec §2.9b, noob-readable by design). */
+/* Light theme = the site's Recap tab tokens (frontend/index.html :root), so a
+   posted image looks like what visitors see. One card per subject:
+   kind "entity" (company: verdict + mix chart + "how much is confirmed")
+   or kind "sector" (who the sector leans on, now vs before). */
 :root {
-  --bg:#0a0e17; --panel:#111827; --line:#1e293b;
-  --text:#f1f5f9; --text-2:#94a3b8; --muted:#64748b; --accent:#06b6d4;
-  --g-competition:#ef4444; --g-partnership:#06b6d4; --g-deployment:#4ade80;
-  --g-supply:#a78bfa; --g-capital:#fbbf24; --g-other:#64748b;
-  --reported:#e2e8f0; --inferred:#fbbf24;
+  --bg:#f3f1ed; --panel:#fdfcfa; --line:#ddd8cf;
+  --text:#1c1917; --text-2:#57534e; --muted:#8a857c; --accent:#0ea5e9;
+  --g-competition:#ef4444; --g-partnership:#0ea5e9; --g-deployment:#10b981;
+  --g-supply:#8b5cf6; --g-capital:#d97706; --g-other:#a8a29e;
+  --reported:#57534e; --inferred:#d97706;
 }
 * { box-sizing:border-box; margin:0; }
 html, body { width:{{ width }}px; height:{{ height }}px; background:var(--bg); color:var(--text);
   font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; overflow:hidden; }
-.card { position:absolute; inset:0; padding:44px 56px 0; display:flex; flex-direction:column; }
-.kicker { color:var(--accent); font-size:15px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; }
-h1 { font-size:24px; line-height:1.25; margin-top:10px; color:var(--text-2); font-weight:600; }
-.verdict { font-size:40px; font-weight:800; line-height:1.12; margin-top:10px; letter-spacing:-.01em; }
-.support { margin-top:16px; font-size:20px; color:var(--text-2); }
-.support b { color:var(--text); font-size:26px; font-weight:800; margin-right:6px; }
-.sentence { font-size:20px; margin-top:6px; color:var(--text); }
-#chart { margin-top:18px; }
-.legend { display:flex; gap:22px; font-size:15px; color:var(--text-2); margin-top:10px; }
-.legend i { display:inline-block; width:14px; height:14px; border-radius:3px; margin-right:7px; vertical-align:-2px; }
-footer { position:absolute; left:56px; right:56px; bottom:22px; display:flex; justify-content:space-between;
-  color:var(--muted); font-size:14px; border-top:1px solid var(--line); padding-top:12px; }
+.card { position:absolute; inset:24px; background:var(--panel); border:1px solid var(--line); border-radius:18px;
+  padding:30px 40px 0; display:flex; flex-direction:column; }
+.kicker { color:var(--accent); font-size:14px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; }
+h1 { font-size:20px; line-height:1.25; margin-top:8px; color:var(--text-2); font-weight:600; }
+.verdict { font-size:34px; font-weight:800; line-height:1.12; margin-top:6px; letter-spacing:-.01em; }
+.support { margin-top:12px; font-size:17px; color:var(--text-2); }
+.support b { color:var(--text); font-size:22px; font-weight:800; margin-right:6px; }
+.sentence { font-size:17px; margin-top:4px; }
+#chart { margin-top:14px; }
+.legend { display:flex; flex-wrap:wrap; gap:6px 20px; font-size:13px; color:var(--text-2); margin-top:6px; }
+.legend i { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
+.confirm { margin-top:14px; padding-top:12px; border-top:1px solid var(--line); }
+.confirm .h { font-size:14px; font-weight:700; color:var(--text-2); }
+.confirm .h b { color:var(--text); }
+footer { position:absolute; left:64px; right:64px; bottom:34px; display:flex; justify-content:space-between;
+  color:var(--muted); font-size:13px; }
 svg text { font-family:inherit; }
 </style>
 </head>
@@ -40,86 +46,98 @@ svg text { font-family:inherit; }
   <div class="sentence">{{ card.sentence }}</div>
   <div id="chart"></div>
   <div class="legend" id="legend"></div>
+  <div class="confirm" id="confirm" style="display:none">
+    <div class="h" id="confirmHead"></div>
+    <div id="confirmChart"></div>
+  </div>
 </div>
 <footer><span>robotics.arboryx.ai · Recap tab</span><span>Information only — not investment advice</span></footer>
 <script>
 const CARD = {{ card | tojson }};
 const GROUPS = {{ groups | tojson }};
-const W = {{ width }} - 112;
+const W = {{ width }} - 2 * 24 - 80;
 const NS = "http://www.w3.org/2000/svg";
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const COLOR = {"Competition":"--g-competition","Partnership":"--g-partnership","Deployment":"--g-deployment",
                "Supply & tech":"--g-supply","Capital & talent":"--g-capital","Other":"--g-other"};
 function el(t, a, txt) { const e = document.createElementNS(NS, t); for (const k in a) e.setAttribute(k, a[k]); if (txt != null) e.textContent = txt; return e; }
-function svg(h) { const s = el("svg", {width:W, height:h, viewBox:`0 0 ${W} ${h}`}); document.getElementById("chart").append(s); return s; }
+function svgIn(host, h) { const s = el("svg", {width:W, height:h, viewBox:`0 0 ${W} ${h}`}); host.append(s); return s; }
 function legend(items) {
   document.getElementById("legend").innerHTML = items.map(([n, bg]) => `<span><i style="background:${bg}"></i>${n}</span>`).join("");
 }
-function hatch(s, id, c) {
-  const d = el("defs", {}), p = el("pattern", {id, width:8, height:8, patternUnits:"userSpaceOnUse", patternTransform:"rotate(45)"});
-  p.append(el("rect", {width:8, height:8, fill:c, opacity:.25})); p.append(el("line", {x1:0, y1:0, x2:0, y2:8, stroke:c, "stroke-width":4}));
-  d.append(p); s.append(d);
-}
 
-// mix — two stacked bars: before vs last 30 days, same colours per group.
-function mix(d) {
-  const s = svg(112), labelW = 170, barW = W - labelW;
+// What the surge is made of: two stacked bars (before vs last 30 days).
+function mix(host, d) {
+  const s = svgIn(host, 92), labelW = 150, barW = W - labelW;
   const used = GROUPS.filter(g => (d.now[g]||0) + (d.before[g]||0) > 0);
-  [[`Before`, `${d.before_total} in ${d.before_days} days`, d.before, d.before_total],
+  [["Before", `${d.before_total} in ${d.before_days} days`, d.before, d.before_total],
    [`Last ${d.now_days} days`, `${d.now_total} connections`, d.now, d.now_total]].forEach(([lab, sub, cnt, tot], i) => {
-    const y = 4 + i*54;
-    s.append(el("text", {x:0, y:y+21, fill:css("--text"), "font-size":18, "font-weight":600}, lab));
-    s.append(el("text", {x:0, y:y+41, fill:css("--muted"), "font-size":14}, sub));
-    if (!tot) { s.append(el("text", {x:labelW, y:y+28, fill:css("--muted"), "font-size":16}, "no activity")); return; }
+    const y = 2 + i*46;
+    s.append(el("text", {x:0, y:y+17, fill:css("--text"), "font-size":16, "font-weight":700}, lab));
+    s.append(el("text", {x:0, y:y+35, fill:css("--muted"), "font-size":13}, sub));
+    if (!tot) { s.append(el("text", {x:labelW, y:y+24, fill:css("--muted"), "font-size":15}, "no activity")); return; }
     let x = labelW;
     used.forEach(g => {
       const n = cnt[g]||0; if (!n) return;
       const w = barW * n / tot;
-      s.append(el("rect", {x, y, width:Math.max(w-2,1), height:44, rx:5, fill:css(COLOR[g])}));
-      if (w > 30) s.append(el("text", {x:x+w/2, y:y+29, "text-anchor":"middle", "font-size":18, "font-weight":800, fill:"#0a0e17"}, n));
+      s.append(el("rect", {x, y, width:Math.max(w-2,1), height:38, rx:5, fill:css(COLOR[g])}));
+      if (w > 28) s.append(el("text", {x:x+w/2, y:y+25, "text-anchor":"middle", "font-size":16, "font-weight":800, fill:"#fff"}, n));
       x += w;
     });
   });
   legend(used.map(g => [g, css(COLOR[g])]));
 }
 
-// grounding — one bar, reported vs model-inferred (hatched), big % labels.
-function grounding(d) {
-  const s = svg(64), rep = d.direct + d.web_grounded, inf = d.inferred + d.speculative, tot = rep + inf;
-  const c = css("--inferred"); hatch(s, "inf", c);
+// How much is confirmed: one compact bar, reported vs model-inferred (hatched).
+function grounding(host, d) {
+  const rep = d.direct + d.web_grounded, inf = d.inferred + d.speculative, tot = rep + inf;
+  const s = svgIn(host, 34), c = css("--inferred");
+  const defs = el("defs", {}), p = el("pattern", {id:"inf", width:8, height:8, patternUnits:"userSpaceOnUse", patternTransform:"rotate(45)"});
+  p.append(el("rect", {width:8, height:8, fill:c, opacity:.18})); p.append(el("line", {x1:0, y1:0, x2:0, y2:8, stroke:c, "stroke-width":3.5}));
+  defs.append(p); s.append(defs);
   const rw = tot ? W * rep / tot : 0;
-  if (rep) { s.append(el("rect", {x:0, y:6, width:Math.max(rw-2,1), height:50, rx:6, fill:css("--reported")}));
-    if (rw > 170) s.append(el("text", {x:rw/2, y:38, "text-anchor":"middle", "font-size":20, "font-weight":800, fill:"#0a0e17"}, `${rep} reported`)); }
-  if (inf) { s.append(el("rect", {x:rw, y:6, width:W-rw, height:50, rx:6, fill:"url(#inf)"}));
-    if (W-rw > 170) s.append(el("text", {x:rw+(W-rw)/2, y:38, "text-anchor":"middle", "font-size":20, "font-weight":800, fill:css("--text")}, `${inf} inferred`)); }
-  legend([["Reported or cited", css("--reported")],
-          ["Our model's inference", `repeating-linear-gradient(45deg,${c} 0 4px,transparent 4px 8px)`]]);
+  if (rep) { s.append(el("rect", {x:0, y:6, width:Math.max(rw-2,1), height:24, rx:5, fill:css("--reported")}));
+    if (rw > 170) s.append(el("text", {x:10, y:23, "font-size":14, "font-weight":700, fill:"#fff"}, `${rep} reported or cited`)); }
+  if (inf) { s.append(el("rect", {x:rw, y:6, width:W-rw, height:24, rx:5, fill:"url(#inf)", stroke:c, "stroke-width":1}));
+    if (W-rw > 150) s.append(el("text", {x:W-10, y:23, "text-anchor":"end", "font-size":14, "font-weight":700, fill:css("--text")}, `${inf} our inference`)); }
 }
 
-// concentration — two bars per name: "now" (solid) on top, "before" (faded)
-// right under it, same scale, so the change reads at a glance.
-function concentration(d) {
-  const rows = d.top.slice(0, 4), rowH = 52, labelW = 250, barW = W - labelW - 150;
-  const s = svg(rows.length*rowH);
+// Sector: two bars per name — now (solid) on top, before (lighter) beneath.
+function sector(host, d) {
+  const rows = d.top.slice(0, 4), rowH = 46, labelW = 220, barW = W - labelW - 140;
+  const s = svgIn(host, rows.length*rowH);
   const max = Math.max(...rows.map(r => Math.max(r.share, r.prior_share || 0)));
   const nowC = css("--g-supply");
   rows.forEach((r, i) => {
     const y = i*rowH, lead = r.share === rows[0].share;
-    s.append(el("text", {x:labelW-14, y:y+24, "text-anchor":"end", fill:css("--text"), "font-size":18, "font-weight": lead ? 700 : 400}, r.entity));
+    s.append(el("text", {x:labelW-14, y:y+21, "text-anchor":"end", fill:css("--text"), "font-size":17, "font-weight": lead ? 700 : 500}, r.entity));
     const wNow = Math.max(barW * r.share / max, 2);
-    s.append(el("rect", {x:labelW, y:y+6, width:wNow, height:20, rx:3, fill:nowC}));
-    s.append(el("text", {x:labelW+wNow+10, y:y+22, fill:css("--text"), "font-size":16, "font-weight":700}, `${Math.round(100*r.share)}%`));
+    s.append(el("rect", {x:labelW, y:y+5, width:wNow, height:20, rx:3, fill:nowC}));
+    s.append(el("text", {x:labelW+wNow+10, y:y+21, fill:css("--text"), "font-size":15, "font-weight":700}, `${Math.round(100*r.share)}%`));
     if (r.prior_share) {
       const wB = Math.max(barW * r.prior_share / max, 2);
-      s.append(el("rect", {x:labelW, y:y+29, width:wB, height:12, rx:3, fill:nowC, opacity:.3}));
-      s.append(el("text", {x:labelW+wB+10, y:y+40, fill:css("--muted"), "font-size":13}, `${Math.round(100*r.prior_share)}% before`));
+      s.append(el("rect", {x:labelW, y:y+28, width:wB, height:11, rx:3, fill:nowC, opacity:.35}));
+      s.append(el("text", {x:labelW+wB+10, y:y+38, fill:css("--text-2"), "font-size":12}, `${Math.round(100*r.prior_share)}% before`));
     } else {
-      s.append(el("text", {x:labelW, y:y+42, fill:css("--muted"), "font-size":13}, "new — not on the list before"));
+      s.append(el("text", {x:labelW, y:y+39, fill:css("--text-2"), "font-size":12}, "new — not on the list before"));
     }
   });
-  legend([["Now", nowC], ["Before", "rgba(167,139,250,.3)"]]);
+  legend([["Now", nowC], ["Before", "rgba(139,92,246,.35)"]]);
 }
-({mix, grounding, concentration})[CARD.kind](CARD.data);
+
+const chart = document.getElementById("chart");
+if (CARD.kind === "entity") {
+  mix(chart, CARD.data.mix);
+  const cf = CARD.confirmation || {};
+  document.getElementById("confirm").style.display = "";
+  document.getElementById("confirmHead").innerHTML = "";
+  const head = document.getElementById("confirmHead");
+  head.append("How much is confirmed? ");
+  const b = document.createElement("b"); b.textContent = `${cf.big || ""} — ${cf.verdict || ""}`; head.append(b);
+  grounding(document.getElementById("confirmChart"), CARD.data.grounding);
+} else if (CARD.kind === "sector") {
+  sector(chart, CARD.data);
+}
 window.__recapReady = true;
 </script>
 </body>

@@ -77,10 +77,13 @@ class TestRecap(unittest.TestCase):
             self.fx.edge("Boost", f"O{i}", "partners_with", 60)   # baseline
         self.fx.edge("Boost", "X", "partners_with", 200)          # outside both windows
         r, cards = self._cards([_ins_entity("Boost", 8, 3)])
-        mix = cards["mix-boost"]
+        mix = cards["entity-boost"]
+        self.assertEqual(mix["kind"], "entity")
+        self.assertFalse(mix["hedged"])                         # all direct → firm verdict
         self.assertEqual(r["week"], "2026-W44")
-        self.assertEqual(mix["data"]["now"], {"Competition": 7, "Partnership": 1})
-        self.assertEqual(mix["data"]["before"], {"Partnership": 3})
+        self.assertEqual(r["schema"], 2)
+        self.assertEqual(mix["data"]["mix"]["now"], {"Competition": 7, "Partnership": 1})
+        self.assertEqual(mix["data"]["mix"]["before"], {"Partnership": 3})
         self.assertEqual(mix["big"], "8 new connections")
         self.assertEqual(mix["sentence"], "Mostly rivalry: 7 of 8.")
         self.assertEqual(mix["title"], "What's behind Boost's surge?")
@@ -94,11 +97,13 @@ class TestRecap(unittest.TestCase):
         self.fx.edge("Neura", "C", "partners_with", 3, "inferred")
         self.fx.edge("Neura", "D", "partners_with", 3, "speculative")
         _, cards = self._cards([_ins_entity("Neura", 4, 0)])
-        g = cards["grounding-neura"]
+        card = cards["entity-neura"]                    # confirmation lives ON the company card
+        g = card["confirmation"]
         self.assertEqual(g["big"], "50% confirmed")
         self.assertEqual(g["sentence"], "2 are reported or cited by sources; 2 are our model's inference.")
-        self.assertEqual(g["title"], "How much of Neura's story is confirmed?")
+        self.assertEqual(card["data"]["grounding"], {"direct": 1, "web_grounded": 1, "inferred": 1, "speculative": 1})
         self.assertEqual(g["verdict"], "Mixed: about half is our own inference.")
+        self.assertNotIn("grounding-neura", cards)                # no standalone confirmation card
 
     def test_concentration_skips_generic_nodes_and_counts_edges_not_ends(self):
         for i in range(4):
@@ -108,7 +113,7 @@ class TestRecap(unittest.TestCase):
         for i in range(4):
             self.fx.edge(f"Old{i}", "NVIDIA", "built_on", 60)
         _, cards = self._cards([_ins_trend("built_on", 7, 4)])
-        c = cards["concentration-built_on"]
+        c = cards["sector-built_on"]
         self.assertEqual(c["data"]["total"], 7)
         self.assertEqual(c["data"]["top"][0]["entity"], "NVIDIA")
         self.assertNotIn("Physical AI Sector", [t["entity"] for t in c["data"]["top"]])
@@ -121,7 +126,7 @@ class TestRecap(unittest.TestCase):
         for i in range(4):
             self.fx.edge("Hub", f"S{i}", "integrates_with", 4)
         _, cards = self._cards([_ins_trend("integrates_with", 4, 0)])
-        c = cards["concentration-integrates_with"]
+        c = cards["sector-integrates_with"]
         self.assertEqual(c["data"]["total"], 4)          # edges, not 8 endpoints
         self.assertEqual(c["big"], "Hub 100%")
 
@@ -130,20 +135,24 @@ class TestRecap(unittest.TestCase):
             self.fx.edge(f"A{i}", "Alpha", "built_on", 4)
             self.fx.edge(f"B{i}", "Beta", "built_on", 4)
         _, cards = self._cards([_ins_trend("built_on", 4, 0)])
-        c = cards["concentration-built_on"]
+        c = cards["sector-built_on"]
         self.assertEqual(c["big"], "2-way tie at 50%")
         self.assertIn("Alpha and Beta are tied at 50% each", c["sentence"])
         self.assertEqual(c["verdict"], "Shared control: 2 names lead this together.")
 
-    def test_scope_is_top_two_entities_plus_one_trend(self):
-        for name in ("E1", "E2", "E3"):
+    def test_scope_is_one_card_per_entity_plus_one_trend(self):
+        names = ("E1", "E2", "E3", "E4", "E5", "E6")
+        for name in names:
             self.fx.edge(name, "Z", "partners_with", 3)
-        ins = [_ins_entity(n, 1, 0) for n in ("E1", "E2", "E3")] + [_ins_trend("partners_with", 3, 0)]
+        ins = [_ins_entity(n, 1, 0) for n in names] + [_ins_trend("partners_with", 3, 0)]
         r, cards = self._cards(ins)
-        self.assertEqual(len(r["cards"]), 5)
-        self.assertNotIn("mix-e3", cards)
-        self.assertEqual(r["cards"][0]["id"], "mix-e1")              # lead card first
-        self.assertEqual(r["cards"][1]["kind"], "concentration")
+        kinds = [c["kind"] for c in r["cards"]]
+        self.assertEqual(kinds.count("entity"), 5)                 # covers digest picks past the top 2
+        self.assertEqual(kinds.count("sector"), 1)
+        self.assertNotIn("entity-e6", cards)                        # MAX_ENTITY_CARDS = 5
+        self.assertEqual(r["cards"][0]["id"], "entity-e1")          # lead company first
+        self.assertEqual(r["cards"][1]["kind"], "sector")
+        self.assertEqual(set(kinds), {"entity", "sector"})          # no standalone grounding cards
 
     def test_insight_rows_and_digest_get_hashtags(self):
         self.fx.edge("Neura Robotics", "Z", "partners_with", 3)
@@ -158,7 +167,29 @@ class TestRecap(unittest.TestCase):
     def test_no_prior_activity_is_not_called_a_rate(self):
         self.fx.edge("Fresh", "Z", "partners_with", 3)
         _, cards = self._cards([_ins_entity("Fresh", 1, 0)])
-        self.assertIn("none in the prior 90 days", cards["mix-fresh"]["sub"])
+        self.assertIn("none in the prior 90 days", cards["entity-fresh"]["sub"])
+
+    def test_verdict_hedged_when_mostly_inferred(self):
+        for i in range(3):
+            self.fx.edge("Infr", f"P{i}", "partners_with", 3, "inferred")
+        self.fx.edge("Infr", "Q", "partners_with", 3, "direct")       # 25% confirmed
+        _, cards = self._cards([_ins_entity("Infr", 4, 0)])
+        c = cards["entity-infr"]
+        self.assertTrue(c["hedged"])
+        self.assertEqual(c["verdict"], "Infr may be becoming a hub others join.")
+        self.assertLessEqual(len(c["verdict"].split()), 10)
+
+    def test_hedge_uses_the_same_rounded_pct_as_the_panel(self):
+        # 79 inferred + 52 direct = 39.69% → panel shows "40% confirmed", so
+        # the verdict must NOT be hedged (the <40% rule reads the shown value).
+        for i in range(52):
+            self.fx.edge("Edge", f"D{i}", "partners_with", 3, "direct")
+        for i in range(79):
+            self.fx.edge("Edge", f"I{i}", "partners_with", 3, "inferred")
+        _, cards = self._cards([_ins_entity("Edge", 131, 0)])
+        c = cards["entity-edge"]
+        self.assertEqual(c["confirmation"]["big"], "40% confirmed")
+        self.assertFalse(c["hedged"])
 
     def test_no_insights_means_no_recap(self):
         self.assertIsNone(recap.build_recap(self.con, "Robotics", []))

@@ -20,6 +20,27 @@ automatically. A consumer has to actually read it (or be pointed at it).
 
 ---
 
+## [2026-10-27c] Recap cards: one image per company (`kind: entity`), schema 2
+
+**What changed (after the next KG deploy):**
+- `recap.schema` = 2. Cards are `kind: "entity"` (one per company — the
+  "how much is confirmed" bar is now a panel ON that company's image, under
+  `confirmation`) or `kind: "sector"`. The old separate `grounding` cards are
+  gone; ids are `entity-<slug>` / `sector-<rel>`.
+- Coverage: up to **5** company cards (top 5 chokepoint insights), so digest
+  picks past the top 2 (e.g. HD Hyundai, 2026-10-27) have an image.
+- `hedged: true` = fewer than 40% of the company's links are reported/cited;
+  the verdict says "may be". Keep that wording.
+- Images now use the site's light theme (match the Recap tab).
+- This week's archive (2026-W44) is upgraded to schema 2 once on the next
+  export; new images are rendered under the new ids.
+
+**Consumer action:** match chokepoint rows to `kind == "entity"` cards (was
+`mix`) and velocity rows to `kind == "sector"` (was `concentration`). Full
+guide: `soljet-postiz/docs/graph-posters.md` → "Weekly recap".
+
+---
+
 ## [2026-10-27b] Card relationships gain `in_story`; posters fade background links
 
 **What changed (after the next KG deploy):** every card doc's

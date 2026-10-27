@@ -1,14 +1,14 @@
 """Weekly recap cards — spec §2.9b (charts for what the digest names).
 
 Turns the week's top graph_insights[] into a few simple, noob-readable chart
-cards: one question, one big number, one plain sentence, one chart. Three kinds:
+cards: one question, one big number, one plain sentence, one chart. Two kinds:
 
-  mix            per named entity — what its surge is made of, vs before
-  grounding      per named entity — how much is reported news vs model inference
-  concentration  the named sector trend — who the sector leans on, vs before
+  entity   one per named company: what its surge is made of, vs before (verdict
+           + chart), with a "how much is confirmed" sub-block on the same card
+  sector   the named sector trend: who the sector leans on, now vs before
 
-Scope is a hard limit: only the entities/trend the digest names (top 2
-chokepoint insights + top velocity insight), same window/baseline as their
+Scope is a hard limit: only what the digest can name (top 5 chokepoint
+insights + top velocity insight), same window/baseline as their
 headlines, no backfill. Every number here comes from the same DuckDB window
 queries as src/detect.py, so a chart can never disagree with its headline.
 
@@ -209,6 +209,7 @@ def _grounding_card(ins: dict, now_rows, sector: str = "") -> dict[str, Any]:
                     "Early signal: mostly inference, not yet reported."),
         "sentence": (f"{reported} are reported or cited by sources; "
                      f"{inferred} {'is' if inferred == 1 else 'are'} our model's inference."),
+        "pct": pct,      # the ONE confirmation % — panel and verdict hedging both use it
         "data": {k: ev.get(k, 0) for k in ("direct", "web_grounded", "inferred", "speculative")},
     }
 
@@ -279,8 +280,8 @@ def _concentration_card(con, sector: str, ins: dict, recent: str, base: str) -> 
         was = " · new at the top"
         trend = f"{level}: {lead['entity']} leads with {pct}%, and wasn't on the list before."
     return {
-        "id": f"concentration-{rel}",
-        "kind": "concentration",
+        "id": f"sector-{rel}",
+        "kind": "sector",
         "rel_type": rel,
         "insight_headline": ins["headline"],
         "title": _CONC_TITLE.get(rel, f"Where are the sector's {_phrase(rel, 2)} going?"),
@@ -300,37 +301,92 @@ def _concentration_card(con, sector: str, ins: dict, recent: str, base: str) -> 
     }
 
 
+# Same takeaways, hedged — used when under 40% of the company's links are
+# reported/cited (the rest is our model's inference). A flat claim on mostly
+# inferred evidence would overstate what we know.
+_MIX_VERDICT_HEDGED = {
+    "Competition": "{e} may be becoming a target for rivals.",
+    "Partnership": "{e} may be becoming a hub others join.",
+    "Deployment": "{e}'s products may be moving into real use.",
+    "Supply & tech": "{e} may be turning into infrastructure for others.",
+    "Capital & talent": "Money and talent may be flowing toward {e}.",
+    "Other": "{e} may be drawing far more attention.",
+}
+HEDGE_BELOW_PCT = 40
+
+# Entity cards per week: one per chokepoint insight the digest may post (the
+# digest picks rows after its own 21-day skip, so cover more than the top 2 —
+# 2026-10-27 a digest named HD Hyundai, insight #3, which had no card).
+MAX_ENTITY_CARDS = 5
+RECAP_SCHEMA = 2
+
+
+def _entity_card(mix: dict[str, Any], ground: dict[str, Any]) -> dict[str, Any]:
+    """ONE card per company: what its surge is made of (the verdict + chart)
+    plus how much of it is confirmed (a sub-block on the SAME card — a
+    confirmation bar alone is not a takeaway, it describes this company).
+    The verdict is hedged when the confirmation is low."""
+    # Same rounded % the confirmation panel shows ("39%"/"40%"), so the hedge
+    # can never contradict the number printed on the same image.
+    hedged = ground["pct"] < HEDGE_BELOW_PCT
+    now = mix["data"]["now"]
+    lead = max(now, key=lambda k: (now[k], k)) if now else "Other"
+    verdict = (_MIX_VERDICT_HEDGED[lead].format(e=mix["entity"]) if hedged else mix["verdict"])
+    return {
+        "id": f"entity-{_slug(mix['entity'])}",
+        "kind": "entity",
+        "entity": mix["entity"],
+        "insight_headline": mix["insight_headline"],
+        "title": mix["title"],
+        "verdict": verdict,
+        "hedged": hedged,
+        "big": mix["big"],
+        "sub": mix["sub"],
+        "sentence": mix["sentence"],
+        "hashtags": mix["hashtags"],
+        "confirmation": {"verdict": ground["verdict"], "big": ground["big"],
+                         "sentence": ground["sentence"], "pct": ground["pct"]},
+        "data": {"mix": mix["data"], "grounding": ground["data"]},
+    }
+
+
 def build_recap(con: duckdb.DuckDBPyConnection, sector: str,
                 insights: list[dict[str, Any]], today: date | None = None) -> dict[str, Any] | None:
     """Recap block for this ISO week, or None when there's nothing to chart.
     Never raises (same contract as detect.graph_insights)."""
     try:
-        entities = [i for i in insights if i.get("type") == "chokepoint"][:2]
+        entities = [i for i in insights if i.get("type") == "chokepoint"][:MAX_ENTITY_CARDS]
         trend = next((i for i in insights if i.get("type") == "velocity"), None)
         if not entities and not trend:
             return None
         sample = (entities or [trend])[0]
         recent, base = _windows(sample["window_days"], sample["baseline_days"])
-        mix_cards, ground_cards = [], []
+        entity_cards = []
         for ins in entities:
             now_rows = _entity_counts(con, sector, ins["entity"], recent)
             prior_rows = _entity_counts(con, sector, ins["entity"], base)
-            mix_cards.append(_mix_card(ins, now_rows, prior_rows, sector))
-            ground_cards.append(_grounding_card(ins, now_rows, sector))
+            entity_cards.append(_entity_card(_mix_card(ins, now_rows, prior_rows, sector),
+                                             _grounding_card(ins, now_rows, sector)))
         conc = _concentration_card(con, sector, trend, recent, base) if trend else None
-        # Order = rotation/free-tier priority: the lead entity's mix first,
-        # then the sector view, then the rest.
-        cards = mix_cards[:1] + ([conc] if conc else []) + ground_cards[:1] + mix_cards[1:] + ground_cards[1:]
+        # Order = rotation/free-tier priority: lead company, the sector view,
+        # then the other companies in insight order.
+        cards = entity_cards[:1] + ([conc] if conc else []) + entity_cards[1:]
         today = today or date.today()
         iso = today.isocalendar()
         return {
+            # 2 = one "entity" card per company (+ "sector"); 1 had separate
+            # mix/grounding/concentration cards. Bumping this upgrades the
+            # week's write-once archive once (firestore_export._write_recap_week).
+            "schema": RECAP_SCHEMA,
             "week": f"{iso[0]}-W{iso[1]:02d}",
             "as_of": today.isoformat(),
             "window_days": sample["window_days"],
             "baseline_days": sample["baseline_days"],
             "groups": [g for g, _ in GROUPS] + ["Other"],
             # Digest default: the named entities, the trend topic, the sector.
-            "hashtags": _tags(*[hashtags.camel_tag(i["entity"]) for i in entities],
+            # Digest default stays top-2 + trend + sector on purpose: the tag
+            # budget (MAX_TAGS) and a readable post; per-card tags cover the rest.
+            "hashtags": _tags(*[hashtags.camel_tag(i["entity"]) for i in entities[:2]],
                               hashtags.TOPIC_TAG.get(trend["rel_type"]) if trend else None,
                               _sector_tag(sector)),
             "cards": cards,
