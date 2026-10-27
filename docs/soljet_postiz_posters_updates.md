@@ -20,6 +20,20 @@ automatically. A consumer has to actually read it (or be pointed at it).
 
 ---
 
+## [2026-10-27] SHIPPED — 465 edgeless graph posters re-rendered (cards ROB-03xx → mid-Aug)
+
+**What changed here:** every `graphs/<card_id>.png` last written in 2026-09
+(cards from March to ROB-081826, i.e. outside the 10-19 backfill) was drawn
+without edges and has been overwritten in place with the correct render.
+Example: `ROB-031426-006` (posted to LinkedIn 10-26 with 0 edges) now shows 5.
+
+**Consumer action:** none if graph images are fetched pinned to the GCS
+object generation (per soljet-postiz, they now are). No container restart
+needed. Already-published posts keep the old image. If any cache is still
+keyed by URL alone, purge `graph_og_*` entries for these cards.
+
+---
+
 ## [2026-10-26b] BUILT, NOT YET DEPLOYED — weekly recap chart cards (§2.9b)
 
 **Heads-up, no action until a "shipped" entry follows.** Two things change once deployed:

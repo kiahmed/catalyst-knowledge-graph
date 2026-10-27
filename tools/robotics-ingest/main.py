@@ -48,7 +48,10 @@ log = logging.getLogger("robotics-ingest")
 
 
 def _log(event: str, **fields: Any) -> None:
-    log.info(json.dumps({"event": event, **fields}, default=str))
+    # *_failed events log at ERROR so Cloud Logging severity alerts fire —
+    # the 2026-10-23 export outage ran 4 days silently at INFO.
+    level = logging.ERROR if event.endswith("_failed") else logging.INFO
+    log.log(level, json.dumps({"event": event, **fields}, default=str))
 
 
 def _publish_ingest_done(sector: str, written: int) -> dict[str, Any]:
