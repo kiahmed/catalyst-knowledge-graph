@@ -181,8 +181,10 @@ apply`. You never hand-edit Terraform or Cloud Run config.
 What flips on automatically (fixed in the Terraform module, not `.env.prod`):
 
 - `FIRESTORE_EXPORT_ENABLED=true`, `STORAGE_UPLOAD_ENABLED=true`, `DUCKDB_GCS_BUCKET=robotics-data`
-- Cloud Scheduler fires ingest `0 6 * * *` UTC
 - Pub/Sub fans out ingest → render
+- Cloud Scheduler timezone `America/New_York`; the cron itself is
+  `INGEST_SCHEDULE` in `.env.prod` (currently `30 8 * * *`, after Arboryx
+  publishes; deploy.sh falls back to `0 6 * * *` if unset)
 
 Prod keeps the DuckDB file in GCS (`gs://robotics-data/robotics.duckdb`);
 ingest/render copy it down per run and ingest copies it back (`src/duckdb_sync.py`).
@@ -262,6 +264,63 @@ Phone. X/GitHub deferred. Firestore rules release matches the repo file.
 `storage.rules` is intentionally undeployed — the cards bucket isn't
 Firebase-linked; privacy is IAM-level (see workbench 2026-07-05).
 
+## 9b. Weekly recap (Recap tab, recap images, premium flag)
+
+Spec: `docs/technical_spec.md` §2.9b. Code: `src/recap.py`, `templates/cards/recap.html`.
+
+**What runs, when (no manual step):**
+- Every ingest export computes `graph_insights[]` (each row now carries
+  `hashtags`) and a `recap` block for exactly what the digest names: the
+  top 2 entity insights + the top sector trend → up to 5 cards (generic
+  category names are filtered out of the sector card; it's omitted only when
+  there's no trend insight or every name is generic). Each card leads
+  with a ≤10-word **verdict** (the takeaway), then a number, a sentence, a chart.
+- `recap` is written to the graph doc daily (live copy) AND, once per ISO
+  week, to `CKG-Robotics/recaps/weeks/<YYYY-Www>` — **write-once**: the first
+  export of the ISO week that produces recap cards (normally Monday's) wins;
+  later runs leave it alone.
+- robotics-render (after each ingest) renders that week's cards to
+  `gs://robotics-cards/recaps/Robotics/<week>/<card_id>.png` — also
+  write-once (`recaps_force` is the only overwrite; the bucket's 90-day
+  lifecycle rule deletes them after 90 days). soljet-postiz posts from these; consumer guide:
+  `../soljet-postiz/docs/graph-posters.md` → "Weekly recap".
+
+**Recap tab (Cards · Graph · Recap)** — `#view=recap`, rendered from the
+graph doc's `recap`. Hidden when there is no recap.
+
+**Premium flag** — `PREMIUM_FEATURES_OPEN` in `.env.prod`, applied by
+`make deploy-frontend` (writes `frontend/features.js` every deploy):
+
+| Value | Who sees the Recap tab |
+|---|---|
+| `true` (current) | every signed-in user |
+| `false` | only users whose `users/{uid}.entitlement` is `admin` or `paid` |
+
+Grant / revoke: `python3 tools/user-admin/main.py set <uid> entitlement=paid`
+(or `admin`; `entitlement=null` to revoke). Clients can't write
+`entitlement` (Firestore rules). This is a UI gate — recap data still rides
+the graph doc; enforce at the data layer before charging money (spec §2.9b "Access").
+
+**Re-rendering recap images** (rarely — they're write-once on purpose so
+consumers can cache them):
+
+```bash
+# render-batch body flags: recaps (default true), recaps_force (default false).
+# Card/poster `force` does NOT touch recap images.
+RENDER_URL=$(gcloud run services describe robotics-render --region us-central1 --format='value(status.url)')
+curl -X POST -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -H "Content-Type: application/json" -d '{"limit":1,"recaps_force":true}' \
+  "$RENDER_URL/render-batch"
+```
+
+**Deploy gotcha (applies to every code change):** `make deploy` tags the
+render image AND the ingest/handle-resolver zips with the **git commit**.
+Uncommitted code is NOT shipped. `FORCE=1` does not fix that — it rebuilds
+under the *same* tag, so Terraform sees no change and Cloud Run / the
+function keep the old revision. Ship by **committing first**, or with a
+fresh tag: `IMAGE_TAG=<sha>-<label>-$(date -u +%Y%m%d%H%M) make deploy`.
+Its final `terraform apply` waits for a typed `yes`; review the plan.
+
 ## 10. Cleanups
 
 | Need | Command |
@@ -292,6 +351,9 @@ Firebase-linked; privacy is IAM-level (see workbench 2026-07-05).
 | What changed last | top of `docs/workbench.md` |
 | Prod: sign-in gate never appears, stuck on 4 cards | Stale cached `assets/auth.js` — hard refresh (Ctrl+Shift+R); cache is 5 min since 2026-07-04 (§9) |
 | Prod: shared `/card/` link shows generic logo, not the card image | robotics-og deployed? (`make deploy FORCE=1`) rewrites shipped? (`make deploy-frontend`) then re-scrape via the platform's card validator |
+| Prod: Recap tab missing | No recap today (no insight cleared thresholds in today's export), or `PREMIUM_FEATURES_OPEN=false` and the user has no `entitlement` admin/paid; `frontend/features.js` on the live site shows the flag (§9b) |
+| Prod: recap images missing for this week | `gcloud storage ls gs://robotics-cards/recaps/Robotics/<YYYY-Www>/`; week doc exists? (`CKG-Robotics/recaps/weeks/<week>`); render-batch response `recaps_rendered/skipped/failed` |
+| Prod: graph tab stale / posters wrong (graph doc not updating) | graph doc `generated_at`; size cap `src/export.py` `GRAPH_DOC_BUDGET` (Firestore 1 MiB/doc — 2026-08 incident, workbench 2026-10-18) |
 | Who signed up / edit a user profile | `python3 tools/user-admin/main.py list` / `set <uid> field=value` (§9) |
 
 ## 12. Not in this manual
