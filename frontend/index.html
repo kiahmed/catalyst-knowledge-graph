@@ -586,6 +586,12 @@ input[type="date"]:focus { border-color: var(--border-focus); }
 .gf-step[hidden] { display: none; }
 .gf-step-btn { font: inherit; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text);
   border-radius: 6px; padding: 2px 8px; cursor: pointer; }
+.graph-ctxmenu { position: fixed; z-index: 500; background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: var(--shadow); padding: 4px; min-width: 140px; }
+.graph-ctxmenu[hidden] { display: none; }
+.graph-ctxmenu button { display: block; width: 100%; text-align: left; font: inherit; font-size: 12px;
+  border: 0; background: none; color: var(--text); padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+.graph-ctxmenu button:hover { background: var(--bg); }
 .gs-note { font-size: 11px; color: var(--text-secondary); margin-top: 6px; max-width: 320px; }
 .gs-label {
   font-size: 10px; font-weight: 600; color: var(--text-muted);
@@ -1755,7 +1761,9 @@ function renderGraphFromPayload() {
         });
         openEdgePin(edge, cyEdge);
         closeNodePanel();
-      }
+      },
+      onNodeContextMenu: (node, evt) => showGraphContextMenu({ nodeId: node.id }, evt),
+      onBackgroundContextMenu: evt => showGraphContextMenu({}, evt),
     });
     GRAPH_INITIALIZED = true;
   }
@@ -1807,6 +1815,54 @@ function updateLoadChip(p) {
 function hideLoadChip() {
   const c = document.getElementById("graphLoadChip");
   if (c) c.hidden = true;
+}
+
+// Right-click "Spread out" — a node declumps its neighborhood, empty canvas
+// declutters whatever's on screen. See RoboticsGraph.spreadOut(); this is
+// just the menu chrome (static markup, no interpolated data — nothing here
+// needs escaping).
+function _ctxMenu() {
+  let m = document.getElementById("graphCtxMenu");
+  if (!m) {
+    m = document.createElement("div");
+    m.id = "graphCtxMenu"; m.className = "graph-ctxmenu"; m.hidden = true;
+    m.innerHTML = '<button type="button" class="ctx-spread">Spread out</button>';
+    m.querySelector(".ctx-spread").addEventListener("click", () => {
+      RoboticsGraph.spreadOut(m._target || {});
+      hideCtxMenu();
+    });
+    document.body.appendChild(m);
+  }
+  return m;
+}
+function hideCtxMenu() {
+  const m = document.getElementById("graphCtxMenu");
+  if (m) m.hidden = true;
+  document.removeEventListener("click", hideCtxMenu, true);
+  document.removeEventListener("keydown", _ctxMenuKeyHandler, true);
+}
+function _ctxMenuKeyHandler(e) { if (e.key === "Escape") hideCtxMenu(); }
+function showGraphContextMenu(target, nativeEvent) {
+  if (!window.RoboticsGraph || RoboticsGraph.isLoading()) return;
+  if (nativeEvent && nativeEvent.preventDefault) nativeEvent.preventDefault();
+  const m = _ctxMenu();
+  m._target = target || {};
+  m.hidden = false;
+  // A two-finger-tap cxttap carries a TouchEvent, which has no clientX/Y of
+  // its own (those live on its .touches[]) — fall back to the viewport
+  // center instead of pinning the menu to the top-left corner.
+  const touch = nativeEvent && nativeEvent.touches && nativeEvent.touches[0];
+  const x = (nativeEvent && nativeEvent.clientX) || (touch && touch.clientX) || window.innerWidth / 2;
+  const y = (nativeEvent && nativeEvent.clientY) || (touch && touch.clientY) || window.innerHeight / 2;
+  const MENU_W = 150, MENU_H = 40;   // keep the menu fully on-screen
+  m.style.left = `${Math.max(4, Math.min(x, window.innerWidth - MENU_W - 4))}px`;
+  m.style.top = `${Math.max(4, Math.min(y, window.innerHeight - MENU_H - 4))}px`;
+  // Deferred so the click that opened the menu doesn't also close it
+  // (the capture-phase listener would otherwise see this same event).
+  setTimeout(() => {
+    document.addEventListener("click", hideCtxMenu, true);
+    document.addEventListener("keydown", _ctxMenuKeyHandler, true);
+  }, 0);
 }
 
 function setView(view, opts = {}) {

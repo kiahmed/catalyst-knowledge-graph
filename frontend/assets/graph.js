@@ -30,6 +30,15 @@
   const SMALL_LAYOUT_NODES = 400;
   // Progressive loading: elements appended per animation frame.
   const PROGRESSIVE_BATCH = 400;
+  // "Spread out" (right-click declump): cap how many neighbors fan out
+  // around a clicked node, and how many on-screen nodes an empty-canvas
+  // click will relax (perf guard on a huge "All" view).
+  const SPREAD_MAX_NEIGHBORS = 10;
+  const SPREAD_MAX_BACKGROUND_NODES = 400;
+  // Locked "obstacle" nodes around a node-centered spread. Uncapped, a hub
+  // node's padded box can sweep in most of the graph — bounding this keeps
+  // the layout call (and its iteration count) from scaling with graph size.
+  const SPREAD_MAX_OBSTACLES = 60;
 
   const state = {
     cy: null,
@@ -42,7 +51,27 @@
     renderToken: 0,
     lastSignature: null,
     paused: false,
+    loading: false,
+    spreading: false,
+    activeSpreadLayout: null,
+    spreadLockedNodes: null,
   };
+
+  // A real render always supersedes a cosmetic "spread out" in progress:
+  // stop its layout and unlock whatever it locked, so a fresh render's
+  // elements().remove() doesn't fight an animating layout or leave nodes
+  // stuck locked after their elements are long gone.
+  function stopActiveSpread() {
+    if (state.activeSpreadLayout) {
+      try { state.activeSpreadLayout.stop(); } catch (_) {}
+      state.activeSpreadLayout = null;
+    }
+    if (state.spreadLockedNodes) {
+      try { state.spreadLockedNodes.unlock(); } catch (_) {}
+      state.spreadLockedNodes = null;
+    }
+    state.spreading = false;
+  }
 
   function lerp(a, b, t) { return a + (b - a) * t; }
 
@@ -541,6 +570,22 @@
     cy.on('tap', evt => {
       if (evt.target === cy) hideTip();
     });
+
+    // Right-click: "spread out" context menu. The page owns the menu UI;
+    // this just reports what was clicked (a node, or the empty canvas).
+    cy.on('cxttap', 'node', evt => {
+      if (evt.originalEvent && evt.originalEvent.preventDefault) evt.originalEvent.preventDefault();
+      if (state.callbacks.onNodeContextMenu) {
+        try { state.callbacks.onNodeContextMenu(evt.target.data(), evt.originalEvent); } catch (_) {}
+      }
+    });
+    cy.on('cxttap', evt => {
+      if (evt.target !== cy) return;
+      if (evt.originalEvent && evt.originalEvent.preventDefault) evt.originalEvent.preventDefault();
+      if (state.callbacks.onBackgroundContextMenu) {
+        try { state.callbacks.onBackgroundContextMenu(evt.originalEvent); } catch (_) {}
+      }
+    });
   }
 
   function renderSignature(payload, filters) {
@@ -620,6 +665,37 @@
     cy.fit(core.length ? core : undefined, 40);
   }
 
+  // Nodes currently within the viewport (for an empty-canvas "spread out" —
+  // declutter what's actually on screen, not the whole dataset).
+  function nodesInViewport(cy) {
+    const ext = cy.extent();
+    return cy.nodes().filter(n => {
+      const p = n.position();
+      return p.x >= ext.x1 && p.x <= ext.x2 && p.y >= ext.y1 && p.y <= ext.y2;
+    });
+  }
+
+  // Nodes within `pad` of a bounding box (for a node-centered "spread out" —
+  // nearby unrelated nodes come along as fixed, locked obstacles so the
+  // fanned-out neighborhood doesn't land on top of them). Capped to the
+  // `maxCount` closest to the box's centre — an uncapped box around a hub
+  // node can sweep in most of the graph, and locking hundreds of nodes
+  // turns the layout's per-iteration cost (still O(n) over everything
+  // locked, even though those nodes don't move) into multi-second jank.
+  function nodesNear(cy, bb, pad, maxCount) {
+    const x1 = bb.x1 - pad, y1 = bb.y1 - pad, x2 = bb.x2 + pad, y2 = bb.y2 + pad;
+    let found = cy.nodes().filter(n => {
+      const p = n.position();
+      return p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2;
+    });
+    if (maxCount && found.length > maxCount) {
+      const cx = (bb.x1 + bb.x2) / 2, cy2 = (bb.y1 + bb.y2) / 2;
+      const dist2 = n => { const p = n.position(); return (p.x - cx) ** 2 + (p.y - cy2) ** 2; };
+      found = found.sort((a, b) => dist2(a) - dist2(b)).slice(0, maxCount);
+    }
+    return found;
+  }
+
   // Fallback for payloads without positions: single-shot cose(-bilkent)
   // layout, as before — chunking a force layout just thrashes it.
   function renderSingleShot(nodes, edges) {
@@ -687,21 +763,34 @@
     // render superseded by a newer call resolves immediately.
     render(payload, filters) {
       if (!state.cy) throw new Error('[RoboticsGraph] init() must be called before render()');
+
+      // Cache-hit check BEFORE bumping renderToken: a no-op call must not
+      // cancel a real paint that's still in flight from an earlier call —
+      // that paint's own completion handler checks token === renderToken
+      // to decide whether to clear state.loading, and a token bump here
+      // with no new paint to replace it would make that check fail forever,
+      // leaving state.loading stuck true (same pattern renderProgressive()
+      // already uses for its own early-return).
+      if (payload && payload.graph) {
+        const sig = renderSignature(payload, filters);
+        if (sig === state.lastSignature && state.cy.elements().length > 0) {
+          return Promise.resolve(false);
+        }
+      }
+
       state.renderToken += 1;
       const token = state.renderToken;
+      stopActiveSpread();
 
       if (!payload || !payload.graph) {
         state.lastSignature = null;
+        state.loading = false;
         state.cy.elements().remove();
         return Promise.resolve(false);
       }
 
-      // Same payload + filters as the last render → keep the instance as-is.
-      const sig = renderSignature(payload, filters);
-      if (sig === state.lastSignature && state.cy.elements().length > 0) {
-        return Promise.resolve(false);
-      }
-      state.lastSignature = sig;
+      state.lastSignature = renderSignature(payload, filters);
+      state.loading = true;
 
       hideTip();
       state.cy.elements().remove();
@@ -710,8 +799,15 @@
       const paint = (nodes.length > SMALL_LAYOUT_NODES && mostHavePositions(nodes))
         ? renderChunked(nodes, edges, token)
         : renderSingleShot(nodes, edges);
+      // Only the still-current call clears loading — a superseded render's
+      // own completion must not stomp on a newer one that's still going.
+      // The rejection branch still re-throws (not `return r`): these paints
+      // aren't expected to reject, but a resolved promise carrying an Error
+      // as its value would silently swallow a real failure.
+      const finishLoading = r => { if (token === state.renderToken) state.loading = false; return r; };
+      const finishLoadingErr = e => { if (token === state.renderToken) state.loading = false; throw e; };
       const ego = (filters || {}).egoEntity;
-      if (!ego) return paint;
+      if (!ego) return paint.then(finishLoading, finishLoadingErr);
       // Highlight the searched entity once the paint settles.
       return paint.then(ok => {
         if (state.cy) {
@@ -719,12 +815,14 @@
           if (n && n.length) n.addClass('robotics-ego');
         }
         return ok;
-      });
+      }).then(finishLoading, finishLoadingErr);
     },
 
     destroy() {
       state.renderToken += 1;   // cancel any in-flight chunk loop
       state.lastSignature = null;
+      state.loading = false;
+      stopActiveSpread();
       if (state.cy) {
         try { state.cy.destroy(); } catch (_) {}
         state.cy = null;
@@ -761,8 +859,10 @@
       }
       state.renderToken += 1;
       const token = state.renderToken;
+      stopActiveSpread();
       state.paused = false;
       state.lastSignature = null;
+      state.loading = true;
       hideTip();
       state.cy.elements().remove();
 
@@ -801,6 +901,12 @@
       const frame = () => new Promise(r => requestAnimationFrame(r));
       const live = () => token === state.renderToken && !!state.cy;
 
+      // Only the still-current call clears loading (see finishLoading in
+      // render() — same reasoning: a superseded load must not clear a newer
+      // one's loading flag; the error branch rethrows rather than
+      // swallowing a real failure as a resolved value).
+      const finishLoading = r => { if (token === state.renderToken) state.loading = false; return r; };
+      const finishLoadingErr = e => { if (token === state.renderToken) state.loading = false; throw e; };
       return (async () => {
         for (let si = 0; si < slices.length; si++) {
           const batchEls = slices[si].nodes.concat(slices[si].edges);   // nodes first
@@ -824,12 +930,172 @@
         try { fitCore(state.cy); } catch (_) {}
         report(steps[steps.length - 1], true);
         return true;
-      })();
+      })().then(finishLoading, finishLoadingErr);
     },
 
     pause() { state.paused = true; },
     resume() { state.paused = false; },
     isPaused() { return state.paused; },
+
+    // True while a render()/renderProgressive() is actively adding/removing
+    // elements. Callers (the right-click menu) should treat this as "not
+    // interactive yet" rather than race a spreadOut() against it.
+    isLoading() { return !!state.loading; },
+
+    // "Spread out" — loosely re-layout an overcrowded cluster without
+    // disturbing the rest of the graph: opts.nodeId fans out that node's
+    // neighborhood (capped at SPREAD_MAX_NEIGHBORS, ranked by incident edge
+    // confidence); no nodeId declutters whatever's currently in the
+    // viewport (capped at SPREAD_MAX_BACKGROUND_NODES, ranked by edge
+    // count). Nearby nodes outside the target set are locked (immovable)
+    // but still part of the layout, so they act as obstacles — the moving
+    // set won't settle on top of them. Positions start from where they
+    // already are (randomize: false), so this nudges the clump apart
+    // rather than reshuffling it. Purely cosmetic and ephemeral: it never
+    // touches payload data or the exported full-history layout, and any
+    // real render() / renderProgressive() call discards it exactly like it
+    // would discard a manual drag.
+    spreadOut(opts) {
+      if (!state.cy || state.loading) return false;
+      const cy = state.cy;
+      const o = opts || {};
+      let focal;
+      if (o.nodeId) {
+        const center = cy.getElementById(o.nodeId);
+        if (!center || center.empty()) return false;
+        let neighbors = center.closedNeighborhood().nodes().filter(n => n.id() !== o.nodeId);
+        if (neighbors.length > SPREAD_MAX_NEIGHBORS) {
+          const score = n => n.connectedEdges().reduce((s, e) => s + (e.data('confidence') || 0), 0);
+          neighbors = neighbors.sort((a, b) => score(b) - score(a)).slice(0, SPREAD_MAX_NEIGHBORS);
+        }
+        focal = center.union(neighbors);
+      } else {
+        focal = nodesInViewport(cy);
+        if (focal.length > SPREAD_MAX_BACKGROUND_NODES) {
+          focal = focal.sort((a, b) => (b.data('edgeCount') || 0) - (a.data('edgeCount') || 0))
+            .slice(0, SPREAD_MAX_BACKGROUND_NODES);
+        }
+      }
+      if (focal.length < 2) return false;
+
+      stopActiveSpread();   // a second spread-out click supersedes the first
+
+      const bb = focal.boundingBox();
+      const pad = Math.max(bb.w, bb.h, 200) * 0.6;
+      const context = o.nodeId ? nodesNear(cy, bb, pad, SPREAD_MAX_OBSTACLES).union(focal) : focal;
+      const movingIds = new Set(focal.map(n => n.id()));
+      const toLock = context.filter(n => !movingIds.has(n.id()) && !n.locked());
+      toLock.lock();
+      state.spreadLockedNodes = toLock;
+
+      const cleanup = () => {
+        if (state.activeSpreadLayout !== layout) return;   // already superseded
+        if (state.spreadLockedNodes) { try { state.spreadLockedNodes.unlock(); } catch (_) {} }
+        state.activeSpreadLayout = null;
+        state.spreadLockedNodes = null;
+        state.spreading = false;
+      };
+
+      // Edges with only one endpoint in `context` get dropped, not kept as
+      // a pull toward a fixed-but-excluded node: cose-bilkent (if it's ever
+      // fixed to load — it doesn't today, ensureLayoutRegistered() falls
+      // back to 'cose' below) throws on them via getEdgesBetween, and they
+      // aren't needed since every real neighbor of a moving node is already
+      // in `context` by construction.
+      const eles = context.union(context.edgesWith(context));
+
+      // Core cose ends every run with an unconditional "pack components"
+      // step that translates each connected component's UNLOCKED nodes to
+      // its own grid cell starting at (0,0) — ignoring randomize/gravity/
+      // fit entirely. Left alone, that makes the spread jump to wherever
+      // that packing lands instead of staying where the clump actually is.
+      // Record each component's pre-run centroid (locked obstacles excluded
+      // — they don't move, and would skew the average toward their fixed
+      // positions) and shift it back by the same delta once layoutstop
+      // fires, preserving the relative fan-out cose computed while undoing
+      // only the part that relocates it.
+      const centroidOf = nodes => {
+        let sx = 0, sy = 0, n = 0;
+        nodes.forEach(node => { const p = node.position(); sx += p.x; sy += p.y; n += 1; });
+        return n ? { x: sx / n, y: sy / n } : null;
+      };
+      const components = eles.components()
+        .map(comp => ({ movable: comp.nodes().filter(n => !n.locked()) }))
+        .filter(c => c.movable.length > 0);
+      components.forEach(c => { c.preCentroid = centroidOf(c.movable); });
+      let corrected = false;
+      const savedPositions = new Map();
+      const undoComponentPacking = () => {
+        if (corrected) {
+          // A second layoutstop (the trailing animation frame after an
+          // interrupting supersede) can re-pack our already-corrected
+          // nodes while some of them have since been locked by a NEWER
+          // spread's own obstacle set. Recomputing a centroid at that
+          // point would average a mix of moved-and-not-moved nodes and
+          // under-correct by roughly the locked fraction. Just restore
+          // the exact positions already known to be right, for whichever
+          // of our nodes are still unlocked — a now-locked one belongs to
+          // the newer spread, which corrects it with its own pass.
+          savedPositions.forEach((pos, node) => {
+            if (!node.locked() && !node.removed()) node.position(pos);
+          });
+          return;
+        }
+        components.forEach(({ movable, preCentroid }) => {
+          if (!preCentroid) return;
+          const post = centroidOf(movable);
+          if (!post) return;
+          const dx = preCentroid.x - post.x, dy = preCentroid.y - post.y;
+          if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return;
+          movable.forEach(node => {
+            const p = node.position();
+            node.position({ x: p.x + dx, y: p.y + dy });
+          });
+        });
+        components.forEach(({ movable }) => {
+          movable.forEach(node => savedPositions.set(node, { x: node.position('x'), y: node.position('y') }));
+        });
+        corrected = true;
+      };
+
+      // Always core 'cose', not cose-bilkent: bilkent ignores locked nodes
+      // outright, which would defeat the whole "obstacles stay fixed" idea.
+      const layout = eles.layout(Object.assign({}, layoutOpts('cose'), {
+        randomize: false,
+        fit: false,
+        animate: true,
+        animationDuration: 400,
+        nodeRepulsion: 12000,
+        idealEdgeLength: 110,
+        numIter: 1500,
+        gravity: 0,   // no pull toward canvas center — declutter in place, don't drift
+      }));
+      state.activeSpreadLayout = layout;
+      state.spreading = true;
+      // `on`, not `one`: cose's stop() emits layoutstop immediately AND the
+      // already-queued animation frame still runs one more tick afterward,
+      // which re-packs and emits layoutstop a second time — a `one` listener
+      // would miss that second, trailing pack-to-origin. undoComponentPacking
+      // is safe to call repeatedly (it always measures against the ORIGINAL
+      // pre-run centroid, so a second call after the first already corrected
+      // it just measures ~0 delta and no-ops); cleanup() is independently
+      // idempotent via its own supersede check. The timeout/catch paths
+      // below don't call undoComponentPacking at all — they can't be sure
+      // the layout actually settled, so they only release locks.
+      layout.on('layoutstop', () => { undoComponentPacking(); cleanup(); });
+      // Safety net (same reasoning as renderSingleShot's 30s one below):
+      // don't fully trust a 3rd-party layout to always emit layoutstop —
+      // an interrupted/superseded run in particular isn't guaranteed to.
+      // cleanup() is idempotent (its own supersede check no-ops a 2nd call),
+      // so this is harmless if layoutstop does fire normally first.
+      setTimeout(cleanup, 3000);
+      try {
+        layout.run();
+      } catch (_) {
+        cleanup();   // a layout error must still release the locks it took
+      }
+      return true;
+    },
 
     instance() { return state.cy; },   // read-only access (tests / diagnostics)
 
