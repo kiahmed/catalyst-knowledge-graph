@@ -133,6 +133,7 @@ def _fetch_findings(
             d = doc.to_dict() or {}
             d.pop("_synced_at", None)
             d.pop("_hash", None)
+            d["source_url"] = db.clean_url(d.get("source_url"))   # "None" → None
             out.append(d)
         if len(page) < page_size:
             break

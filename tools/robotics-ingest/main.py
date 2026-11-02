@@ -135,6 +135,7 @@ def run_ingest(request: Request):
     firestore_summary = None
     duckdb_push_summary = None
     publish_summary = None
+    integrity_summary = None
     if not dry_run:
         # Handles sweep for newly discovered entities — BEFORE export so the
         # fresh handles land on this run's cards. Prod mirror of the local
@@ -168,6 +169,24 @@ def run_ingest(request: Request):
             _log("firestore_export_failed", error=str(exc), error_type=type(exc).__name__)
             firestore_summary = {"error": str(exc)}
 
+        # Report-only: dangling refs, stale Firestore cards, and cards whose
+        # Arboryx finding was deleted upstream (dedup sweep). Issues log at
+        # WARNING; upstream deletions are informational (cards are kept).
+        try:
+            from google.cloud import firestore  # noqa: PLC0415
+
+            from src.integrity import run_integrity_check  # noqa: PLC0415
+
+            fs = cfg.firestore
+            integrity_summary = run_integrity_check(cfg, firestore.Client(
+                project=fs.project or None,
+                **({"database": fs.database} if fs.database and fs.database != "(default)" else {})))
+            log.log(logging.WARNING if integrity_summary["issue_count"] else logging.INFO,
+                    json.dumps({"event": "integrity_check", **integrity_summary}, default=str))
+        except Exception as exc:
+            _log("integrity_check_failed", error=str(exc), error_type=type(exc).__name__)
+            integrity_summary = {"error": str(exc)}
+
         # Prod: copy the updated DuckDB file back to GCS. No-op locally.
         # Non-fatal — extraction + Firestore writes already succeeded. A
         # failure here just means the next run re-pulls the older DB and
@@ -189,6 +208,7 @@ def run_ingest(request: Request):
         "handle_sweep": sweep_summary,
         "export": export_summary,
         "firestore_export": firestore_summary,
+        "integrity": integrity_summary,
         "duckdb_push": duckdb_push_summary,
         "publish": publish_summary,
     }

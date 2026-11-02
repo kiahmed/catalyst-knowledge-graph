@@ -132,6 +132,7 @@ Today `frontend/index.html` fetches `cards.json` but only renders the card grid.
 | Subscriber list | Email capture + notification on high-significance catalysts (SES or Resend). Magic-link auth only. |
 | Engagement analytics loop | Join Postiz `/analytics` back into DuckDB. A/B test share copy. Feedback loop into which card types to prioritize. |
 | Multi-post packaging | Threads vs single cards vs carousels. Postiz supports this; pick per card-type. |
+| Pipeline monitoring + alerting | TODO (deferred 2026-11-02). Today ingest/render problems only land in Cloud Logging; nobody is notified. Add log-based alerts (email) on robotics-ingest + robotics-render: any `*_failed` event (ERROR), `integrity_check` with `issue_count > 0` (WARNING), new `upstream_deleted` ids (Arboryx dedup sweep), ingest not run in >26h, render-batch errors. Needs a `severity` field in the JSON log lines + Cloud Monitoring alert policies. |
 
 **Gate:** Returning users >30% week-over-week. Subscriber waitlist ≥100.
 

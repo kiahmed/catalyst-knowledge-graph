@@ -10,6 +10,7 @@ Schema mirrors docs/technical_spec.md §2.4 with two additions:
 """
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from typing import Any
 
@@ -161,7 +162,28 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
     con.execute("ALTER TABLE entity_handles ADD COLUMN IF NOT EXISTS audited_at TIMESTAMP")
     # Per-catalyst hashtags (JSON array, priority-ordered) — src/hashtags.py.
     con.execute("ALTER TABLE catalysts ADD COLUMN IF NOT EXISTS hashtags TEXT")
+    # Arboryx wrote some source_urls as the literal "None" / "" (2026-11
+    # dedup sweep): cards showed a "Source" button to /None. NULL them.
+    # Same rule as clean_url: valid = URL_RE on the whitespace-trimmed value.
+    con.execute("UPDATE catalysts SET source_url = NULL "
+                "WHERE source_url IS NOT NULL AND NOT regexp_matches(source_url, ?)", [URL_SQL_RE])
+    con.execute(f"UPDATE catalysts SET source_url = regexp_replace(source_url, '^{_WS}+|{_WS}+$', '', 'g') "
+                f"WHERE regexp_matches(source_url, '^{_WS}|{_WS}$')")
     seed_search_providers(con)
+
+
+# Explicit ASCII whitespace, not \s: Python and DuckDB (RE2) disagree on
+# Unicode spaces, and a mismatch here silently NULLs real URLs.
+_WS_CHARS = " \t\n\r\f\v"
+_WS = r"[ \t\n\r\f\v]"
+URL_RE = re.compile(rf"(?i)^https?://[^ \t\n\r\f\v]+$")
+URL_SQL_RE = rf"(?i)^{_WS}*https?://[^ \t\n\r\f\v]+{_WS}*$"   # URL_RE on a _WS-trimmed value
+
+
+def clean_url(url: Any) -> str | None:
+    """A real http(s) URL, or None for placeholders like "None", "", "N/A"."""
+    s = str(url).strip(_WS_CHARS) if url is not None else ""
+    return s if URL_RE.match(s) else None
 
 
 # ── Watermark ──────────────────────────────────────────────────────
@@ -241,7 +263,7 @@ def insert_catalyst(
             entry.get("entry_id"),
             entry.get("category"),
             entry.get("timestamp"),
-            entry.get("source_url"),
+            clean_url(entry.get("source_url")),
             entry.get("finding") or "",
             headline,
             sentiment_label,
