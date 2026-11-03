@@ -884,6 +884,11 @@ input[type="date"]:focus { border-color: var(--border-focus); }
   cursor: pointer; transition: background 0.15s;
 }
 .edge-pin .ep-open:hover { background: #0891c7; }
+.edge-pin .ep-cards { background: none; border: 1px solid var(--border, #d4d4d8); color: inherit; border-radius: 6px;
+  padding: 6px 10px; font-size: 12px; cursor: pointer; margin-right: 6px; }
+.card-id-filter { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 12px; color: var(--text-secondary); }
+.card-id-filter button { background: none; border: 1px solid var(--border, #d4d4d8); border-radius: 6px; padding: 3px 8px;
+  font-size: 12px; cursor: pointer; color: inherit; }
 
 /* ══ Ticket 1.13e — Mini-graph in expanded card ══ */
 .mini-graph-wrap {
@@ -1109,6 +1114,9 @@ input[type="date"]:focus { border-color: var(--border-focus); }
       <span class="search-icon">⌕</span>
       <input type="text" id="searchBox" placeholder="Search catalysts, tickers, entities...">
     </div>
+    <div class="card-id-filter" id="cardIdFilter" hidden>
+      <span id="cardIdFilterText"></span><button type="button" id="cardIdFilterClear">Show all cards</button>
+    </div>
   </div>
 </div>
 
@@ -1227,6 +1235,7 @@ input[type="date"]:focus { border-color: var(--border-focus); }
     </div>
     <div class="ep-footer">
       <span class="ep-date" id="epDate"></span>
+      <button class="ep-cards" id="epCards" hidden></button>
       <button class="ep-open" id="epOpen">Open catalyst →</button>
     </div>
   </div>
@@ -2302,6 +2311,23 @@ async function copyLink(btn) {
 }
 
 // ══ Filtering ══
+// Set from a graph edge ("seen in N cards"): the Cards tab shows only those.
+let CARD_ID_FILTER = null;   // { ids: Set, label }
+function showCardsFor(ids, label) {
+  CARD_ID_FILTER = { ids: new Set(ids), label };
+  document.getElementById("cardIdFilterText").textContent = `Showing ${ids.length} cards for ${label}`;
+  document.getElementById("cardIdFilter").hidden = false;
+  closeEdgePin();
+  setView("cards");
+  applyAllFilters();
+}
+function clearCardIdFilter() {
+  CARD_ID_FILTER = null;
+  document.getElementById("cardIdFilter").hidden = true;
+  applyAllFilters();
+}
+document.getElementById("cardIdFilterClear").addEventListener("click", clearCardIdFilter);
+
 function applyAllFilters() {
   const activeType = document.querySelector('.filter-pill.active')?.dataset.filter || 'all';
   const activeDate = document.querySelector('.date-controls .ctrl-btn.active')?.dataset.date || 'all';
@@ -2310,6 +2336,7 @@ function applyAllFilters() {
   const search = document.getElementById('searchBox').value.toLowerCase().trim();
 
   filtered = CARDS.filter(c => {
+    if (CARD_ID_FILTER && !CARD_ID_FILTER.ids.has(c.card_id)) return false;
     if (activeType !== 'all' && c.type !== activeType) return false;
     if (confMin > 0 && (c.confidence === null || c.confidence < confMin / 100)) return false;
     if (activeDate === 'today' && c.isoDate !== '2026-04-16') return false;
@@ -2675,6 +2702,11 @@ function openEdgePin(edgeData, cyEdge) {
   }
 
   document.getElementById("epDate").textContent = edgeData.catalystDate ? formatDateShort(edgeData.catalystDate) : "";
+  const ids = edgeData.catalystIds || (edgeData.catalystId ? [edgeData.catalystId] : []);
+  const cardsBtn = document.getElementById("epCards");
+  cardsBtn.hidden = ids.length < 2;
+  cardsBtn.textContent = `Seen in ${ids.length} cards →`;
+  cardsBtn.onclick = () => showCardsFor(ids, `${edgeData.source} —[${edgeData.rel}]→ ${edgeData.target}`);
   const openBtn = document.getElementById("epOpen");
   openBtn.onclick = () => {
     if (!catalyst) return;
@@ -2706,6 +2738,18 @@ function positionEdgePin(cyEdge) {
   pin.style.top = y + "px";
 }
 
+// Same card set the graph line's tooltip counts: the aggregated line under
+// the active filters (symmetric pairs merged), falling back to this edge.
+function _lineCatalystIds(edge) {
+  try {
+    const lines = RoboticsGraph.filterPayload(PAYLOAD, effectiveGraphFilters().filters).edges;
+    const line = lines.find(e => e.rel === edge.rel && e.from === edge.from && e.to === edge.to)
+      || lines.find(e => e.rel === edge.rel && e.from === edge.to && e.to === edge.from);   // symmetric, merged
+    if (line && line.catalyst_ids && line.catalyst_ids.length) return line.catalyst_ids;
+  } catch (_) {}
+  return edge.catalyst_id ? [edge.catalyst_id] : [];
+}
+
 function openEdgePinFromHash(h) {
   if (!PAYLOAD || !PAYLOAD.graph) return;
   const edges = PAYLOAD.graph.edges || [];
@@ -2726,7 +2770,8 @@ function openEdgePinFromHash(h) {
     status: match.status,
     sourceRefs: match.source_refs || [],
     catalystId: match.catalyst_id,
-    catalystDate: match.catalyst_date
+    catalystDate: match.catalyst_date,
+    catalystIds: _lineCatalystIds(match)
   };
   openEdgePin(data, null);
 }

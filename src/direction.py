@@ -157,4 +157,41 @@ def apply_to_extraction(kept: list[dict[str, Any]], verdicts: dict[int, Directio
             stats["flipped"] += 1
         elif v.verdict == "unclear":
             stats["unclear"] += 1
+    stats["deduped"] = dedupe_kept(kept)
     return stats
+
+
+def dedupe_kept(kept: list[dict[str, Any]]) -> int:
+    """A flip can make two of a card's edges identical (a, rel, b): keep the
+    higher-confidence one. Returns how many were removed."""
+    best: dict[tuple, int] = {}
+    for i, r in enumerate(kept):
+        k = (r["entity_a"], r["rel_type"], r["entity_b"])
+        if k not in best or (r.get("confidence") or 0) > (kept[best[k]].get("confidence") or 0):
+            best[k] = i
+    keep = set(best.values())
+    removed = len(kept) - len(keep)
+    kept[:] = [r for i, r in enumerate(kept) if i in keep]
+    return removed
+
+
+def dedupe_rows(con: duckdb.DuckDBPyConnection, catalyst_ids: list[int] | None = None) -> int:
+    """Same for stored rows: per card, one row per (a, rel, b) — the highest
+    confidence, then lowest rel_id. Lifecycle refs never point at rel_ids,
+    so deleting the extras is safe. Returns rows deleted."""
+    scope = ""
+    params: list[Any] = []
+    if catalyst_ids is not None:
+        if not catalyst_ids:
+            return 0
+        scope = f"AND catalyst_id IN ({','.join('?' * len(catalyst_ids))})"
+        params = list(catalyst_ids)
+    doomed = [r[0] for r in con.execute(f"""
+        SELECT rel_id FROM (
+          SELECT rel_id, ROW_NUMBER() OVER (PARTITION BY catalyst_id, entity_a_id, rel_type, entity_b_id
+                                            ORDER BY confidence DESC, rel_id) AS rn
+          FROM relationships WHERE status IN ('active', 'materialized') {scope})
+        WHERE rn > 1""", params).fetchall()]
+    if doomed:
+        con.execute(f"DELETE FROM relationships WHERE rel_id IN ({','.join('?' * len(doomed))})", doomed)
+    return len(doomed)

@@ -149,14 +149,14 @@ def context_for(con, name: str) -> set[str] | None:
         SELECT DISTINCT e2.name
         FROM relationships r
         JOIN entities e2 ON e2.entity_id IN (r.entity_a_id, r.entity_b_id)
-        WHERE ? IN (r.entity_a_id, r.entity_b_id) AND e2.entity_id != ?
+        WHERE ? IN (r.entity_a_id, r.entity_b_id) AND e2.entity_id != ? AND r.status <> 'rejected'
         LIMIT 30
         """, [entity_id, entity_id]).fetchall()]
     headlines = [r[0] for r in con.execute(
         """
         SELECT DISTINCT c.headline
         FROM catalysts c JOIN relationships r ON r.catalyst_id = c.catalyst_id
-        WHERE ? IN (r.entity_a_id, r.entity_b_id)
+        WHERE ? IN (r.entity_a_id, r.entity_b_id) AND r.status <> 'rejected'
         LIMIT 20
         """, [entity_id]).fetchall()]
     sector = os.environ.get("SECTOR", "Robotics")

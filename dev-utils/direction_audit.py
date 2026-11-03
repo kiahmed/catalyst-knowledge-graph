@@ -7,6 +7,15 @@ Selection (one required — there is deliberately no "all"):
     --id ROB-…  /  --ids a,b,c      specific cards
     --from YYYY-MM-DD --to YYYY-MM-DD  cards in a date range
     --missing                       cards never direction-checked (no direction_audits row)
+    --rel-ids 1,2,…  /  --rel-ids @file   only these edges (e.g. a report's 'unclear' ones);
+                                    their cards' audit rows are left as they are
+Options: --fetch-article  give the verifier the card's source article too (more
+context for edges the short card text can't decide).
+         --reject-unclear (with --rel-ids only) edges still 'unclear' get
+status='rejected' — excluded by every card/graph/stats reader, row kept,
+reversible. For edges the
+first pass couldn't place because the edge itself is wrong (e.g. a
+mis-resolved entity: "Audi acquires HUMAIN" from a Saudi Aramco story).
 
 Default is a dry run: verdicts go to a JSONL report, nothing is written.
 --apply: flip → swap entity_a/entity_b on that row ('unclear' leaves it as
@@ -42,8 +51,11 @@ from src import db, direction  # noqa: E402
 from src.config import load_config  # noqa: E402
 
 
-def _select(con, sector: str, args) -> list[tuple[int, str, str]]:
+def _select(con, sector: str, args) -> list[tuple[int, str, str, str | None]]:
     where, params = ["c.sector = ?"], [sector]
+    if args.rel_ids:
+        where.append(f"c.catalyst_id IN (SELECT catalyst_id FROM relationships WHERE rel_id IN "
+                     f"({','.join('?' * len(args.rel_ids))}))"); params += sorted(args.rel_ids)
     if args.ids:
         ids = [i.strip() for i in args.ids.split(",") if i.strip()]
         where.append(f"c.entry_id IN ({','.join('?' * len(ids))})"); params += ids
@@ -53,7 +65,7 @@ def _select(con, sector: str, args) -> list[tuple[int, str, str]]:
         where.append("c.timestamp <= ?"); params.append(args.date_to)
     if args.missing:
         where.append("c.entry_id NOT IN (SELECT entry_id FROM direction_audits)")
-    return con.execute(f"""SELECT c.catalyst_id, c.entry_id, c.headline || '. ' || c.raw_finding
+    return con.execute(f"""SELECT c.catalyst_id, c.entry_id, c.headline || '. ' || c.raw_finding, c.source_url
                            FROM catalysts c WHERE {' AND '.join(where)} ORDER BY c.timestamp, c.entry_id""",
                        params).fetchall()
 
@@ -75,13 +87,24 @@ def main() -> int:
     ap.add_argument("--id"); ap.add_argument("--ids")
     ap.add_argument("--from", dest="date_from"); ap.add_argument("--to", dest="date_to")
     ap.add_argument("--missing", action="store_true")
+    ap.add_argument("--rel-ids")
+    ap.add_argument("--fetch-article", action="store_true")
+    ap.add_argument("--reject-unclear", action="store_true")
+    ap.add_argument("--dedupe-all", action="store_true",
+                    help="no LLM: drop duplicate rows (same card, a, rel, b) across the whole DB")
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--workers", type=int, default=6)
     ap.add_argument("--report-dir", default=str(_REPO_ROOT / "data" / "exports" / "direction_audit"))
     args = ap.parse_args()
     args.ids = ",".join(x for x in (args.id, args.ids) if x)
-    if not (args.ids or args.date_from or args.date_to or args.missing):
-        ap.error("pick cards: --id/--ids, --from/--to, or --missing (there is no 'all')")
+    raw = args.rel_ids or ""
+    if raw.startswith("@"):
+        raw = Path(raw[1:]).read_text()
+    args.rel_ids = {int(x) for x in raw.replace("\n", ",").split(",") if x.strip()}
+    if args.reject_unclear and not args.rel_ids:
+        ap.error("--reject-unclear needs --rel-ids (a reviewed list of edges, never a whole range)")
+    if not (args.ids or args.date_from or args.date_to or args.missing or args.rel_ids or args.dedupe_all):
+        ap.error("pick cards: --id/--ids, --from/--to, --missing or --rel-ids (there is no 'all')")
 
     cfg = load_config()
     bucket = os.environ.get("DUCKDB_GCS_BUCKET", "").strip()
@@ -98,25 +121,47 @@ def main() -> int:
 
     con = duckdb.connect(str(work))
     db.init_schema(con)   # adds direction_audits on first use
+    if args.dedupe_all and not (args.ids or args.date_from or args.date_to or args.missing or args.rel_ids):
+        # Deterministic sweep only — no card selection, no LLM.
+        n = direction.dedupe_rows(con, None) if args.apply else con.execute("""
+            SELECT COUNT(*) FROM (SELECT ROW_NUMBER() OVER (PARTITION BY catalyst_id, entity_a_id, rel_type,
+                                  entity_b_id ORDER BY confidence DESC, rel_id) AS rn
+                                  FROM relationships WHERE status IN ('active', 'materialized')) WHERE rn > 1
+            """).fetchone()[0]
+        print(json.dumps({"dedupe_only": True, "duplicate_rows": n, "applied": args.apply}), file=sys.stderr)
+        con.execute("CHECKPOINT")
+        con.close()
+        if not args.apply:
+            print("dry run — nothing written (add APPLY=1)", file=sys.stderr)
+            return 0
+        return _push(work, blob, generation, bucket)
+
     rules = direction.directional_types(cfg.vocab)
     lookup = direction.on_record_lookup(con)
     cards = []
-    for cid, eid, text in _select(con, cfg.sector, args):
+    for cid, eid, text, url in _select(con, cfg.sector, args):
         edges = _edges(con, cid, rules)
+        if args.rel_ids:
+            edges = [e for e in edges if e["rel_id"] in args.rel_ids]
         names = sorted({n for e in edges for n in (e["entity_a"], e["entity_b"])})
-        cards.append((cid, eid, text, edges, lookup(names) if edges else []))
+        article = ""
+        if args.fetch_article and url and edges:
+            from src.fetch import fetch_article  # noqa: PLC0415
+            fr = fetch_article(url, cfg.extraction.url_fetch)
+            article = fr.text if fr.ok else ""
+        cards.append((cid, eid, text, edges, lookup(names) if edges else [], article))
     print(f"{len(cards)} card(s) selected, {sum(len(c[3]) for c in cards)} directional edge(s)", file=sys.stderr)
 
     client = genai.Client(api_key=cfg.extraction.api_key)
 
     def run(card):
-        cid, eid, text, edges, record = card
+        cid, eid, text, edges, record, article = card
         if not edges:
             return eid, {}, None
         try:
             return eid, direction.check(client, model=cfg.extraction.model,
                                         thinking_level=cfg.extraction.direction_thinking_level,
-                                        finding=text, article="", edges=edges, rules=rules,
+                                        finding=text, article=article, edges=edges, rules=rules,
                                         on_record=record), None
         except Exception as exc:  # noqa: BLE001
             return eid, {}, f"{type(exc).__name__}: {exc}"
@@ -128,7 +173,7 @@ def main() -> int:
     report = Path(args.report_dir) / f"direction_audit_{datetime.now(timezone.utc):%Y%m%dT%H%MZ}.jsonl"
     totals = {"cards": 0, "checked": 0, "flipped": 0, "unclear": 0, "errors": 0}
     with report.open("w") as fh:
-        for cid, eid, text, edges, record in cards:
+        for cid, eid, text, edges, record, _article in cards:
             verdicts, err = results[eid]
             if err:
                 totals["errors"] += 1
@@ -146,18 +191,24 @@ def main() -> int:
                     stats["missing"] += 1
                 if v and v.verdict == "unclear":
                     stats["unclear"] += 1
+                    if args.apply and args.reject_unclear:
+                        con.execute("UPDATE relationships SET status = 'rejected' WHERE rel_id = ?", [e["rel_id"]])
                 if v and v.verdict == "flip":
                     stats["flipped"] += 1
                     if args.apply:   # RHS reads the pre-update row, so this swaps
                         con.execute("UPDATE relationships SET entity_a_id = entity_b_id, entity_b_id = entity_a_id "
                                     "WHERE rel_id = ?", [e["rel_id"]])
-            if args.apply and not stats["missing"]:   # partial → stays MISSING for a re-run
+            # partial → stays MISSING for a re-run; --rel-ids re-checks a subset
+            # of an already-audited card, so its audit row stays as it was.
+            if args.apply and not stats["missing"] and not args.rel_ids:
                 con.execute("INSERT OR REPLACE INTO direction_audits (entry_id, model, checked, flipped, unclear, source) "
                             "VALUES (?, ?, ?, ?, ?, 'audit')",
                             [eid, cfg.extraction.model, stats["checked"], stats["flipped"], stats["unclear"]])
             totals["cards"] += 1
             for k in ("checked", "flipped", "unclear"):
                 totals[k] += stats[k]
+    if args.apply:   # a flip can duplicate another row on the same card
+        totals["deduped"] = direction.dedupe_rows(con, None if args.dedupe_all else [c[0] for c in cards])
     print(json.dumps({**totals, "report": str(report), "applied": args.apply}), file=sys.stderr)
 
     con.execute("CHECKPOINT")
@@ -167,7 +218,13 @@ def main() -> int:
         return 0
     if totals["errors"]:
         print(f"note: {totals['errors']} card(s) errored and were left unaudited; re-run with --missing", file=sys.stderr)
-    probe = duckdb.connect(str(work), read_only=True)   # same guard as duckdb_sync.push
+    return _push(work, blob, generation, bucket)
+
+
+def _push(work: Path, blob, generation: int, bucket: str) -> int:
+    """Integrity probe (same guard as duckdb_sync.push), then a generation-
+    matched upload: a concurrent writer makes this fail, never overwritten."""
+    probe = duckdb.connect(str(work), read_only=True)
     try:
         probe.execute("SELECT COUNT(*) FROM catalysts").fetchone()
         probe.execute("SELECT COUNT(*) FROM entities").fetchone()

@@ -322,6 +322,9 @@ def delete_by_entry_id(con: duckdb.DuckDBPyConnection, entry_id: str) -> int:
     cid = int(row[0])
     con.execute("DELETE FROM relationships WHERE catalyst_id = ?", [cid])
     con.execute("DELETE FROM unresolved_entities WHERE catalyst_id = ?", [cid])
+    # The new extraction gets its own direction check; a stale row would hide
+    # the card from `make direction-audit MISSING=1` if that check fails.
+    con.execute("DELETE FROM direction_audits WHERE entry_id = ?", [entry_id])
     con.execute("DELETE FROM catalysts WHERE catalyst_id = ?", [cid])
     return 1
 

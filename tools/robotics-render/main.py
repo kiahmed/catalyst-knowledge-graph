@@ -499,7 +499,7 @@ def _card_entity_names(card_id: str) -> list[str]:
             FROM catalysts c
             JOIN relationships r ON r.catalyst_id = c.catalyst_id
             JOIN entities e ON e.entity_id IN (r.entity_a_id, r.entity_b_id)
-            WHERE c.entry_id = ?
+            WHERE c.entry_id = ? AND r.status <> 'rejected'
             ORDER BY e.name
             """,
             [card_id],

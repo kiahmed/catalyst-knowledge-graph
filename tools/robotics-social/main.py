@@ -65,7 +65,7 @@ def _select_candidates(limit: int) -> list[dict[str, Any]]:
                    c.source_url,
                    COALESCE(MAX(r.confidence), 0.5) AS max_confidence
             FROM catalysts c
-            LEFT JOIN relationships r ON r.catalyst_id = c.catalyst_id
+            LEFT JOIN relationships r ON r.catalyst_id = c.catalyst_id AND r.status <> 'rejected'
             WHERE c.entry_id NOT IN (SELECT DISTINCT catalyst_id::VARCHAR FROM social_posts)
             GROUP BY c.entry_id, c.headline, c.sentiment_label, c.source_url, c.timestamp
             HAVING max_confidence >= ?

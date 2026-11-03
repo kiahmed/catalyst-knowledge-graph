@@ -131,7 +131,7 @@ def _load_cards(
             SELECT DISTINCT e.name, e.ticker, e.type
             FROM relationships r
             JOIN entities e ON e.entity_id IN (r.entity_a_id, r.entity_b_id)
-            WHERE r.catalyst_id = ?
+            WHERE r.catalyst_id = ? AND r.status <> 'rejected'
             ORDER BY e.name
             """,
             [catalyst_id],
@@ -256,7 +256,7 @@ def _compute_stats(
         FROM relationships r
         JOIN catalysts c ON c.catalyst_id = r.catalyst_id
         JOIN entities e ON e.entity_id IN (r.entity_a_id, r.entity_b_id)
-        WHERE c.sector = ?
+        WHERE c.sector = ? AND r.status <> 'rejected'
         GROUP BY e.name
         ORDER BY cnt DESC
         LIMIT 1
@@ -271,6 +271,7 @@ def _compute_stats(
         FROM relationships r
         JOIN catalysts c ON c.catalyst_id = r.catalyst_id
         WHERE c.sector = ? AND c.timestamp >= (CURRENT_DATE - INTERVAL 14 DAY)
+          AND r.status <> 'rejected'
         GROUP BY r.rel_type
         ORDER BY cnt DESC
         LIMIT 1

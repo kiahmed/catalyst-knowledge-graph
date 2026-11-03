@@ -160,6 +160,10 @@
       return true;
     });
 
+    // One line per (from, rel, to): the same relationship restated by many
+    // cards is drawn once, with count + the card ids (newest first).
+    edges = aggregateEdges(edges);
+
     // Ego view (entity search): only the searched entity's 1-hop edges,
     // capped to the most recent by catalyst_date. Applied on top of the
     // regular filters above.
@@ -181,6 +185,34 @@
     const nodes = rawNodes.filter(n => keep.has(n.id));
 
     return { nodes, edges };
+  }
+
+  // Representative = the newest card's edge (ties: higher confidence);
+  // confidence = the group's max.
+  // Symmetric types (config/relationship_vocab.yaml, directional: false):
+  // A–B and B–A are the same relationship, so they share one line.
+  const SYMMETRIC_RELS = new Set(['partners_with', 'competes_with', 'benchmarks_against']);
+  function aggregateEdges(edges) {
+    const groups = new Map();
+    edges.forEach(e => {
+      const ends = SYMMETRIC_RELS.has(e.rel) && e.to < e.from ? [e.to, e.from] : [e.from, e.to];
+      const key = `${ends[0]}\u0001${e.rel}\u0001${ends[1]}`;
+      const g = groups.get(key);
+      if (g) g.push(e); else groups.set(key, [e]);
+    });
+    const out = [];
+    groups.forEach(g => {
+      g.sort((a, b) => String(b.catalyst_date || '').localeCompare(String(a.catalyst_date || ''))
+        || (b.confidence || 0) - (a.confidence || 0));
+      const ids = [];
+      g.forEach(e => { if (e.catalyst_id && ids.indexOf(e.catalyst_id) < 0) ids.push(e.catalyst_id); });
+      out.push(Object.assign({}, g[0], {
+        confidence: g.reduce((m, e) => Math.max(m, e.confidence || 0), 0),
+        count: Math.max(1, ids.length),
+        catalyst_ids: ids,
+      }));
+    });
+    return out;
   }
 
   function hasPresetPosition(n) {
@@ -293,6 +325,8 @@
           sourceRefs: Array.isArray(e.source_refs) ? e.source_refs : [],
           catalystId: e.catalyst_id || '',
           catalystDate: e.catalyst_date || '',
+          count: e.count || 1,
+          catalystIds: Array.isArray(e.catalyst_ids) ? e.catalyst_ids : (e.catalyst_id ? [e.catalyst_id] : []),
           _width: width,
           _color: color,
           _opacity: opacity,
@@ -496,7 +530,8 @@
     state.tipEl.querySelector('.robotics-tip-title').textContent =
       `${d.source} —[${d.rel}]→ ${d.target}`;
     state.tipEl.querySelector('.robotics-tip-meta').textContent =
-      `evidence: ${d.evidenceType} · confidence: ${Number(d.confidence).toFixed(2)}`;
+      `evidence: ${d.evidenceType} · confidence: ${Number(d.confidence).toFixed(2)}` +
+      (d.count > 1 ? ` · seen in ${d.count} cards` : '');
     state.tipEl.querySelector('.robotics-tip-mech').textContent =
       truncate(d.mechanism, MECH_TRUNC);
     const n = (d.sourceRefs && d.sourceRefs.length) || 0;

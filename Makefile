@@ -293,6 +293,8 @@ reextract:
 #   make direction-audit ID=ROB-…            (or IDS=a,b,c)
 #   make direction-audit FROM=2026-10-01 TO=2026-10-31
 #   make direction-audit MISSING=1           (cards never checked)
+#   make direction-audit RELS=@data/exports/direction_audit/unclear.txt ARTICLE=1
+#                                            (re-check only listed edges, with the article)
 #   … APPLY=1 → writes (generation-checked upload), then run make ingest-prod
 direction-audit:
 	@set -a; . ./.env.prod; set +a; \
@@ -301,7 +303,9 @@ direction-audit:
 	    -e DUCKDB_GCS_BUCKET="$$DATA_BUCKET" -e GEMINI_API_KEY="$$GEMINI_API_KEY" \
 	    --entrypoint python robotics-ingest dev-utils/direction_audit.py \
 	    $(if $(ID),--id $(ID)) $(if $(IDS),--ids $(IDS)) $(if $(FROM),--from $(FROM)) $(if $(TO),--to $(TO)) \
-	    $(if $(MISSING),--missing) $(if $(APPLY),--apply)
+	    $(if $(MISSING),--missing) $(if $(RELS),--rel-ids $(RELS)) $(if $(ARTICLE),--fetch-article) \
+	    $(if $(DEDUPE_ALL),--dedupe-all) $(if $(REJECT_UNCLEAR),--reject-unclear) \
+	    $(if $(APPLY),--apply)
 
 backtest:
 	@docker compose exec robotics-ingest python /app/dev-utils/backtest.py \
