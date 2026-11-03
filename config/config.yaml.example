@@ -15,8 +15,12 @@ modules:
 
 # ── Extraction ────────────────────────────────────────────────────
 extraction:
-  model: gemini-2.5-flash  # env: GEMINI_MODEL
-  temperature: 0.2         # low — we want determinism for the closed vocab
+  model: gemini-3.6-flash  # env: GEMINI_MODEL. 2.5-flash is deprecated: routed
+                           # to 3.5-flash-lite from 2026-12-01.
+  thinking_level: medium   # Gemini 3+ (env: GEMINI_THINKING_LEVEL); see backtest
+  direction_check: true    # Pass 3: re-check FROM/TO of directional edges
+  direction_thinking_level: high
+  temperature: 0.2         # 2.x only — Gemini 3 keeps its default temperature
   prompt_version: v2       # v2 = inference-first (direct + inferred edges,
                            # significance gate, mechanism × impact decomp)
 
@@ -24,9 +28,9 @@ extraction:
   # Enum maps to concrete token caps. Overridable by max_output_tokens
   # below if you need a custom value (explicit wins).
   #   low    = 4096   — tight, fastest, risks mid-CoT cutoff on busy catalysts
-  #   medium = 8192   — default; fits 4-10 edges w/ mechanism + reasoning
-  #   high   = 16384  — dense catalysts, rich reasoning, larger vocab runs
-  thinking_budget: medium
+  #   medium = 8192   — fits 4-10 edges on Gemini 2.x (code default)
+  #   high   = 16384  — Gemini 3: thinking tokens count against the cap (set below)
+  thinking_budget: high      # 16384: Gemini 3 counts thinking tokens against the cap
   # max_output_tokens: 8192   # explicit override; comment out to use thinking_budget
 
   confidence:
@@ -65,7 +69,8 @@ extraction:
     # missing_source_url: grounding fires only when entry.source_url
     #   is empty — complements url_fetch below.
     when: missing_source_url
-    model: gemini-2.5-flash  # Gemini 3 would allow single-pass but preview + per-search billing
+    model: gemini-3.6-flash  # search summary only; Pass 2 does the reasoning
+    thinking_level: low
     max_results_hint: 5
 
   # ── Pass-1 enrichment: URL article fetch (§2.2) ─────────────────
@@ -101,7 +106,7 @@ lifecycle:
   event_driven: true                  # true = trigger on new edge; false = nightly batch
   confirm_weight_boost: 0.15          # add to confidence on confirm (clamped ≤ 1.0)
   invalidate_weight_penalty: 0.30     # subtract on invalidate (clamped ≥ 0.0)
-  validator_model: gemini-2.5-flash
+  validator_model: gemini-3.6-flash
 
 # ── Entity resolution ─────────────────────────────────────────────
 resolution:

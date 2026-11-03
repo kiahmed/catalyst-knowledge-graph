@@ -39,6 +39,7 @@ class GroundingConfig:
     when: str                # always | missing_source_url | never
     model: str
     max_results_hint: int
+    thinking_level: str              # Gemini 3+: minimal | low | medium | high
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,10 @@ class ExtractionConfig:
     max_output_tokens: int
     thinking_budget: str             # low | medium | high (diagnostic; the resolved
                                      # token count is max_output_tokens above)
+    thinking_level: str              # Gemini 3+: minimal | low | medium | high
+                                     # (2.x models ignore it and use temperature)
+    direction_check: bool            # Pass 3: re-check directional edges (src/direction.py)
+    direction_thinking_level: str    # thinking for that check (rare, hard → high)
     prompt_version: str
     confidence_drop: float
     confidence_write: float
@@ -187,6 +192,18 @@ _THINKING_BUDGET_TOKENS: dict[str, int] = {
 }
 
 
+_THINKING_LEVELS = ("minimal", "low", "medium", "high")
+
+
+def _thinking_level(value: Any) -> str:
+    """Fail at config load, not on every Gemini call (a typo would otherwise
+    fail every Pass-2 extraction and silently disable grounding)."""
+    level = str(value).strip().lower()
+    if level not in _THINKING_LEVELS:
+        raise ValueError(f"thinking_level must be one of {_THINKING_LEVELS}, got {value!r}")
+    return level
+
+
 def _load_yaml(path: Path) -> dict[str, Any]:
     with path.open() as f:
         return yaml.safe_load(f) or {}
@@ -264,10 +281,14 @@ def load_config() -> RoboticsConfig:
             cards_prefix=os.environ.get("STORAGE_CARDS_PREFIX", storage_cfg.get("cards_prefix", "cards")),
         ),
         extraction=ExtractionConfig(
-            model=os.environ.get("GEMINI_MODEL", extraction.get("model", "gemini-2.5-flash")),
+            model=os.environ.get("GEMINI_MODEL", extraction.get("model", "gemini-3.6-flash")),
             temperature=float(extraction.get("temperature", 0.2)),
             max_output_tokens=max_output_tokens,
             thinking_budget=thinking_budget,
+            thinking_level=_thinking_level(os.environ.get(
+                "GEMINI_THINKING_LEVEL", extraction.get("thinking_level", "medium"))),
+            direction_check=bool(extraction.get("direction_check", True)),
+            direction_thinking_level=_thinking_level(extraction.get("direction_thinking_level", "high")),
             prompt_version=extraction.get("prompt_version", "v2"),
             confidence_drop=float(confidence.get("drop", 0.30)),
             confidence_write=float(confidence.get("write", 0.60)),
@@ -281,8 +302,9 @@ def load_config() -> RoboticsConfig:
             grounding=GroundingConfig(
                 enabled=bool(grounding.get("enabled", True)),
                 when=str(grounding.get("when", "missing_source_url")),
-                model=str(grounding.get("model", extraction.get("model", "gemini-2.5-flash"))),
+                model=str(grounding.get("model", extraction.get("model", "gemini-3.6-flash"))),
                 max_results_hint=int(grounding.get("max_results_hint", 5)),
+                thinking_level=_thinking_level(grounding.get("thinking_level", "low")),
             ),
             url_fetch=UrlFetchConfig(
                 enabled=bool(url_fetch.get("enabled", True)),
@@ -325,7 +347,7 @@ def load_config() -> RoboticsConfig:
             event_driven=bool(lifecycle_cfg.get("event_driven", True)),
             confirm_weight_boost=float(lifecycle_cfg.get("confirm_weight_boost", 0.15)),
             invalidate_weight_penalty=float(lifecycle_cfg.get("invalidate_weight_penalty", 0.30)),
-            validator_model=str(lifecycle_cfg.get("validator_model", "gemini-2.5-flash")),
+            validator_model=str(lifecycle_cfg.get("validator_model", "gemini-3.6-flash")),
         ),
         backtest_dir=backtest_cfg.get("output_dir", "/data/exports/backtests"),
         vocab=vocab,

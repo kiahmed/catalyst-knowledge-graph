@@ -1,4 +1,4 @@
-"""Extraction — inference-first, two-pass on Gemini 2.5 Flash.
+"""Extraction — inference-first, two-pass (model: cfg.extraction.model, Gemini 3.6 Flash).
 
 Single public entry point: `extract(entry, config)` → ExtractionResult.
 
@@ -24,8 +24,9 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 from dataclasses import asdict, dataclass, field
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from google import genai
 from google.genai import types as genai_types
@@ -394,10 +395,11 @@ def _run_grounding(
             lambda: client.models.generate_content(
                 model=g.model,
                 contents=prompt,
-                config=genai_types.GenerateContentConfig(
+                config=_gen_config(
+                    g.model, g.thinking_level, temperature=0.1,
+                    # Gemini 3 counts thinking against this cap — 2048 truncated.
+                    max_output_tokens=2048 if not _is_gemini3(g.model) else 8192,
                     tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())],
-                    temperature=0.1,
-                    max_output_tokens=2048,
                 ),
             ),
             op="grounding",
@@ -494,6 +496,25 @@ def _finish_reason(response: Any) -> str | None:
         return None
 
 
+def _is_gemini3(model: str) -> bool:
+    """True for Gemini 3+ ids ("gemini-3.6-flash", "models/gemini-3-flash-preview").
+    Positive match: an unrecognised id falls back to the 2.x config, which
+    every model accepts, rather than sending thinking_level to one that doesn't."""
+    m = re.search(r"gemini-(\d+)", model.lower())
+    return bool(m) and int(m.group(1)) >= 3
+
+
+def _gen_config(model: str, thinking_level: str, *, temperature: float,
+                **kwargs: Any) -> Any:
+    """Gemini 3+: set thinking_level and leave temperature at the model
+    default (Google: don't override it). 2.x keeps the old low temperature,
+    so backtests can still compare against it."""
+    if _is_gemini3(model):
+        return genai_types.GenerateContentConfig(
+            thinking_config=genai_types.ThinkingConfig(thinking_level=thinking_level), **kwargs)
+    return genai_types.GenerateContentConfig(temperature=temperature, **kwargs)
+
+
 def _call_extraction_with_budget_bump(
     *,
     client: genai.Client,
@@ -502,6 +523,7 @@ def _call_extraction_with_budget_bump(
     user_prompt: str,
     system_prompt: str,
     temperature: float,
+    thinking_level: str,
     start_tokens: int,
 ) -> tuple[Any, int]:
     """Pass-2 schema-constrained call with transient-retry + MAX_TOKENS bump.
@@ -521,12 +543,11 @@ def _call_extraction_with_budget_bump(
         return client.models.generate_content(
             model=model,
             contents=user_prompt,
-            config=genai_types.GenerateContentConfig(
+            config=_gen_config(
+                model, thinking_level, temperature=temperature, max_output_tokens=tok,
                 system_instruction=system_prompt,
                 response_mime_type="application/json",
                 response_schema=ExtractionSchema,
-                temperature=temperature,
-                max_output_tokens=tok,
             ),
         )
 
@@ -557,8 +578,12 @@ def _call_extraction_with_budget_bump(
     return response, tokens
 
 
-def extract(entry: dict[str, Any], cfg: RoboticsConfig) -> ExtractionResult:
-    """Run two-pass extraction on one master-log entry."""
+def extract(entry: dict[str, Any], cfg: RoboticsConfig,
+            on_record: Callable[[list[str]], list[str]] | None = None) -> ExtractionResult:
+    """Run extraction on one master-log entry: enrichment, schema extraction,
+    then (cfg.extraction.direction_check) a direction check of directional
+    edges. `on_record(names)` returns relationships already stored between
+    those entities (context for the direction check; see src/direction.py)."""
     if not cfg.extraction.api_key:
         raise RuntimeError("GEMINI_API_KEY is not set; cannot call Gemini.")
 
@@ -588,6 +613,7 @@ def extract(entry: dict[str, Any], cfg: RoboticsConfig) -> ExtractionResult:
         user_prompt=user_prompt,
         system_prompt=system_prompt,
         temperature=cfg.extraction.temperature,
+        thinking_level=cfg.extraction.thinking_level,
         start_tokens=cfg.extraction.max_output_tokens,
     )
 
@@ -652,6 +678,29 @@ def extract(entry: dict[str, Any], cfg: RoboticsConfig) -> ExtractionResult:
             flagged.append(r)
         kept.append(r)
 
+    # Pass 3 — direction check (one call; fail-open: on error the edges are
+    # kept as extracted and the miss is logged).
+    direction_stats: dict[str, Any] = {}
+    if cfg.extraction.direction_check:
+        from . import direction  # noqa: PLC0415
+
+        rules = direction.directional_types(cfg.vocab)
+        checked = [i for i, r in enumerate(kept) if r["rel_type"] in rules]
+        if checked:
+            edges = [kept[i] for i in checked]
+            names = sorted({n for e in edges for n in (e["entity_a"], e["entity_b"])})
+            try:
+                verdicts = direction.check(
+                    client, model=cfg.extraction.model,
+                    thinking_level=cfg.extraction.direction_thinking_level,
+                    finding=str(entry.get("finding") or ""), article=enrich_text,
+                    edges=edges, rules=rules, on_record=on_record(names) if on_record else [])
+                direction_stats = direction.apply_to_extraction(kept, dropped, verdicts, checked)
+                flagged = [r for r in kept if r.get("flagged")]
+            except Exception as exc:  # noqa: BLE001
+                direction_stats = {"error": f"{type(exc).__name__}: {exc}"}
+                log.warning("direction_check_failed entry_id=%s err=%s", entry.get("entry_id"), exc)
+
     return ExtractionResult(
         entry_id=str(entry.get("entry_id") or ""),
         prompt_version=cfg.extraction.prompt_version,
@@ -665,7 +714,7 @@ def extract(entry: dict[str, Any], cfg: RoboticsConfig) -> ExtractionResult:
         research_sources=citations,
         dropped_low_confidence=dropped,
         flagged_medium_confidence=flagged,
-        enrichment=enrich_diag,
+        enrichment={**enrich_diag, "direction_check": direction_stats},
         raw_response_json=response.text or "",
     )
 
