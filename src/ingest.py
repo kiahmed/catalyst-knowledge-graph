@@ -29,7 +29,7 @@ import duckdb
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from . import db, hashtags
+from . import db, direction, hashtags
 from .config import RoboticsConfig
 from .extract import ExtractionResult, extract, research_sources_json
 from .resolve import resolve_entity
@@ -227,6 +227,16 @@ def write_extraction(
         # the same transaction — a catalyst is never visible without them.
         hashtags.store_for_catalyst(con, catalyst_id)
 
+        # Record the Pass-3 direction check so the audit tool's MISSING mode
+        # skips this card. Absent, failed or partial check (a verdict missing)
+        # → no row → `make direction-audit MISSING=1` picks it up.
+        dc = (result.enrichment or {}).get("direction_check") or {}
+        if "checked" in dc and not dc.get("missing"):
+            con.execute(
+                "INSERT OR REPLACE INTO direction_audits (entry_id, model, checked, flipped, unclear, source) "
+                "VALUES (?, ?, ?, ?, ?, 'ingest')",
+                [entry.get("entry_id"), result.model, dc["checked"], dc["flipped"], dc["unclear"]])
+
         con.execute("COMMIT")
         return catalyst_id
     except Exception:
@@ -297,6 +307,7 @@ def run_ingest(
         # backlog grows (observed in prod 2026-08-25/26). 0 = unlimited.
         budget_s = float(os.environ.get("INGEST_TIME_BUDGET_S", "0") or 0)
         run_start = time.monotonic()
+        record_lookup = direction.on_record_lookup(con)   # Pass-3 context
         for idx, e in enumerate(new_entries, start=1):
             entry_id = e.get("entry_id") or "?"
             if dry_run:
@@ -315,7 +326,7 @@ def run_ingest(
             )
             t0 = time.monotonic()
             try:
-                result = extract(e, cfg)
+                result = extract(e, cfg, on_record=record_lookup)
                 write_extraction(con, e, result, cfg)
                 # Advance watermark AFTER successful write, so mid-batch crash is safe.
                 db.set_watermark(

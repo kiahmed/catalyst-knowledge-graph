@@ -9,9 +9,11 @@ Gating: the `DUCKDB_GCS_BUCKET` env var.
     unset / empty  → local mode  → pull()/push() are no-ops
     set            → prod mode   → object is gs://{bucket}/{basename(duckdb_path)}
 
-Single-writer contract: only robotics-ingest calls push(); robotics-render
-calls pull() only (it opens DuckDB read-only). Ingest runs max-instances=1,
-so there is never a concurrent writer and a plain object overwrite is safe.
+Writers: robotics-ingest (pull → run → push) and the operator tool
+dev-utils/direction_audit.py. Every push is conditional on the generation
+this process pulled (if_generation_match), so whichever writer finishes
+second fails loudly ("generation_conflict") instead of silently overwriting
+the other's changes. robotics-render only pulls.
 
 push() must be called only AFTER the DuckDB connection is closed (or an
 explicit CHECKPOINT has run) — DuckDB folds the WAL into the main .duckdb
@@ -23,6 +25,10 @@ import logging
 import os
 
 log = logging.getLogger("robotics.duckdb_sync")
+
+# duckdb_path → GCS generation of the copy this process pulled (0 = the object
+# didn't exist). push() uploads only if the remote is still that generation.
+_PULLED_GENERATION: dict[str, int] = {}
 
 
 def _bucket_name() -> str:
@@ -60,7 +66,10 @@ def pull(duckdb_path: str) -> dict:
     blob = storage.Client().bucket(bucket_name).blob(obj)
     if not blob.exists():
         log.info("duckdb_pull skipped — no remote object gs://%s/%s", bucket_name, obj)
+        _PULLED_GENERATION[duckdb_path] = 0   # push must still find no object
         return {"pulled": False, "reason": "no_remote_object"}
+    blob.reload()
+    generation = blob.generation
 
     os.makedirs(os.path.dirname(duckdb_path) or ".", exist_ok=True)
     # Drop sidecar files left behind by a PREVIOUS run on this instance.
@@ -76,10 +85,12 @@ def pull(duckdb_path: str) -> dict:
                 os.remove(sidecar)
             except OSError as exc:
                 log.warning("duckdb_pull could not remove %s: %s", sidecar, exc)
-    blob.download_to_filename(duckdb_path)
+    blob.download_to_filename(duckdb_path, if_generation_match=generation)
+    _PULLED_GENERATION[duckdb_path] = generation
     size = os.path.getsize(duckdb_path)
-    log.info("duckdb_pull ok gs://%s/%s -> %s (%d bytes)", bucket_name, obj, duckdb_path, size)
-    return {"pulled": True, "object": f"gs://{bucket_name}/{obj}", "bytes": size}
+    log.info("duckdb_pull ok gs://%s/%s -> %s (%d bytes, generation %s)",
+             bucket_name, obj, duckdb_path, size, generation)
+    return {"pulled": True, "object": f"gs://{bucket_name}/{obj}", "bytes": size, "generation": generation}
 
 
 def push(duckdb_path: str) -> dict:
@@ -115,7 +126,20 @@ def push(duckdb_path: str) -> dict:
 
     obj = _object_name(duckdb_path)
     blob = storage.Client().bucket(bucket_name).blob(obj)
-    blob.upload_from_filename(duckdb_path)
+    from google.api_core.exceptions import PreconditionFailed
+
+    expected = _PULLED_GENERATION.get(duckdb_path)
+    try:
+        if expected is None:   # never pulled in this process (tests / ad-hoc)
+            blob.upload_from_filename(duckdb_path)
+        else:
+            blob.upload_from_filename(duckdb_path, if_generation_match=expected)
+    except PreconditionFailed:
+        log.error("duckdb_push CONFLICT — gs://%s/%s changed since pull (expected generation %s); "
+                  "not overwriting. This run's DB changes are dropped; the next run redoes them.",
+                  bucket_name, obj, expected)
+        return {"pushed": False, "reason": "generation_conflict", "expected_generation": expected}
+    _PULLED_GENERATION[duckdb_path] = blob.generation
     size = os.path.getsize(duckdb_path)
     log.info("duckdb_push ok %s -> gs://%s/%s (%d bytes)", duckdb_path, bucket_name, obj, size)
     return {"pushed": True, "object": f"gs://{bucket_name}/{obj}", "bytes": size}

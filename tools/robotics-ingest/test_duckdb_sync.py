@@ -44,8 +44,9 @@ class TestPullClearsStaleSidecars(unittest.TestCase):
 
             fake_blob = mock.MagicMock()
             fake_blob.exists.return_value = True
+            fake_blob.generation = 42
             fake_blob.download_to_filename.side_effect = (
-                lambda dest: Path(dest).write_bytes(Path(remote).read_bytes()))
+                lambda dest, **kw: Path(dest).write_bytes(Path(remote).read_bytes()))
             fake_storage = mock.MagicMock()
             fake_storage.Client.return_value.bucket.return_value.blob.return_value = fake_blob
 
@@ -85,6 +86,35 @@ class TestPushIntegrityGuard(unittest.TestCase):
                 out = duckdb_sync.push(db_path)
             self.assertTrue(out["pushed"])
             fake_blob.upload_from_filename.assert_called_once()
+
+
+class TestPushGenerationGuard(unittest.TestCase):
+    """Another writer pushed between our pull and push → refuse, don't overwrite."""
+
+    def _storage(self, blob):
+        fake_storage = mock.MagicMock()
+        fake_storage.Client.return_value.bucket.return_value.blob.return_value = blob
+        return fake_storage
+
+    def test_push_is_conditional_on_pulled_generation(self):
+        from google.api_core.exceptions import PreconditionFailed
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = os.path.join(tmp, "robotics.duckdb")
+            _make_db(db_path)
+            blob = mock.MagicMock()
+            blob.exists.return_value = True
+            blob.generation = 7
+            blob.download_to_filename.side_effect = lambda dest, **kw: None
+            blob.upload_from_filename.side_effect = PreconditionFailed("changed")
+            fs = self._storage(blob)
+            with mock.patch.dict(os.environ, {"DUCKDB_GCS_BUCKET": "test-bucket"}), \
+                    mock.patch.dict(sys.modules, {"google.cloud.storage": fs}), \
+                    mock.patch("google.cloud.storage", fs, create=True):
+                duckdb_sync.pull(db_path)
+                out = duckdb_sync.push(db_path)
+            self.assertEqual(out["reason"], "generation_conflict")
+            self.assertEqual(blob.download_to_filename.call_args.kwargs["if_generation_match"], 7)
+            self.assertEqual(blob.upload_from_filename.call_args.kwargs["if_generation_match"], 7)
 
 
 if __name__ == "__main__":

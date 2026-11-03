@@ -222,7 +222,10 @@ def run_ingest(request: Request):
         # it via the `duckdb_push_failed` log line.
         try:
             duckdb_push_summary = duckdb_push(cfg.duckdb_path)
-            _log("duckdb_push", **duckdb_push_summary)
+            # A generation conflict (another writer, e.g. direction_audit, pushed
+            # meanwhile) is a failure, not success — *_failed logs at ERROR.
+            _log("duckdb_push_failed" if duckdb_push_summary.get("reason") == "generation_conflict"
+                 else "duckdb_push", **duckdb_push_summary)
         except Exception as exc:
             _log("duckdb_push_failed", error=str(exc), error_type=type(exc).__name__)
             duckdb_push_summary = {"error": str(exc)}

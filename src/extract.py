@@ -695,8 +695,7 @@ def extract(entry: dict[str, Any], cfg: RoboticsConfig,
                     thinking_level=cfg.extraction.direction_thinking_level,
                     finding=str(entry.get("finding") or ""), article=enrich_text,
                     edges=edges, rules=rules, on_record=on_record(names) if on_record else [])
-                direction_stats = direction.apply_to_extraction(kept, dropped, verdicts, checked)
-                flagged = [r for r in kept if r.get("flagged")]
+                direction_stats = direction.apply_to_extraction(kept, verdicts, checked)
             except Exception as exc:  # noqa: BLE001
                 direction_stats = {"error": f"{type(exc).__name__}: {exc}"}
                 log.warning("direction_check_failed entry_id=%s err=%s", entry.get("entry_id"), exc)

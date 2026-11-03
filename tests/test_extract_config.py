@@ -38,6 +38,7 @@ class TestGeminiConfig(unittest.TestCase):
         with self.assertRaises(ValueError):
             config._thinking_level("med")
 
+    @unittest.skipUnless(os.path.exists(config._CONFIG_PATH), "config/config.yaml is gitignored (absent in CI)")
     def test_loaded_config_uses_valid_levels(self):
         cfg = config.load_config()
         self.assertIn(cfg.extraction.thinking_level, config._THINKING_LEVELS)

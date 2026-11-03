@@ -288,6 +288,21 @@ reextract:
 # dump JSONL to /data/exports/backtests/ for eyeballing.
 # Usage: make backtest LIMIT=10
 #        make backtest IDS=ROB-041726-001,ROB-041726-002
+# Re-check FROM/TO of stored directional relationships (src/direction.py).
+# Works on the authoritative cloud DB; dry run unless APPLY=1. No "all":
+#   make direction-audit ID=ROB-…            (or IDS=a,b,c)
+#   make direction-audit FROM=2026-10-01 TO=2026-10-31
+#   make direction-audit MISSING=1           (cards never checked)
+#   … APPLY=1 → writes (generation-checked upload), then run make ingest-prod
+direction-audit:
+	@set -a; . ./.env.prod; set +a; \
+	  docker compose run --rm --no-deps -v "$(CURDIR):/repo" -w /repo \
+	    -v "$$FIREBASE_DEPLOY_KEY:/tmp/sa.json:ro" -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json \
+	    -e DUCKDB_GCS_BUCKET="$$DATA_BUCKET" -e GEMINI_API_KEY="$$GEMINI_API_KEY" \
+	    --entrypoint python robotics-ingest dev-utils/direction_audit.py \
+	    $(if $(ID),--id $(ID)) $(if $(IDS),--ids $(IDS)) $(if $(FROM),--from $(FROM)) $(if $(TO),--to $(TO)) \
+	    $(if $(MISSING),--missing) $(if $(APPLY),--apply)
+
 backtest:
 	@docker compose exec robotics-ingest python /app/dev-utils/backtest.py \
 		$(if $(LIMIT),--limit $(LIMIT)) $(if $(IDS),--ids $(IDS))

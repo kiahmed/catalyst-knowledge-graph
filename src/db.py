@@ -153,6 +153,19 @@ CREATE TABLE IF NOT EXISTS dedup_feed_runs (
     processed_at  TIMESTAMP DEFAULT now()
 );
 
+-- Direction check (src/direction.py): one row per card whose directional
+-- edges were verified — at ingest (Pass 3) or by dev-utils/direction_audit.py.
+-- Direction only: flips are applied, 'unclear' edges stay as extracted.
+CREATE TABLE IF NOT EXISTS direction_audits (
+    entry_id    VARCHAR PRIMARY KEY,
+    model       VARCHAR NOT NULL,
+    checked     INTEGER NOT NULL,
+    flipped     INTEGER NOT NULL,
+    unclear     INTEGER NOT NULL,
+    source      VARCHAR NOT NULL,          -- 'ingest' | 'audit'
+    audited_at  TIMESTAMP DEFAULT now()
+);
+
 -- ── Indexes ────────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_catalysts_sector_ts ON catalysts(sector, timestamp);
 CREATE INDEX IF NOT EXISTS idx_catalysts_entry_id ON catalysts(entry_id);
