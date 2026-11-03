@@ -24,7 +24,7 @@ from typing import Any
 
 import duckdb
 
-from . import db, detect, handles, recap, story
+from . import db, detect, handles, recap, story, upstream_dedup
 from .config import RoboticsConfig
 
 
@@ -116,6 +116,7 @@ def _load_cards(
     ).fetchall()
 
     aliases = story.load_aliases(con)   # once per export, for in_story tagging
+    merged_from = upstream_dedup.merged_from_map(con)   # kept card → removed duplicate ids
     cards = []
     for row in catalyst_rows:
         (
@@ -228,6 +229,9 @@ def _load_cards(
                 "linkedin_text": _linkedin_text(headline, subtitle, source_url),
             },
         })
+
+        if entry_id in merged_from:   # only when present: keeps other cards' delta hashes stable
+            cards[-1]["merged_from"] = merged_from[entry_id]
 
     return cards
 

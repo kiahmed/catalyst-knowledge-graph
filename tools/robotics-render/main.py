@@ -823,8 +823,10 @@ def og_card_page(card_id: str):
         # generic text rather than a dead preview.
         title, description = GENERIC_TITLE, GENERIC_DESCRIPTION
     else:
+        # Unknown here — keep the id: the app opens the card it was merged
+        # into (merged_from, upstream dedup) or just shows the feed.
         utm = _utm_query()
-        return redirect(CANONICAL_ORIGIN + ("/" + utm if utm else ""), code=302)
+        return redirect(f"{CANONICAL_ORIGIN}/?card={card_id}" + (("&" + utm[1:]) if utm else ""), code=302)
 
     return (
         _og_page(card_id, title, description, generation, _utm_query()),

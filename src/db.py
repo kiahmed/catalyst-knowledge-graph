@@ -136,6 +136,23 @@ CREATE TABLE IF NOT EXISTS ingestion_meta (
     last_processed_at         TIMESTAMP DEFAULT now()
 );
 
+-- Arboryx dedup feed (dedup_runs/*): one row per upstream-deleted finding we
+-- reacted to, keyed by target so a re-run never acts twice. action:
+-- 'merged' (our copy removed, links redirect to matched_id), 'no_card'
+-- (we never ingested it), 'attention' (admin decides). src/upstream_dedup.py.
+CREATE TABLE IF NOT EXISTS upstream_merges (
+    target_id     VARCHAR PRIMARY KEY,
+    matched_id    VARCHAR NOT NULL,
+    run_id        VARCHAR NOT NULL,
+    action        VARCHAR NOT NULL,
+    processed_at  TIMESTAMP DEFAULT now()
+);
+-- Feed cursor: dedup_runs doc ids (ISO, so they sort) already applied.
+CREATE TABLE IF NOT EXISTS dedup_feed_runs (
+    run_id        VARCHAR PRIMARY KEY,
+    processed_at  TIMESTAMP DEFAULT now()
+);
+
 -- ── Indexes ────────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_catalysts_sector_ts ON catalysts(sector, timestamp);
 CREATE INDEX IF NOT EXISTS idx_catalysts_entry_id ON catalysts(entry_id);

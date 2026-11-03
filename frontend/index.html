@@ -1478,6 +1478,7 @@ function transformCard(c, idx, sector) {
     _rels: rels,
     _ents: ents,                 // raw entities incl. in_story (story dimming)
     _storyNamesEntities: c.story_names_entities,
+    merged_from: c.merged_from || [],   // upstream-deduped ids that now land here
   };
 }
 
@@ -2112,7 +2113,8 @@ function maybeOpenFromHash() {
   const h = parseHash();
   const id = h.card;
   if (!id) return;
-  const card = CARDS.find(c => c.card_id === id);
+  // A removed duplicate's old link (/card/<id>) opens the card it merged into.
+  const card = CARDS.find(c => c.card_id === id) || CARDS.find(c => (c.merged_from || []).includes(id));
   if (card) expandCard(card);
 }
 window.addEventListener("hashchange", () => {

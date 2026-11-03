@@ -133,12 +133,13 @@ class OgRouteTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn(main.GENERIC_TITLE, resp.get_data(as_text=True))
 
-    def test_doc_and_png_both_missing_redirects_home(self):
+    def test_doc_and_png_both_missing_redirects_with_id(self):
+        # Keeps the id so the app can open the card it was merged into.
         mock.patch.object(main, "_fetch_card_doc", lambda cid: None).start()
         mock.patch.object(main, "_cards_bucket", lambda: FakeBucket()).start()
-        resp = self.client.get(f"/card/{CARD_ID}")
+        resp = self.client.get(f"/card/{CARD_ID}?utm_source=x")
         self.assertEqual(resp.status_code, 302)
-        self.assertEqual(resp.headers["Location"], main.CANONICAL_ORIGIN)
+        self.assertEqual(resp.headers["Location"], f"{main.CANONICAL_ORIGIN}/?card={CARD_ID}&utm_source=x")
 
     def test_bad_ids_rejected(self):
         # Path traversal: Flask's default <converter> won't match slashes, so

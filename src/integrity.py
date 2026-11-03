@@ -15,7 +15,7 @@ Checks:
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 import duckdb
 
@@ -48,7 +48,8 @@ def check_db(con: duckdb.DuckDBPyConnection) -> dict[str, list]:
             for name, sql in _DB_CHECKS.items()}
 
 
-def run_integrity_check(cfg: RoboticsConfig, fs_client: Any = None) -> dict[str, Any]:
+def run_integrity_check(cfg: RoboticsConfig, fs_client: Any = None,
+                        on_upstream_deleted: Callable[[list[str]], Any] | None = None) -> dict[str, Any]:
     """Return {issue_count, upstream_deleted_count, <check>: {count, sample}}.
 
     `issue_count` is real breakage (dangling refs, stale Firestore docs);
@@ -69,12 +70,21 @@ def run_integrity_check(cfg: RoboticsConfig, fs_client: Any = None) -> dict[str,
         except Exception as exc:  # keep the DuckDB results on a Firestore hiccup
             fs_error = f"{type(exc).__name__}: {exc}"
 
+    callback_error = None
+    if on_upstream_deleted and found.get("upstream_deleted"):
+        try:
+            on_upstream_deleted(found["upstream_deleted"])   # full list, not the log sample
+        except Exception as exc:  # keep the rest of the summary
+            callback_error = f"{type(exc).__name__}: {exc}"
+
     out: dict[str, Any] = {k: {"count": len(v), "sample": v[:_SAMPLE]} for k, v in found.items() if v}
     out["issue_count"] = (sum(len(v) for k, v in found.items() if k != "upstream_deleted")
-                          + (1 if fs_error else 0))
+                          + (1 if fs_error else 0) + (1 if callback_error else 0))
     out["upstream_deleted_count"] = len(found.get("upstream_deleted", []))
     if fs_error:
         out["firestore_error"] = fs_error
+    if callback_error:
+        out["upstream_deleted_callback_error"] = callback_error
     return out
 
 

@@ -47,6 +47,14 @@ logging.basicConfig(
 log = logging.getLogger("robotics-ingest")
 
 
+def _fs_client(cfg: Any) -> Any:
+    from google.cloud import firestore  # noqa: PLC0415
+
+    fs = cfg.firestore
+    return firestore.Client(project=fs.project or None,
+                            **({"database": fs.database} if fs.database and fs.database != "(default)" else {}))
+
+
 def _log(event: str, **fields: Any) -> None:
     # *_failed events log at ERROR so Cloud Logging severity alerts fire —
     # the 2026-10-23 export outage ran 4 days silently at INFO.
@@ -136,6 +144,7 @@ def run_ingest(request: Request):
     duckdb_push_summary = None
     publish_summary = None
     integrity_summary = None
+    dedup_summary = None
     if not dry_run:
         # Handles sweep for newly discovered entities — BEFORE export so the
         # fresh handles land on this run's cards. Prod mirror of the local
@@ -151,6 +160,20 @@ def run_ingest(request: Request):
             )
             _log("handle_sweep_done", **{k: v for k, v in sweep_summary.items()
                                          if k != "budget"})
+        # Arboryx dedup feed: remove our copy of findings Arboryx deleted as
+        # duplicates (links redirect to the kept card), BEFORE export so the
+        # graph + cards reflect it. Unclear cases go to admin attention.
+        # Prod only (firestore_export.enabled); non-fatal.
+        if cfg.firestore_export.enabled:
+            try:
+                from src.upstream_dedup import process_feed  # noqa: PLC0415
+
+                dedup_summary = process_feed(cfg, _fs_client(cfg))
+                _log("upstream_dedup_done", **dedup_summary)
+            except Exception as exc:
+                _log("upstream_dedup_failed", error=str(exc), error_type=type(exc).__name__)
+                dedup_summary = {"error": str(exc)}
+
         try:
             export_summary = export_cards(cfg)
             _log("export_done", **export_summary)
@@ -172,15 +195,20 @@ def run_ingest(request: Request):
         # Report-only: dangling refs, stale Firestore cards, and cards whose
         # Arboryx finding was deleted upstream (dedup sweep). Issues log at
         # WARNING; upstream deletions are informational (cards are kept).
+        # Unexplained upstream deletions (no dedup_runs row) → admin attention.
         try:
-            from google.cloud import firestore  # noqa: PLC0415
-
             from src.integrity import run_integrity_check  # noqa: PLC0415
+            from src.upstream_dedup import flag_unexpected  # noqa: PLC0415
 
-            fs = cfg.firestore
-            integrity_summary = run_integrity_check(cfg, firestore.Client(
-                project=fs.project or None,
-                **({"database": fs.database} if fs.database and fs.database != "(default)" else {})))
+            fs_client = _fs_client(cfg)
+            # If the feed step failed this run, its targets aren't recorded yet
+            # and would be falsely flagged "unexpected" — skip until it succeeds.
+            # Feed never runs outside prod (firestore_export off) → nothing to cross-check.
+            feed_ok = cfg.firestore_export.enabled and not (
+                isinstance(dedup_summary, dict) and "error" in dedup_summary)
+            integrity_summary = run_integrity_check(
+                cfg, fs_client,
+                on_upstream_deleted=(lambda ids: flag_unexpected(fs_client, ids, cfg)) if feed_ok else None)
             log.log(logging.WARNING if integrity_summary["issue_count"] else logging.INFO,
                     json.dumps({"event": "integrity_check", **integrity_summary}, default=str))
         except Exception as exc:
@@ -208,6 +236,7 @@ def run_ingest(request: Request):
         "handle_sweep": sweep_summary,
         "export": export_summary,
         "firestore_export": firestore_summary,
+        "upstream_dedup": dedup_summary,
         "integrity": integrity_summary,
         "duckdb_push": duckdb_push_summary,
         "publish": publish_summary,
