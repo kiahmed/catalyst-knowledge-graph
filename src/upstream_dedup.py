@@ -38,7 +38,8 @@ def flag_attention(fs_client: Any, doc_id: str, kind: str, reason: str, **detail
     from google.cloud import firestore  # noqa: PLC0415
 
     col, parent, sub = ATTENTION_PATH
-    ref = fs_client.collection(col).document(parent).collection(sub).document(f"{SOURCE}__{doc_id}__{kind}")
+    key = f"{SOURCE}__{doc_id}__{kind}".replace("/", "∕")   # "/" would split the Firestore path
+    ref = fs_client.collection(col).document(parent).collection(sub).document(key)
     try:
         ref.create({"source": SOURCE, "created_at": firestore.SERVER_TIMESTAMP, "doc_id": doc_id,
                     "kind": kind, "reason": reason, "resolved": False, **details})

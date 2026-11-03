@@ -307,6 +307,32 @@ direction-audit:
 	    $(if $(DEDUPE_ALL),--dedupe-all) $(if $(REJECT_UNCLEAR),--reject-unclear) \
 	    $(if $(APPLY),--apply)
 
+# Entity cleanup (src/entities.py): LLM-judged merges + subsidiary/sister
+# links on the authoritative cloud DB. entity-audit only writes a report;
+# entity-apply replays a reviewed report (no LLM); unsure claims go to admin
+# attention. Admin fixes always write.
+#   make entity-audit
+#   make entity-apply REPORT=data/exports/entity_audit/entity_audit_<ts>.jsonl
+#   make entity-merge FROM="Hyundai Motors" INTO="Hyundai Motor Group"
+#   make entity-link CHILD="Hyundai Rotem" PARENT="Hyundai Motor Group" [REL=sister_of]
+ENTITY_AUDIT = set -a; . ./.env.prod; set +a; \
+	  docker compose run --rm --no-deps -v "$(CURDIR):/repo" -w /repo \
+	    -v "$$FIREBASE_DEPLOY_KEY:/tmp/sa.json:ro" -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json \
+	    -e DUCKDB_GCS_BUCKET="$$DATA_BUCKET" -e GEMINI_API_KEY="$$GEMINI_API_KEY" \
+	    --entrypoint python robotics-ingest dev-utils/entity_audit.py
+entity-audit:
+	@$(ENTITY_AUDIT) --audit
+entity-apply:
+	@test -f "$(REPORT)" || { echo '!! usage: make entity-apply REPORT=<entity-audit report .jsonl>'; exit 1; }
+	@$(ENTITY_AUDIT) --apply-report "$(REPORT)"
+entity-merge:
+	@test -n "$(FROM)" -a -n "$(INTO)" || { echo '!! usage: make entity-merge FROM="A" INTO="B"'; exit 1; }
+	@$(ENTITY_AUDIT) --merge "$(FROM)=>$(INTO)"
+entity-link:
+	@test -n "$(CHILD)" -a -n "$(PARENT)" || { echo '!! usage: make entity-link CHILD="A" PARENT="B" [REL=sister_of]'; exit 1; }
+	@case "$(REL)" in ""|subsidiary_of|sister_of) ;; *) echo '!! REL must be subsidiary_of or sister_of'; exit 1;; esac
+	@$(ENTITY_AUDIT) $(if $(filter sister_of,$(REL)),--sister,--link) "$(CHILD)=>$(PARENT)"
+
 backtest:
 	@docker compose exec robotics-ingest python /app/dev-utils/backtest.py \
 		$(if $(LIMIT),--limit $(LIMIT)) $(if $(IDS),--ids $(IDS))

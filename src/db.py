@@ -166,6 +166,35 @@ CREATE TABLE IF NOT EXISTS direction_audits (
     audited_at  TIMESTAMP DEFAULT now()
 );
 
+-- Corporate structure between entities (src/entities.py; LLM-judged, never
+-- guessed): child --subsidiary_of--> parent, or a --sister_of--> b (same
+-- owner we don't track as an entity). Stored once per direction.
+CREATE TABLE IF NOT EXISTS entity_links (
+    child_id    INTEGER NOT NULL,
+    parent_id   INTEGER NOT NULL,
+    relation    VARCHAR NOT NULL,          -- 'subsidiary_of' | 'sister_of'
+    confidence  REAL,
+    reason      VARCHAR,
+    source      VARCHAR NOT NULL,          -- 'entity_audit' | 'ingest' | 'admin'
+    created_at  TIMESTAMP DEFAULT now(),
+    PRIMARY KEY (child_id, parent_id, relation)
+);
+
+-- Audit trail of entity merges (src -> dst). The source entity row is gone
+-- after a merge; this keeps what happened and why.
+CREATE TABLE IF NOT EXISTS entity_merges (
+    src_id      INTEGER NOT NULL,
+    dst_id      INTEGER NOT NULL,
+    src_name    VARCHAR NOT NULL,
+    dst_name    VARCHAR NOT NULL,
+    src_ticker  VARCHAR,
+    src_type    VARCHAR,
+    confidence  REAL,
+    reason      VARCHAR,
+    source      VARCHAR NOT NULL,
+    merged_at   TIMESTAMP DEFAULT now()
+);
+
 -- ── Indexes ────────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_catalysts_sector_ts ON catalysts(sector, timestamp);
 CREATE INDEX IF NOT EXISTS idx_catalysts_entry_id ON catalysts(entry_id);
