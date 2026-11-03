@@ -1530,7 +1530,11 @@ function currentGraphFilters() {
     timeWindowDays: h.tw != null ? parseInt(h.tw, 10) : 30,
     minConfidence: h.minc != null ? parseFloat(h.minc) : (gcfg.min_edge_confidence ?? 0.0),
     showInvalidated: h.inv != null ? h.inv === "1" : !!gcfg.show_invalidated,
-    evidenceTypes: ev
+    evidenceTypes: ev,
+    // Link-only options for shared/curated views (Traction Engine DA-005):
+    // noflag=1 hides edges flagged for review; xcard=ID,ID drops edges from those cards.
+    hideFlagged: h.noflag === "1",
+    excludeCards: (h.xcard || "").split(",").map(s => s.trim()).filter(Boolean)
   };
 }
 
@@ -1543,9 +1547,12 @@ function graphEdgeCountFor(f) {
   const cutoff = f.timeWindowDays > 0
     ? new Date(new Date(PAYLOAD.generated_at || "2026-04-18").getTime() - f.timeWindowDays * 86400000)
     : null;
+  const excluded = new Set(f.excludeCards || []);
   let n = 0;
   for (const e of edges) {
     if (!f.showInvalidated && e.status === "invalidated") continue;
+    if (f.hideFlagged && e.flagged) continue;
+    if (excluded.has(e.catalyst_id)) continue;
     if ((e.confidence || 0) < f.minConfidence) continue;
     if (!ev.has(e.evidence_type)) continue;
     if (cutoff) {

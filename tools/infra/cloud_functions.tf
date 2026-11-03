@@ -60,6 +60,12 @@ resource "google_cloudfunctions2_function" "robotics_ingest" {
       # + Pub/Sub fan-out always run inside the 30-min request timeout.
       INGEST_TIME_BUDGET_S        = "1200"
       LOG_LEVEL                   = "INFO"
+      # cards.json (local-dev export) — the default /data/... is read-only
+      # here, which logged export_failed on every run.
+      CARDS_JSON_PATH             = "/tmp/cards.json"
+      # Native crashes (SIGSEGV/SIGABRT after ingest_done, 2026-11-02/03)
+      # dump a Python stack to stderr so the culprit shows in Cloud Logging.
+      PYTHONFAULTHANDLER          = "1"
     }
 
     secret_environment_variables {

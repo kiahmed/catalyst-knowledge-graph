@@ -86,6 +86,86 @@ def _full_sync() -> bool:
     return os.environ.get("FIRESTORE_EXPORT_FULL_SYNC", "").strip().lower() in ("1", "true", "yes")
 
 
+def entity_docs(con: Any, sector: str) -> dict[str, dict[str, Any]]:
+    """One doc per entity that appears on a live card: identity + corporate
+    family, so consumers (Traction Engine) can resolve a mention ("Toyota",
+    an alias) and widen to subsidiaries/sisters. Keyed by entity_id; names
+    can change on a merge, ids don't."""
+    live = """SELECT DISTINCT e.entity_id, e.name, e.type, e.ticker, COUNT(DISTINCT r.catalyst_id) AS cards
+              FROM relationships r JOIN catalysts c USING (catalyst_id)
+              JOIN entities e ON e.entity_id IN (r.entity_a_id, r.entity_b_id)
+              WHERE c.sector = ? AND r.status IN ('active', 'materialized') AND r.entity_a_id <> r.entity_b_id
+              GROUP BY 1, 2, 3, 4"""
+    rows = con.execute(live, [sector]).fetchall()
+    aliases: dict[int, list[str]] = {}
+    for eid, alias in con.execute("SELECT entity_id, alias FROM entity_aliases ORDER BY alias").fetchall():
+        aliases.setdefault(eid, []).append(alias)
+    names = dict(con.execute("SELECT entity_id, name FROM entities").fetchall())
+    parent: dict[int, str] = {}
+    children: dict[int, list[str]] = {}
+    sisters: dict[int, list[str]] = {}
+    for child, par, rel in con.execute("SELECT child_id, parent_id, relation FROM entity_links").fetchall():
+        if child not in names or par not in names:
+            continue
+        if rel == "subsidiary_of":
+            parent[child] = names[par]
+            children.setdefault(par, []).append(names[child])
+        else:   # sister_of is stored once; expose it on both sides
+            sisters.setdefault(child, []).append(names[par])
+            sisters.setdefault(par, []).append(names[child])
+    out = {}
+    for eid, name, typ, ticker, n_cards in rows:
+        al = sorted({a for a in aliases.get(eid, []) if a != name})
+        out[str(eid)] = {
+            "name": name, "name_lower": name.lower(), "type": typ, "ticker": ticker,
+            "aliases": al, "aliases_lower": sorted({a.lower() for a in al}),
+            "parent": parent.get(eid), "children": sorted(children.get(eid, [])),
+            "sisters": sorted(sisters.get(eid, [])), "card_count": int(n_cards),
+        }
+    return out
+
+
+def _write_entities(cfg: RoboticsConfig) -> dict[str, int]:
+    """Delta-write {collection}/entities/items/{entity_id}; docs for entities
+    no longer on any live card (merged away, rejected edges) are deleted."""
+    import duckdb
+
+    con = duckdb.connect(cfg.duckdb_path)
+    try:
+        con.execute(_STATE_DDL)
+        docs = entity_docs(con, cfg.sector)
+        known = dict(con.execute(
+            "SELECT doc_key, content_hash FROM export_state WHERE doc_key LIKE 'entities/%'").fetchall())
+        if _full_sync():
+            known = {k: None for k in known}
+        changed = [(k, d, _card_hash(d)) for k, d in docs.items() if known.get(f"entities/{k}") != _card_hash(d)]
+        gone = [k.split("/", 1)[1] for k in known if k.split("/", 1)[1] not in docs]
+        client = _firestore_client(cfg)
+        base = client.collection(cfg.firestore_export.collection).document("entities")
+        items = base.collection("items")
+        for i in range(0, len(changed), _BATCH):
+            chunk = changed[i:i + _BATCH]
+            batch = client.batch()
+            for k, d, _h in chunk:
+                batch.set(items.document(k), d)
+            batch.commit()
+            con.executemany("INSERT OR REPLACE INTO export_state (doc_key, content_hash, exported_at) "
+                            "VALUES (?, ?, now())", [(f"entities/{k}", h) for k, _d, h in chunk])
+        for i in range(0, len(gone), _BATCH):
+            chunk = gone[i:i + _BATCH]
+            batch = client.batch()
+            for k in chunk:
+                batch.delete(items.document(k))
+            batch.commit()
+            con.executemany("DELETE FROM export_state WHERE doc_key = ?", [(f"entities/{k}",) for k in chunk])
+        base.set({"count": len(docs), "sector": cfg.sector,
+                  "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")},
+                 merge=True)
+    finally:
+        con.close()
+    return {"written": len(changed), "deleted": len(gone), "total": len(docs)}
+
+
 def _write_catalysts(cfg: RoboticsConfig, cards: list[dict[str, Any]]) -> dict[str, int]:
     """Write only new/changed cards to {collection}/catalysts/items/{card_id}.
 
@@ -349,6 +429,11 @@ def export_to_firestore(
         _write_graph(cfg, payload)
         summary["recap_week"] = _write_recap_week(cfg, payload.get("recap"))
         summary["layout"] = _write_layout(cfg, payload.get("layout"))
+        try:   # consumers' lookup table; never blocks the card export
+            summary["entities"] = _write_entities(cfg)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("entities_export_failed err=%s", exc)
+            summary["entities"] = {"error": f"{type(exc).__name__}: {exc}"}
         summary["firestore_catalysts_written"] = cstats["written"]
         summary["firestore_catalysts_unchanged"] = cstats["unchanged"]
         summary["firestore_collection"] = cfg.firestore_export.collection

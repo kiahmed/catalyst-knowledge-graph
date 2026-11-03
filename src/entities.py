@@ -170,6 +170,83 @@ def judge(client: genai.Client, con: duckdb.DuckDBPyConnection, *, model: str, t
     return {g.group: g.entities for g in parsed.groups if 0 <= g.group < len(batch)}
 
 
+# ── Alias audit ───────────────────────────────────────────────────
+
+_ALIAS_SIMILAR = 80   # token_set_ratio at/above this = obviously the same name, not audited
+
+
+def suspect_aliases(con: duckdb.DuckDBPyConnection) -> dict[int, list[str]]:
+    """Aliases that don't look like their entity's name — where the old fuzzy
+    tier (and LLM resolution slips) parked wrong mentions ("X" → Cognex)."""
+    from thefuzz import fuzz  # noqa: PLC0415
+
+    out: dict[int, list[str]] = {}
+    for eid, name, alias in con.execute("""SELECT e.entity_id, e.name, a.alias FROM entity_aliases a
+                                           JOIN entities e USING (entity_id) WHERE a.alias <> e.name
+                                           ORDER BY e.entity_id, a.alias""").fetchall():
+        if fuzz.token_set_ratio(name.lower(), alias.lower()) < _ALIAS_SIMILAR:
+            out.setdefault(eid, []).append(alias)
+    return out
+
+
+class AliasVerdict(BaseModel):
+    entity: str = Field(description="Entity name exactly as listed.")
+    alias: str = Field(description="Alias exactly as listed.")
+    keep: bool = Field(description="True only if the alias unambiguously names THIS entity.")
+    confidence: float = Field(ge=0, le=1)
+    reason: str = Field(min_length=3, max_length=300)
+
+
+class AliasBatch(BaseModel):
+    aliases: list[AliasVerdict]
+
+
+_ALIAS_PROMPT = """Each entity below has recorded aliases: other spellings that, when they appear
+in news, are resolved straight to that entity. A wrong alias silently attaches
+another company's news to this one. For EVERY alias decide keep / drop:
+
+keep — it unambiguously names THIS entity: legal/short name, abbreviation,
+       ticker, former name, translation, or its own product/brand that no
+       other organization uses.
+drop — a generic description ("humanoid startups", "Chinese manufacturers"),
+       a different organization (even a related or similarly named one), a
+       person, a law, a program, a country/sector phrase, or anything ambiguous.
+
+If unsure, drop with a moderate confidence — a missing alias only means the
+next mention gets an LLM decision; a wrong one corrupts the graph.
+
+{entities}
+"""
+
+
+def judge_aliases(client: genai.Client, con: duckdb.DuckDBPyConnection, *, model: str, thinking_level: str,
+                  batch: list[tuple[int, list[str]]]) -> list[AliasVerdict]:
+    from .extract import _gen_config  # noqa: PLC0415
+    from .retry import call_with_retry  # noqa: PLC0415
+
+    blocks = []
+    for eid, aliases in batch:
+        name, typ, ticker = con.execute("SELECT name, type, ticker FROM entities WHERE entity_id = ?",
+                                        [eid]).fetchone()
+        heads = [r[0][:100] for r in con.execute(
+            """SELECT DISTINCT c.headline FROM relationships r JOIN catalysts c USING (catalyst_id)
+               WHERE ? IN (r.entity_a_id, r.entity_b_id) AND r.status <> 'rejected' LIMIT 2""", [eid]).fetchall()]
+        head = f"- {name} (type={typ}" + (f", ticker={ticker}" if ticker else "") + \
+            (f"; seen in: {' | '.join(heads)}" if heads else "") + ")"
+        blocks.append(head + "\n" + "\n".join(f"    alias: {a}" for a in aliases))
+    prompt = _ALIAS_PROMPT.format(entities="\n".join(blocks))
+    resp = call_with_retry(
+        lambda: client.models.generate_content(
+            model=model, contents=prompt,
+            config=_gen_config(model, thinking_level, temperature=0.0, max_output_tokens=32768,
+                               response_mime_type="application/json", response_schema=AliasBatch)),
+        op="alias_judge", context={"entities": len(batch)})
+    parsed: AliasBatch | None = resp.parsed  # type: ignore[assignment]
+    if parsed is None:
+        raise RuntimeError(f"alias_judge: no parseable output ({(resp.text or '')[:200]!r})")
+    return parsed.aliases
+
+
 # ── Applying decisions ─────────────────────────────────────────────
 
 

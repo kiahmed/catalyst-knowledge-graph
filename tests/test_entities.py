@@ -130,6 +130,21 @@ class TestMergeAndLink(unittest.TestCase):
         rows = self.con.execute("SELECT child_id, parent_id FROM entity_links WHERE relation = 'sister_of'").fetchall()
         self.assertEqual(rows, [(min(late, other), max(late, other))])
 
+    def test_entity_docs_for_consumers(self):
+        from src import firestore_export
+        entities.link(self.con, self.bd, self.rotem, "sister_of", confidence=0.9, reason="r", source="test")
+        orphan = db.insert_entity(self.con, "No Cards Inc", None, "private_company")  # noqa: F841
+        docs = firestore_export.entity_docs(self.con, "Robotics")
+        by_name = {d["name"]: d for d in docs.values()}
+        self.assertNotIn("No Cards Inc", by_name)                 # only entities on live cards
+        self.assertNotIn("Hyundai Rotem", by_name)                # linked but on no card
+        hm = by_name["Hyundai Motors"]
+        self.assertEqual((hm["aliases"], hm["aliases_lower"]), (["Hyundai Motor Co"], ["hyundai motor co"]))
+        self.assertEqual(hm["children"], ["Hyundai Rotem"])
+        self.assertEqual(by_name["Boston Dynamics"]["sisters"], ["Hyundai Rotem"])
+        self.assertEqual(hm["card_count"], 1)
+        self.assertEqual(hm["name_lower"], "hyundai motors")
+
     def test_sister_link_stored_once(self):
         entities.link(self.con, self.bd, self.rotem, "sister_of", confidence=0.9, reason="r", source="test")
         entities.link(self.con, self.rotem, self.bd, "sister_of", confidence=0.9, reason="r", source="test")

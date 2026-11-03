@@ -240,6 +240,18 @@ Every `rel_type` MUST be one of these exactly:
 - Don't duplicate a triple with different evidence_types — pick the
   strongest evidence available.
 
+## Plans and capacity are not deployments
+
+Keep the KIND of claim the source makes. A target, plan, roadmap or
+production capacity ("capacity to build 30,000 robots a year by 2028",
+"plans to deploy", "aims to") is NOT a completed deployment, pilot, sale or
+shipment:
+- don't use `deploys` / `pilots` for it unless the source reports units
+  actually in use; prefer the relationship that is true today (e.g.
+  `acquires`, `partners_with`, `supplies`) or none;
+- say "plans" / "targets" / "capacity" in the mechanism and headline, and
+  never restate a capacity number as a deployment count.
+
 ## Mechanism × impact (two-dimensional confidence)
 
 Each edge gets TWO numbers instead of one confidence:

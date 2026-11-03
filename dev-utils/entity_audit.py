@@ -6,6 +6,9 @@ fail instead of being overwritten — just re-run).
 
 Modes (pick one):
     --audit                 LLM pass over every candidate group → JSONL report. Never writes.
+    --alias-audit           LLM pass over every alias that doesn't look like its entity's name
+                            → JSONL report (+ <report>.cards.txt: cards likely mis-linked through
+                            a flagged alias, for make reextract-prod). Never writes.
     --apply-report FILE     apply a reviewed --audit report. No LLM: what runs is exactly what
                             was dry-run and reviewed.
     --merge "SRC=>DST"      admin: fold entity SRC into DST (exact entity names)
@@ -118,6 +121,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--audit", action="store_true")
+    mode.add_argument("--alias-audit", action="store_true")
     mode.add_argument("--apply-report")
     mode.add_argument("--merge")
     mode.add_argument("--link")
@@ -189,6 +193,64 @@ def main() -> int:
                           "for_review": len(p["review"]), "report": str(report)}), file=sys.stderr)
         print(f"dry run — review the report, then: make entity-apply REPORT={report.relative_to(_REPO_ROOT)}",
               file=sys.stderr)
+        con.close()
+        return 0
+
+    if args.alias_audit:   # LLM → report only
+        import re  # noqa: PLC0415
+
+        suspects = entities.suspect_aliases(con)
+        items = list(suspects.items())
+        batches = [items[i:i + 15] for i in range(0, len(items), 15)]
+        print(f"{sum(len(v) for v in suspects.values())} suspect alias(es) on {len(suspects)} entities, "
+              f"{len(batches)} LLM call(s)", file=sys.stderr)
+        from google import genai  # noqa: PLC0415
+        client = genai.Client(api_key=cfg.extraction.api_key)
+
+        def run_aliases(batch):
+            try:
+                return entities.judge_aliases(client, con.cursor(), model=cfg.extraction.model,
+                                              thinking_level=cfg.extraction.direction_thinking_level, batch=batch), None
+            except Exception as exc:  # noqa: BLE001
+                return [], f"{type(exc).__name__}: {exc}"
+
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            results = list(pool.map(run_aliases, batches))
+        rows, errors, cards = [], 0, set()
+        for batch, (verdicts, err) in zip(batches, results):
+            if err:
+                errors += 1
+                print(f"  ERROR batch: {err}", file=sys.stderr)
+                continue
+            listed = {(names[eid], a) for eid, al in batch for a in al}
+            for v in verdicts:
+                if (v.entity, v.alias) not in listed or v.keep:
+                    continue
+                rows.append({"entity": v.entity, "same_as": None, "parent": None, "sister_of": [],
+                             "wrong_aliases": [v.alias], "confidence": v.confidence, "reason": v.reason,
+                             "group": [v.entity]})
+                # Cards that mention the alias but not the entity's own name: linked through it.
+                for eid, text in con.execute("""
+                        SELECT DISTINCT c.entry_id, c.headline || ' ' || c.raw_finding FROM relationships r
+                        JOIN catalysts c USING (catalyst_id) JOIN entities e ON e.entity_id IN (r.entity_a_id, r.entity_b_id)
+                        WHERE e.name = ? AND r.status <> 'rejected'""", [v.entity]).fetchall():
+                    t = text.lower()
+                    # Whole words: "Intel" must not count as named inside "Physical Intelligence".
+                    if re.search(r"\b" + re.escape(v.alias.lower()) + r"\b", t) \
+                            and not re.search(r"\b" + re.escape(v.entity.lower()) + r"\b", t):
+                        cards.add(eid)
+        os.makedirs(args.report_dir, exist_ok=True)
+        report = Path(args.report_dir) / f"alias_audit_{datetime.now(timezone.utc):%Y%m%dT%H%MZ}.jsonl"
+        report.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
+        Path(f"{report}.cards.txt").write_text(",".join(sorted(cards)))
+        p = plan(rows, ids, args.min_merge, args.min_link)
+        _print_plan(p, names)
+        print(json.dumps({"suspects": sum(len(v) for v in suspects.values()), "errors": errors,
+                          "drop": len(p["alias_drops"]), "for_review": len(p["review"]),
+                          "cards_to_reextract": len(cards), "report": str(report)}), file=sys.stderr)
+        rel = report.relative_to(_REPO_ROOT)
+        print(f"dry run — review, then: make entity-apply REPORT={rel}  and then\n"
+              f"  make reextract-prod IDS=@{rel}.cards.txt APPLY=1", file=sys.stderr)
         con.close()
         return 0
 

@@ -149,8 +149,11 @@
     const cutoff = timeWindowDays > 0 ? new Date(today.getTime() - timeWindowDays * 86400000) : null;
 
     const rawEdges = (payload.graph && payload.graph.edges) || [];
+    const excluded = new Set(f.excludeCards || []);
     let edges = rawEdges.filter(e => {
       if (!showInvalidated && e.status === 'invalidated') return false;
+      if (f.hideFlagged && e.flagged) return false;               // ?noflag=1
+      if (excluded.size && excluded.has(e.catalyst_id)) return false;   // ?xcard=ID,ID
       if ((e.confidence || 0) < minConfidence) return false;
       if (!evidenceTypes.has(e.evidence_type)) return false;
       if (cutoff) {
@@ -633,6 +636,8 @@
       (f.evidenceTypes || []).slice().sort(),
       f.egoEntity || '',
       f.egoMaxEdges || 0,
+      !!f.hideFlagged,
+      (f.excludeCards || []).slice().sort(),
     ]);
   }
 
