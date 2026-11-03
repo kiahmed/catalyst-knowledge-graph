@@ -333,6 +333,17 @@ entity-link:
 	@case "$(REL)" in ""|subsidiary_of|sister_of) ;; *) echo '!! REL must be subsidiary_of or sister_of'; exit 1;; esac
 	@$(ENTITY_AUDIT) $(if $(filter sister_of,$(REL)),--sister,--link) "$(CHILD)=>$(PARENT)"
 
+# Re-extract specific cards on the authoritative cloud DB (same path as a
+# cloud ingest: direction check + LLM entity resolution). Dry run unless APPLY=1.
+#   make reextract-prod IDS=ROB-…,ROB-… [APPLY=1]   (IDS=@file also works)
+reextract-prod:
+	@test -n "$(IDS)" || { echo '!! usage: make reextract-prod IDS=ROB-…,ROB-… [APPLY=1]'; exit 1; }
+	@set -a; . ./.env.prod; set +a; \
+	  docker compose run --rm --no-deps -v "$(CURDIR):/repo" -w /repo \
+	    -v "$$FIREBASE_DEPLOY_KEY:/tmp/sa.json:ro" -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json \
+	    -e DUCKDB_GCS_BUCKET="$$DATA_BUCKET" -e GEMINI_API_KEY="$$GEMINI_API_KEY" \
+	    --entrypoint python robotics-ingest dev-utils/reextract_prod.py --ids "$(IDS)" $(if $(APPLY),--apply)
+
 backtest:
 	@docker compose exec robotics-ingest python /app/dev-utils/backtest.py \
 		$(if $(LIMIT),--limit $(LIMIT)) $(if $(IDS),--ids $(IDS))

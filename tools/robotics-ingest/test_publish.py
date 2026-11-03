@@ -38,6 +38,13 @@ class _FakeConfig:
     sector = "Robotics"
     duckdb_path = "/tmp/fake.duckdb"
 
+    class firestore_export:   # dedup feed + integrity callback are prod-only (enabled)
+        enabled = False
+
+    class firestore:
+        project = ""
+        database = "(default)"
+
 
 # Stub everything main.py pulls in at import time except flask.
 _stub_module("functions_framework", http=lambda f: f)

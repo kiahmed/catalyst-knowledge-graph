@@ -32,7 +32,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from . import db, direction, hashtags
 from .config import RoboticsConfig
 from .extract import ExtractionResult, extract, research_sources_json
-from .resolve import resolve_entity
+from .resolve import Decision, decide_entities, resolve_entity
 
 
 log = logging.getLogger("robotics.ingest")
@@ -154,6 +154,7 @@ def write_extraction(
     entry: dict[str, Any],
     result: ExtractionResult,
     cfg: RoboticsConfig,
+    decisions: dict[str, Decision] | None = None,
 ) -> int:
     """One transaction: catalyst + entities + relationships. Returns catalyst_id."""
     entry_date = _parse_date(entry.get("timestamp"))
@@ -186,6 +187,7 @@ def write_extraction(
                 type_=e.get("type") or "organization",
                 catalyst_id=catalyst_id,
                 cfg=cfg,
+                decision=(decisions or {}).get(resolved_name.strip()),
             )
             name_to_id[resolved_name] = r.entity_id
 
@@ -242,6 +244,45 @@ def write_extraction(
     except Exception:
         con.execute("ROLLBACK")
         raise
+
+
+def _decide_entities(con: duckdb.DuckDBPyConnection, cfg: RoboticsConfig, entry: dict[str, Any],
+                     result: ExtractionResult, *, flag: bool = True) -> dict[str, Decision]:
+    """LLM tier of entity resolution, outside the write transaction. Fail-safe:
+    on error every non-exact name becomes a new entity (never a wrong merge).
+    Unsure claims are flagged for an admin (flag=False: caller flags later,
+    e.g. only after its DB push succeeded — see flag_unsure)."""
+    if not cfg.resolution.llm:
+        return {}
+    try:
+        from google import genai  # noqa: PLC0415
+
+        decisions = decide_entities(con, cfg, genai.Client(api_key=cfg.extraction.api_key),
+                                    text=f"{result.headline}. {entry.get('finding') or ''}",
+                                    entities=result.entities)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("entity_decide_failed entry_id=%s err=%s", entry.get("entry_id"), exc)
+        return {}
+    if flag:
+        flag_unsure(cfg, entry, decisions)
+    return decisions
+
+
+def flag_unsure(cfg: RoboticsConfig, entry: dict[str, Any], decisions: dict[str, Decision]) -> None:
+    unsure = {n: d for n, d in decisions.items() if d.review}
+    if unsure:
+        try:
+            from .upstream_dedup import flag_attention  # noqa: PLC0415
+
+            fs = _firestore_client(cfg)
+            for name, d in unsure.items():
+                flag_attention(fs, f"{name}~{entry.get('entry_id')}", "entity_ingest_unsure",
+                               f"Ingest kept {name!r} as a new entity: the LLM was unsure "
+                               f"({'; '.join(d.review)}, confidence {d.confidence:.2f}). {d.reason} "
+                               f"Fix with make entity-merge / entity-link if needed.",
+                               entry_id=entry.get("entry_id"), category=cfg.sector)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("entity_review_flag_failed entry_id=%s err=%s", entry.get("entry_id"), exc)
 
 
 # ── Main orchestrator ──────────────────────────────────────────────
@@ -327,7 +368,8 @@ def run_ingest(
             t0 = time.monotonic()
             try:
                 result = extract(e, cfg, on_record=record_lookup)
-                write_extraction(con, e, result, cfg)
+                decisions = _decide_entities(con, cfg, e, result)
+                write_extraction(con, e, result, cfg, decisions)
                 # Advance watermark AFTER successful write, so mid-batch crash is safe.
                 db.set_watermark(
                     con,

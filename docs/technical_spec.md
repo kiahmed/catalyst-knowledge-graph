@@ -1313,7 +1313,9 @@ extraction:
     user_agent: "CatalystGraphBot/1.0 (+https://arboryx.ai)"
 
 resolution:
-  fuzzy_threshold: 88                    # thefuzz ratio cutoff
+  llm: true                              # tier 2 = LLM same-as/new decision (src/resolve.py);
+                                         # replaced the thefuzz ratio tier (2026-11-03)
+  min_confidence: 0.8                    # below → not applied, admin review
 
 duckdb:
   path: /data/robotics.duckdb                # env: DUCKDB_PATH

@@ -420,12 +420,6 @@ def find_entity_exact(
     return int(row[0]) if row else None
 
 
-def all_entity_names(con: duckdb.DuckDBPyConnection) -> list[tuple[int, str]]:
-    """All (entity_id, name) pairs — used by fuzzy resolver."""
-    rows = con.execute("SELECT entity_id, name FROM entities").fetchall()
-    return [(int(r[0]), r[1]) for r in rows]
-
-
 def insert_entity(
     con: duckdb.DuckDBPyConnection,
     name: str,

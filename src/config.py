@@ -81,7 +81,8 @@ class ExtractionConfig:
 
 @dataclass(frozen=True)
 class ResolutionConfig:
-    fuzzy_threshold: int
+    llm: bool               # tier 2 = LLM same-as/new decision (src/resolve.py)
+    min_confidence: float   # below this an LLM claim is not applied (admin review)
 
 
 @dataclass(frozen=True)
@@ -315,7 +316,8 @@ def load_config() -> RoboticsConfig:
             api_key=api_key,
         ),
         resolution=ResolutionConfig(
-            fuzzy_threshold=int(resolution.get("fuzzy_threshold", 88)),
+            llm=bool(resolution.get("llm", True)),
+            min_confidence=float(resolution.get("min_confidence", 0.8)),
         ),
         export=ExportConfig(
             cards_json_path=os.environ.get(

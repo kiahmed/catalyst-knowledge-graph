@@ -110,10 +110,12 @@ lifecycle:
 
 # ── Entity resolution ─────────────────────────────────────────────
 resolution:
-  fuzzy_threshold: 88      # thefuzz ratio; above = same entity, below = staged
-  # Tier 3 (unresolved) entities are auto-created with type=unknown and staged
-  # into unresolved_entities for later review. They still get an entity_id so
-  # relationships can be written referring to them.
+  # Tier 1 exact name/alias match; otherwise one LLM call per card decides
+  # same-as-existing vs new (+ subsidiary/sister). Replaced the fuzzy-ratio
+  # tier (look-alike matches like "NIO" → European Union). New entities are
+  # still staged into unresolved_entities for review.
+  llm: true
+  min_confidence: 0.8      # LLM claims below this aren't applied → admin review
 
 # ── DuckDB ────────────────────────────────────────────────────────
 duckdb:
