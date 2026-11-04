@@ -346,6 +346,18 @@ reextract-prod:
 	    -e DUCKDB_GCS_BUCKET="$$DATA_BUCKET" -e GEMINI_API_KEY="$$GEMINI_API_KEY" \
 	    --entrypoint python robotics-ingest dev-utils/reextract_prod.py --ids "$(IDS)" $(if $(APPLY),--apply)
 
+# Card embeddings for semantic/hybrid search (src/embed.py). Reads the cloud
+# DuckDB (no push), writes vectors onto existing CKG card docs. No "all".
+#   make embed CARD=ROB-… | FROM=2026-08-01 TO=2026-10-31 | MISSING=1 [DRY=1]
+embed:
+	@set -a; . ./.env.prod; set +a; \
+	  docker compose run --rm --no-deps -v "$(CURDIR):/repo" -w /repo \
+	    -v "$$FIREBASE_DEPLOY_KEY:/tmp/sa.json:ro" -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json \
+	    -e DUCKDB_GCS_BUCKET="$$DATA_BUCKET" -e GEMINI_API_KEY="$$GEMINI_API_KEY" \
+	    --entrypoint python robotics-ingest dev-utils/embed_cards.py \
+	    $(if $(CARD),--card $(CARD)) $(if $(IDS),--ids $(IDS)) $(if $(FROM),--from $(FROM)) $(if $(TO),--to $(TO)) \
+	    $(if $(MISSING),--missing) $(if $(DRY),--dry-run)
+
 backtest:
 	@docker compose exec robotics-ingest python /app/dev-utils/backtest.py \
 		$(if $(LIMIT),--limit $(LIMIT)) $(if $(IDS),--ids $(IDS))

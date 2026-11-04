@@ -145,6 +145,7 @@ def run_ingest(request: Request):
     publish_summary = None
     integrity_summary = None
     dedup_summary = None
+    embed_summary = None
     if not dry_run:
         # Handles sweep for newly discovered entities — BEFORE export so the
         # fresh handles land on this run's cards. Prod mirror of the local
@@ -191,6 +192,29 @@ def run_ingest(request: Request):
         except Exception as exc:
             _log("firestore_export_failed", error=str(exc), error_type=type(exc).__name__)
             firestore_summary = {"error": str(exc)}
+
+        # Card embeddings for semantic search: only cards whose text changed
+        # (new cards, re-extractions, entity merges). Prod only; non-fatal.
+        if cfg.firestore_export.enabled:
+            try:
+                import duckdb  # noqa: PLC0415
+                from google import genai  # noqa: PLC0415
+
+                from src import embed_sync  # noqa: PLC0415
+
+                fs_client = _fs_client(cfg)
+                items = (fs_client.collection(cfg.firestore_export.collection)
+                         .document(cfg.firestore_export.catalysts_subpath).collection("items"))
+                econ = duckdb.connect(cfg.duckdb_path, read_only=True)
+                try:
+                    embed_summary = embed_sync.sync(econ, cfg.sector, fs_client, items,
+                                                    genai.Client(api_key=cfg.extraction.api_key))
+                finally:
+                    econ.close()
+                _log("embed_done", **embed_summary)
+            except Exception as exc:
+                _log("embed_failed", error=str(exc), error_type=type(exc).__name__)
+                embed_summary = {"error": str(exc)}
 
         # Report-only: dangling refs, stale Firestore cards, and cards whose
         # Arboryx finding was deleted upstream (dedup sweep). Issues log at
@@ -240,6 +264,7 @@ def run_ingest(request: Request):
         "export": export_summary,
         "firestore_export": firestore_summary,
         "upstream_dedup": dedup_summary,
+        "embed": embed_summary,
         "integrity": integrity_summary,
         "duckdb_push": duckdb_push_summary,
         "publish": publish_summary,
