@@ -209,6 +209,7 @@ body {
   border-radius: 10px;
   box-shadow: 0 1px 4px rgba(0,0,0,0.03);
 }
+.filter-pill .pill-count { opacity: .6; font-size: .85em; margin-left: 3px; }
 .filter-pill {
   padding: 4px 10px; border: 1px solid transparent; border-radius: 16px;
   background: transparent; font-family: inherit; font-size: 11px;
@@ -1074,16 +1075,9 @@ input[type="date"]:focus { border-color: var(--border-focus); }
 <!-- Control group — 3 stacked rows -->
 <div class="control-group">
   <!-- Row 1: Card type filters -->
-  <div class="filter-row">
+  <!-- Pills are built from the card types present in the data (renderTypePills). -->
+  <div class="filter-row" id="typePills">
     <button class="filter-pill active" data-filter="all">All</button>
-    <button class="filter-pill" data-filter="partnership">Partnership</button>
-    <button class="filter-pill" data-filter="acquisition">Deal</button>
-    <button class="filter-pill" data-filter="contract">Contract</button>
-    <button class="filter-pill" data-filter="regulatory">Regulatory</button>
-    <button class="filter-pill" data-filter="product">Product</button>
-    <button class="filter-pill" data-filter="talent">Talent</button>
-    <button class="filter-pill" data-filter="summary">Summary</button>
-    <button class="filter-pill" data-filter="chokepoint">Insight</button>
   </div>
 
   <!-- Row 2: Date controls + Confidence slider -->
@@ -2098,7 +2092,7 @@ async function loadCards() {
     if (!chk.ok) {
       RoboticsGuards.showBanner(chk.message, "error");
       RoboticsGuards.hideLoading();
-      CARDS = CARDS_FALLBACK;
+      CARDS = CARDS_FALLBACK; renderTypePills();
       applyAllFilters();
       return;
     }
@@ -2107,13 +2101,14 @@ async function loadCards() {
     STATS = payload.stats || null;
     const sector = payload.sector || "Robotics";
     CARDS = (payload.cards || []).map((c, i) => transformCard(c, i, sector));
+    renderTypePills();
     const emp = RoboticsGuards.isEmpty(payload);
     if (emp.cards) RoboticsGuards.showEmptyState(document.getElementById("gridStage"), "no-cards");
     if (emp.nodes) RoboticsGuards.showEmptyState(document.getElementById("roboticsGraphRoot"), "no-nodes");
   } catch (err) {
     console.warn("catalyst load failed, using fallback:", err);
     RoboticsGuards.showBanner("Could not load catalysts — using offline preview.", "warn");
-    CARDS = CARDS_FALLBACK;
+    CARDS = CARDS_FALLBACK; renderTypePills();
   } finally {
     RoboticsGuards.hideLoading();
   }
@@ -2318,6 +2313,28 @@ async function copyLink(btn) {
 }
 
 // ══ Filtering ══
+// Viewer's calendar date (YYYY-MM-DD), offset in days — card dates are plain dates.
+function localISODate(offsetDays) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// One pill per card type actually present (export assigns card_type from the
+// card's top relationship), in TYPE_META order, with counts. Keeps the
+// current selection when it still exists.
+function renderTypePills() {
+  const row = document.getElementById('typePills');
+  const active = row.querySelector('.filter-pill.active')?.dataset.filter || 'all';
+  const counts = {};
+  CARDS.forEach(c => { counts[c.type] = (counts[c.type] || 0) + 1; });
+  const types = Object.keys(TYPE_META).filter(t => counts[t]);
+  Object.keys(counts).forEach(t => { if (!TYPE_META[t] && t) types.push(t); });   // unknown types still filterable
+  const pill = (t, label, n) => `<button class="filter-pill${t === active ? ' active' : ''}" data-filter="${esc(t)}">${esc(label)}${n ? ` <span class="pill-count">${n}</span>` : ''}</button>`;
+  row.innerHTML = pill('all', 'All', CARDS.length) +
+    types.map(t => pill(t, (TYPE_META[t] && TYPE_META[t].label) || t, counts[t])).join('');
+  if (!row.querySelector('.filter-pill.active')) row.querySelector('.filter-pill').classList.add('active');
+}
 // Set from a graph edge ("seen in N cards"): the Cards tab shows only those.
 let CARD_ID_FILTER = null;   // { ids: Set, label }
 function showCardsFor(ids, label) {
@@ -2346,8 +2363,8 @@ function applyAllFilters() {
     if (CARD_ID_FILTER && !CARD_ID_FILTER.ids.has(c.card_id)) return false;
     if (activeType !== 'all' && c.type !== activeType) return false;
     if (confMin > 0 && (c.confidence === null || c.confidence < confMin / 100)) return false;
-    if (activeDate === 'today' && c.isoDate !== '2026-04-16') return false;
-    if (activeDate === 'yesterday' && c.isoDate !== '2026-04-15') return false;
+    if (activeDate === 'today' && c.isoDate !== localISODate(0)) return false;
+    if (activeDate === 'yesterday' && c.isoDate !== localISODate(-1)) return false;
     if (fromDate && c.isoDate < fromDate) return false;
     if (toDate && c.isoDate > toDate) return false;
     if (search) {
@@ -2368,12 +2385,12 @@ document.getElementById('navRight').addEventListener('click', goRight);
 document.getElementById('expandedClose').addEventListener('click', closeExpanded);
 document.getElementById('expandedOverlay').addEventListener('click', e => { if (e.target === e.currentTarget) closeExpanded(); });
 
-document.querySelectorAll('.filter-pill').forEach(p => {
-  p.addEventListener('click', () => {
-    document.querySelectorAll('.filter-pill').forEach(x => x.classList.remove('active'));
-    p.classList.add('active');
-    applyAllFilters();
-  });
+document.getElementById('typePills').addEventListener('click', e => {
+  const p = e.target.closest('.filter-pill');
+  if (!p) return;
+  document.querySelectorAll('.filter-pill').forEach(x => x.classList.remove('active'));
+  p.classList.add('active');
+  applyAllFilters();
 });
 
 document.querySelectorAll('.date-controls .ctrl-btn').forEach(b => {
@@ -3187,6 +3204,7 @@ async function renderTeaser() {
     console.warn("preview.json load failed, using built-in samples:", err);
     CARDS = CARDS_FALLBACK;
   }
+  renderTypePills();   // teaser (pre-sign-in) path too — pills come from the data
   applyAllFilters();
   // Honor share deep links (/?card=<id> → /#card-<id>) pre-auth too. A
   // miss (card not in the public teaser subset) is a silent no-op that
