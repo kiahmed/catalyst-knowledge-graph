@@ -88,24 +88,40 @@ class TestEmbed(unittest.TestCase):
         self.assertEqual((inp["entity_names"], inp["rel_types"]), (["Boston Dynamics", "Hyundai Motor Group"], ["deploys"]))
         self.assertEqual(inp["hash"], embed.card_inputs(self.con, "Robotics")["ROB-1"]["hash"])   # stable
 
-    def test_sync_embeds_only_stale_existing_docs(self):
-        store = {"ROB-1": {"headline": "h"}}           # doc exists, no embedding yet
+    def _sync(self, cards, vecs, client, **kw):
+        return embed_sync.sync(self.con, "Robotics", FakeFS(vecs), FakeItems(cards), FakeItems(vecs), client, **kw)
+
+    def test_sync_embeds_only_stale_cards_into_the_vector_collection(self):
+        cards, vecs = {"ROB-1": {"headline": "h"}}, {}    # card doc exists, no vector yet
         client = FakeEmbedClient()
-        out = embed_sync.sync(self.con, "Robotics", FakeFS(store), FakeItems(store), client)
-        self.assertEqual(out["embedded"], 1)
+        self.assertEqual(self._sync(cards, vecs, client)["embedded"], 1)
         self.assertEqual(client.calls, [(embed.MODEL, 1, embed.DIMENSIONS)])
-        self.assertEqual(len(store["ROB-1"]["embedding"]), embed.DIMENSIONS)
-        self.assertEqual(store["ROB-1"]["entity_names"], ["Boston Dynamics", "Hyundai Motor Group"])
-        self.assertEqual(embed_sync.sync(self.con, "Robotics", FakeFS(store), FakeItems(store), client)["to_embed"], 0)
+        self.assertEqual(cards, {"ROB-1": {"headline": "h"}})                        # card doc never touched
+        v = vecs["ROB-1"]
+        self.assertEqual(len(v["embedding"]), embed.DIMENSIONS)
+        self.assertEqual((v["card_id"], v["headline"], v["date"]), ("ROB-1", "Hyundai runs Atlas", "2026-10-01"))
+        self.assertEqual(v["entity_names"], ["Boston Dynamics", "Hyundai Motor Group"])
+        self.assertEqual(self._sync(cards, vecs, client)["to_embed"], 0)
         self.con.execute("UPDATE relationships SET mechanism = 'changed'")          # text changed → stale again
-        old_hash = store["ROB-1"]["embed_hash"]
-        self.assertEqual(embed_sync.sync(self.con, "Robotics", FakeFS(store), FakeItems(store), client)["embedded"], 1)
-        self.assertNotEqual(store["ROB-1"]["embed_hash"], old_hash)                  # full round trip
+        old_hash = v["embed_hash"]
+        self.assertEqual(self._sync(cards, vecs, client)["embedded"], 1)
+        self.assertNotEqual(vecs["ROB-1"]["embed_hash"], old_hash)                   # full round trip
+
+    def test_prune_drops_vectors_of_deleted_cards(self):
+        cards, vecs = {"ROB-1": {}}, {"ROB-1": {"embed_hash": "x"}, "ROB-GONE": {"embed_hash": "y"}}
+
+        class DelFS(FakeFS):
+            def batch(self):
+                b = super().batch()
+                b.delete = lambda did: vecs.pop(did, None)
+                return b
+        self.assertEqual(embed_sync.prune(FakeItems(cards), FakeItems(vecs), DelFS(vecs)), 1)
+        self.assertEqual(set(vecs), {"ROB-1"})
 
     def test_cards_without_a_firestore_doc_are_skipped(self):
-        store, client = {}, FakeEmbedClient()
-        out = embed_sync.sync(self.con, "Robotics", FakeFS(store), FakeItems(store), client)
-        self.assertEqual((out["to_embed"], store, client.calls), (0, {}, []))      # no call, no write
+        cards, vecs, client = {}, {}, FakeEmbedClient()
+        out = self._sync(cards, vecs, client)
+        self.assertEqual((out["to_embed"], vecs, client.calls), (0, {}, []))        # no call, no write
 
     def test_wrong_size_vectors_are_rejected(self):
         class Short(FakeEmbedClient):

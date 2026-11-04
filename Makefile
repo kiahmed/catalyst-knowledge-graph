@@ -358,6 +358,13 @@ embed:
 	    $(if $(CARD),--card $(CARD)) $(if $(IDS),--ids $(IDS)) $(if $(FROM),--from $(FROM)) $(if $(TO),--to $(TO)) \
 	    $(if $(MISSING),--missing) $(if $(DRY),--dry-run)
 
+# One-time (2026-11-04): move card vectors off the card docs the web app loads.
+vectors-move:
+	@set -a; . ./.env.prod; set +a; \
+	  docker compose run --rm --no-deps -v "$(CURDIR):/repo" -w /repo \
+	    -v "$$FIREBASE_DEPLOY_KEY:/tmp/sa.json:ro" -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json \
+	    --entrypoint python robotics-ingest dev-utils/move_vectors.py
+
 backtest:
 	@docker compose exec robotics-ingest python /app/dev-utils/backtest.py \
 		$(if $(LIMIT),--limit $(LIMIT)) $(if $(IDS),--ids $(IDS))

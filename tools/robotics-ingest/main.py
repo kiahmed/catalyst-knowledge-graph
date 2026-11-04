@@ -205,12 +205,14 @@ def run_ingest(request: Request):
                 fs_client = _fs_client(cfg)
                 items = (fs_client.collection(cfg.firestore_export.collection)
                          .document(cfg.firestore_export.catalysts_subpath).collection("items"))
+                vectors = embed_sync.vectors_ref(fs_client, cfg.firestore_export.collection)
                 econ = duckdb.connect(cfg.duckdb_path, read_only=True)
                 try:
-                    embed_summary = embed_sync.sync(econ, cfg.sector, fs_client, items,
+                    embed_summary = embed_sync.sync(econ, cfg.sector, fs_client, items, vectors,
                                                     genai.Client(api_key=cfg.extraction.api_key))
                 finally:
                     econ.close()
+                embed_summary["pruned"] = embed_sync.prune(items, vectors, fs_client)
                 _log("embed_done", **embed_summary)
             except Exception as exc:
                 _log("embed_failed", error=str(exc), error_type=type(exc).__name__)

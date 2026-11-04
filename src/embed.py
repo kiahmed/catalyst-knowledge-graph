@@ -1,8 +1,8 @@
 """Card embeddings for semantic + filtered (hybrid) search.
 
-One vector per card, stored on its Firestore doc (CKG-<sector>/catalysts/
-items/{card_id}.embedding) next to the flat filter fields Firestore's vector
-pre-filter needs (entity_names, rel_types). Firestore only stores and indexes
+One vector per card, stored in CKG-<sector>/vectors/card_vectors/{card_id}
+(NOT on the card doc — see src/embed_sync.py) next to the flat filter fields
+Firestore's vector pre-filter needs (entity_names, rel_types, date). Firestore only stores and indexes
 vectors — we compute them: here, for the backfill (`make embed`) and ingest.
 
 Text per card (what the vector "means"): headline, finding, every live
@@ -77,6 +77,7 @@ def card_inputs(con: duckdb.DuckDBPyConnection, sector: str,
             ("\n\nCorporate structure:\n" + "\n".join(fam) if fam else "")
         text = f"title: {headline} | text: {body}"[:_MAX_CHARS]
         out[eid] = {"text": text, "hash": hashlib.sha256(f"{MODEL}:{DIMENSIONS}:{text}".encode()).hexdigest(),
+                    "headline": headline,
                     "entity_names": names, "rel_types": sorted({t for _a, t, _b, _m in rels}),
                     "date": ts.isoformat() if ts else None}
     return out

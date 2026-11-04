@@ -1,7 +1,8 @@
 """Backfill / repair card embeddings in Firestore (src/embed.py, src/embed_sync.py).
 
 Reads the authoritative cloud DuckDB (pull only — never pushes) and writes
-`embedding` + filter fields onto existing CKG card docs.
+one vector doc per card to CKG-<sector>/vectors/card_vectors (never onto the
+card docs the web app downloads).
 
 Selection (one required — deliberately no "all"):
     --card ROB-…  /  --ids a,b,c       specific cards (re-embedded even if current)
@@ -70,7 +71,8 @@ def main() -> int:
     fs = firestore.Client(project=cfg.firestore.project or None, **db_kw)
     items = fs.collection(cfg.firestore_export.collection).document(cfg.firestore_export.catalysts_subpath) \
         .collection("items")
-    out = embed_sync.sync(con, cfg.sector, fs, items, genai.Client(api_key=cfg.extraction.api_key), entry_ids,
+    vectors = embed_sync.vectors_ref(fs, cfg.firestore_export.collection)
+    out = embed_sync.sync(con, cfg.sector, fs, items, vectors, genai.Client(api_key=cfg.extraction.api_key), entry_ids,
                           only_stale=args.missing or entry_ids is None, dry_run=args.dry_run)
     con.close()
     print(json.dumps({**out, "dry_run": args.dry_run}), file=sys.stderr)
