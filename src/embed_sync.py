@@ -15,6 +15,8 @@ from . import embed
 
 log = logging.getLogger("robotics.embed")
 
+_WRITE_BATCH = 50
+
 
 def _existing(items: Any) -> dict[str, str | None]:
     """card_id → stored embed_hash (None when the doc has no embedding yet)."""
@@ -35,9 +37,11 @@ def sync(con: duckdb.DuckDBPyConnection, sector: str, fs_client: Any, items: Any
     if dry_run or not todo:
         return {"selected": len(inputs), "to_embed": len(todo), "embedded": 0}
     vectors = embed.embed_texts(client, [inputs[e]["text"] for e in todo])
-    for i in range(0, len(todo), 400):   # Firestore batch cap is 500 writes
+    # 50 per commit: a 768-dim vector plus its entries in both vector indexes
+    # is large — 400 per commit hit "Transaction too big" (2026-11-04).
+    for i in range(0, len(todo), _WRITE_BATCH):
         batch = fs_client.batch()
-        for eid, vec in zip(todo[i:i + 400], vectors[i:i + 400]):
+        for eid, vec in zip(todo[i:i + _WRITE_BATCH], vectors[i:i + _WRITE_BATCH]):
             inp = inputs[eid]
             batch.set(items.document(eid), {"embedding": Vector(vec), "embed_model": f"{embed.MODEL}@{embed.DIMENSIONS}",
                                             "embed_hash": inp["hash"], "entity_names": inp["entity_names"],
