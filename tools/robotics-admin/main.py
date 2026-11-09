@@ -93,7 +93,8 @@ def _access() -> dict[str, Any]:
 # from the right is trusted (1 = last entry, the observed client on a direct
 # run.app call). Counting from the right never lands on a caller-supplied
 # entry; a wrong count only locks admins OUT (fail closed) — the denial log
-# shows the full chain to calibrate.
+# shows the full chain to calibrate. NEVER allowlist a Google-owned address
+# seen in that log (e.g. a front-end hop): it would admit every caller.
 _XFF_HOPS = max(1, int(os.environ.get("ADMIN_XFF_HOPS", "1")))
 
 

@@ -91,6 +91,16 @@ class TestAdminOps(_Fixture):
                                                       "expect": {"entity_a_id": self.aws}}, **WHO)
         self.assertEqual(self._edge()[0], self.aws)
 
+    def test_reviving_an_edge_refuses_to_make_a_live_twin(self):
+        self.con.execute("UPDATE relationships SET status = 'rejected' WHERE rel_id = ?", [self.rel])
+        cid = self.con.execute("SELECT catalyst_id FROM relationships WHERE rel_id = ?", [self.rel]).fetchone()[0]
+        self.con.execute("""INSERT INTO relationships (catalyst_id, entity_a_id, rel_type, entity_b_id, confidence)
+                            VALUES (?, ?, 'competes_with', ?, 0.7)""", [cid, self.aws, self.dhl])
+        with self.assertRaises(ops.EditError):
+            ops.apply_edit(self.con, "set_edge_status", {"rel_id": self.rel, "status": "active",
+                                                         "expect": {"status": "rejected"}}, **WHO)
+        self.assertEqual(self._edge()[3], "rejected")
+
     def test_materialized_status_round_trip(self):
         self.con.execute("UPDATE relationships SET status = 'materialized' WHERE rel_id = ?", [self.rel])
         out = ops.apply_edit(self.con, "set_edge_status", {"rel_id": self.rel, "status": "rejected",

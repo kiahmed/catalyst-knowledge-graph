@@ -253,6 +253,12 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
             raise EditError(f"status must be one of {EDGE_STATUSES}")
         cur = _edge(con, rel_id)
         _check_expect(cur, p.get("expect"), ["status"])
+        # Reviving a dead edge must not make it a live twin of another edge on the card.
+        if status in LIVE and cur["status"] not in LIVE and con.execute(
+                """SELECT 1 FROM relationships WHERE catalyst_id = ? AND rel_id <> ? AND entity_a_id = ?
+                   AND rel_type = ? AND entity_b_id = ? AND status IN ('active', 'materialized')""",
+                [cur["catalyst_id"], rel_id, cur["entity_a_id"], cur["rel_type"], cur["entity_b_id"]]).fetchone():
+            raise EditError("an identical live edge already exists on this card")
         con.execute("UPDATE relationships SET status = ? WHERE rel_id = ?", [status, rel_id])
         return {"rel_id": rel_id, "status": cur["status"]}, {"rel_id": rel_id, "status": status}, True, {cur["catalyst_id"]}
 

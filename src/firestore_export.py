@@ -125,24 +125,29 @@ def entity_docs(con: Any, sector: str) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _write_entities(cfg: RoboticsConfig) -> dict[str, int]:
+def _write_entities(cfg: RoboticsConfig, *, compare_live: bool = False) -> dict[str, int]:
     """Delta-write {collection}/entities/items/{entity_id}; docs for entities
-    no longer on any live card (merged away, rejected edges) are deleted."""
+    no longer on any live card (merged away, rejected edges) are deleted.
+    compare_live=True diffs against the docs actually in Firestore instead of
+    export_state (admin edits: their state copy is never pushed)."""
     import duckdb
 
     con = duckdb.connect(cfg.duckdb_path)
     try:
         con.execute(_STATE_DDL)
         docs = entity_docs(con, cfg.sector)
-        known = dict(con.execute(
-            "SELECT doc_key, content_hash FROM export_state WHERE doc_key LIKE 'entities/%'").fetchall())
+        client = _firestore_client(cfg)
+        base = client.collection(cfg.firestore_export.collection).document("entities")
+        items = base.collection("items")
+        if compare_live:
+            known = {f"entities/{d.id}": _card_hash(d.to_dict() or {}) for d in items.stream()}
+        else:
+            known = dict(con.execute(
+                "SELECT doc_key, content_hash FROM export_state WHERE doc_key LIKE 'entities/%'").fetchall())
         if _full_sync():
             known = {k: None for k in known}
         changed = [(k, d, _card_hash(d)) for k, d in docs.items() if known.get(f"entities/{k}") != _card_hash(d)]
         gone = [k.split("/", 1)[1] for k in known if k.split("/", 1)[1] not in docs]
-        client = _firestore_client(cfg)
-        base = client.collection(cfg.firestore_export.collection).document("entities")
-        items = base.collection("items")
         for i in range(0, len(changed), _BATCH):
             chunk = changed[i:i + _BATCH]
             batch = client.batch()
@@ -166,8 +171,9 @@ def _write_entities(cfg: RoboticsConfig) -> dict[str, int]:
     return {"written": len(changed), "deleted": len(gone), "total": len(docs)}
 
 
-def _write_catalysts(cfg: RoboticsConfig, cards: list[dict[str, Any]]) -> dict[str, int]:
-    """Write only new/changed cards to {collection}/catalysts/items/{card_id}.
+def _write_catalysts(cfg: RoboticsConfig, cards: list[dict[str, Any]], *, force: bool = False) -> dict[str, int]:
+    """Write only new/changed cards to {collection}/catalysts/items/{card_id}
+    (force=True: write every given card regardless of export_state).
 
     Change detection is local: each card's hash vs `export_state` in DuckDB.
     State is recorded per batch only AFTER Firestore commits it, so a failed
@@ -180,7 +186,7 @@ def _write_catalysts(cfg: RoboticsConfig, cards: list[dict[str, Any]]) -> dict[s
     con = duckdb.connect(cfg.duckdb_path)
     try:
         con.execute(_STATE_DDL)
-        known = {} if _full_sync() else dict(con.execute(
+        known = {} if (force or _full_sync()) else dict(con.execute(
             "SELECT doc_key, content_hash FROM export_state WHERE doc_key LIKE 'catalysts/%'"
         ).fetchall())
         changed = [(cid, c, h) for cid, c, h in keyed if known.get(f"catalysts/{cid}") != h]
@@ -407,9 +413,13 @@ def refresh_cards(cfg: RoboticsConfig, entry_ids: list[str]) -> dict[str, Any]:
     graph from the card docs, so the map reflects the edit on reload; the
     graph doc / insights / recap catch up at the next ingest."""
     cards = export.build_cards(cfg, entry_ids)
-    out: dict[str, Any] = {"cards": _write_catalysts(cfg, cards)}
+    # force: export_state lives in the DuckDB, and the admin service records it
+    # on a copy it doesn't push — so after an edit + revert the reverted card's
+    # hash matches the stale stored one and a delta write would skip it,
+    # leaving the edited version live (found in the 2026-11-08 prod test).
+    out: dict[str, Any] = {"cards": _write_catalysts(cfg, cards, force=True)}
     try:
-        out["entities"] = _write_entities(cfg)
+        out["entities"] = _write_entities(cfg, compare_live=True)
     except Exception as exc:  # noqa: BLE001
         out["entities"] = {"error": f"{type(exc).__name__}: {exc}"}
     return out

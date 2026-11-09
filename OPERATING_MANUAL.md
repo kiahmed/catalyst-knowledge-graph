@@ -365,3 +365,30 @@ For deeper context, in order of how often you'll need them:
 - **`docs/technical_spec.md`** §2.1 (ingest), §2.5 (export contract), Mermaid diagrams
 - **`docs/infra_spec.md`** §3 (component choices), §5 (SA + buckets)
 - **`docs/implementation_spec.md`** — ticket-level Phase 1 plan
+
+## 13. Admin data editor — `robotics.arboryx.ai/admin`
+
+Hand-fix entities and edges (wrong alias landing, mis-pointed edge, missing parent/sister) without re-ingesting. Page: `frontend/admin.html`. API: Cloud Run `robotics-admin` (`tools/robotics-admin/main.py`, ops in `src/admin_ops.py`, infra `tools/infra/admin.tf`). It has min instances 0, so it costs nothing while idle.
+
+**Access** requires both of these: a verified sign-in email listed in Firestore `ckg_admin/robotics.emails`, and a client IP listed in `ckg_admin/robotics.ips`. Edit the doc in the Firebase console; the service re-reads it within 60s. When the IP changes (home/ISP), the 403 message on the page shows the IP it saw; add that IP.
+- The IP is the `X-Forwarded-For` entry `ADMIN_XFF_HOPS` from the right (default 1). On a direct run.app call that entry is the caller. Anything the caller puts in front is ignored.
+- If a correct admin is locked out, compare the full chain in the `admin_denied` log entry and adjust `ADMIN_XFF_HOPS`.
+- **Never allowlist a Google-owned address** from that log. That would admit every caller.
+
+**Deploy:** `make deploy` creates or updates the service and `robotics-admin-sa`. `make deploy-frontend` writes `frontend/admin-config.js` (the API URL, gitignored) on every deploy.
+
+**Use:**
+1. Search an entity. The columns are entity → aliases/family → relationships → counterpart and evidence.
+2. Click **Edit**. The screen freezes, so what you saw is what gets checked.
+3. Make the change: repoint an edge's source/target/type, set its status, move or drop an alias, create an entity, link or unlink parent/sister, or merge.
+4. **Save** applies it right away:
+   - pull the GCS DuckDB → apply → push (generation-checked; if someone else changed it, you get a 409, so reload);
+   - rewrite just the touched card docs and the entity docs in Firestore. Reload the map to see the change; the graph doc and insights catch up at the next ingest.
+
+**Safety:**
+- Every edit checks the values you saw (`expect`). It refuses self-loops, and it refuses duplicating or reviving a live twin edge on the same card.
+- Every edit is logged in DuckDB `admin_edits` (email, IP, before/after). The **Edit log** reverts any revertible edit. **Merge is one-way.**
+- **Scan** finds edges that likely came in through a bare-brand alias. It is free and read-only.
+- **Fix with LLM** asks Gemini to pick the right family member from the card text. It is suggestions only, and you approve each one.
+
+**Banner:** shows ingest, render, and Arboryx scheduler runs that are in flight or due within 60 min. Saving during a run asks you to confirm, and the edit is logged with `_backend_running`. Prefer editing between runs: the push is generation-checked, so whichever side writes second gets a conflict instead of overwriting.
