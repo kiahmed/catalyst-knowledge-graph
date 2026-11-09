@@ -30,9 +30,9 @@ def summarize() -> int:
     import json  # noqa: PLC0415
 
     d = json.load(sys.stdin)
-    print({k: d[k] for k in ("rendered", "failed", "uploaded", "upload_skipped", "graphs_rendered", "graphs_failed")
-           if k in d})
-    return 1 if (not d.get("ok") or d.get("failed") or d.get("graphs_failed")) else 0
+    bad = ("failed", "graphs_failed", "upload_failed", "graphs_upload_failed")
+    print({k: d[k] for k in ("rendered", "uploaded", "upload_skipped", "graphs_rendered", *bad, "error") if k in d})
+    return 1 if (not d.get("ok") or any(d.get(k) for k in bad)) else 0
 
 
 def main() -> int:

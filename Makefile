@@ -358,7 +358,7 @@ render-stale:
 	    --format='value(status.url)') || { echo "!! gcloud login needed: gcloud auth login"; exit 1; }; \
 	  failed=""; \
 	  for chunk in $$(echo "$$ids" | tr ',' '\n' | xargs -n 3 | tr ' ' ','); do \
-	    TOKEN=$$(gcloud auth print-identity-token) || exit 1; \
+	    TOKEN=$$(gcloud auth print-identity-token) || { echo "!! gcloud token failed; not run: $$chunk$$failed"; exit 1; }; \
 	    list=$$(echo "$$chunk" | sed 's/,/","/g'); \
 	    printf '%s → ' "$$chunk"; \
 	    resp=$$(curl -sS --max-time 320 -w '\n%{http_code}' -X POST "$$URL/render-batch" \

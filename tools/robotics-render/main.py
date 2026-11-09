@@ -1041,6 +1041,7 @@ def render_batch():
     g_rendered = g_skipped = g_failed = g_uploaded = 0
 
     rendered, skipped, failed, uploaded, upload_skipped = 0, 0, 0, 0, 0
+    upload_failed = g_upload_failed = 0   # a failed upload leaves the bucket image stale: count it
     for (entry_id,) in rows:
         card: dict[str, Any] | None = None    # loaded lazily, shared by card+graph
         out_path = CARD_IMAGES_DIR / f"{entry_id}.png"
@@ -1077,6 +1078,7 @@ def render_batch():
                 else:
                     upload_skipped += 1
             except Exception as exc:
+                upload_failed += 1
                 _log("upload_failed", card_id=entry_id, error=str(exc))
 
         if not graphs_on:
@@ -1102,6 +1104,7 @@ def render_batch():
             if _upload_graph_png(entry_id, g_path, overwrite=force).get("uploaded"):
                 g_uploaded += 1
         except Exception as exc:
+            g_upload_failed += 1
             _log("graph_upload_failed", card_id=entry_id, error=str(exc))
 
     # Weekly recap cards ride every sweep; write-once makes repeats free.
@@ -1126,6 +1129,7 @@ def render_batch():
         "graphs_rendered": g_rendered, "graphs_skipped": g_skipped,
         "graphs_failed": g_failed, "graphs_uploaded": g_uploaded,
         "failed": failed, "uploaded": uploaded, "upload_skipped": upload_skipped,
+        "upload_failed": upload_failed, "graphs_upload_failed": g_upload_failed,
         **recap_summary,
         "duration_s": duration,
     }), 200
