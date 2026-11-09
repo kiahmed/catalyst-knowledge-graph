@@ -188,6 +188,10 @@ class TestAliasAuditCoverage(unittest.TestCase):
         self.assertFalse(entities.only_via_alias("Amazon Web Services launches", "Amazon Web Services", "Amazon"))
         self.assertFalse(entities.only_via_alias("Hyundai Motor Group deploys", "Hyundai Motor Group", "Hyundai"))
         self.assertTrue(entities.only_via_alias("Amazon drones deliver parcels", "Amazon Web Services", "Amazon"))
+        # names ending in punctuation still match as whole words
+        self.assertFalse(entities.only_via_alias("Acme Inc. and Acme Robotics ship", "Acme Inc.", "Acme Robotics"))
+        self.assertTrue(entities.only_via_alias("Acme Robotics ships", "Acme Inc.", "Acme Robotics"))
+        self.assertFalse(entities.only_via_alias("Acme Inc.x", "Acme Corp", "Acme Inc."))
 
     def test_judge_sees_the_card_that_came_through_the_alias(self):
         self.assertIn("SEER Robotics, Foxconn unveil humanoid",

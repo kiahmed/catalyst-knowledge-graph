@@ -230,10 +230,11 @@ def only_via_alias(text: str, name: str, alias: str) -> bool:
     import re  # noqa: PLC0415
 
     t = text.lower()
-    a_re = re.compile(r"\b" + re.escape(alias.lower()) + r"\b")
+    # (?<!\w)/(?!\w), not \b: \b never matches after a trailing "." ("Inc.").
+    a_re = re.compile(r"(?<!\w)" + re.escape(alias.lower()) + r"(?!\w)")
     if not a_re.search(t):
         return False
-    n_re = re.compile(r"\b" + re.escape(name.lower()) + r"\b")
+    n_re = re.compile(r"(?<!\w)" + re.escape(name.lower()) + r"(?!\w)")
     if a_re.search(name.lower()) and n_re.search(t):
         return False          # alias inside the name ("Amazon" ⊂ "Amazon Web Services"): the name is there
     return not n_re.search(a_re.sub(" ", t))
