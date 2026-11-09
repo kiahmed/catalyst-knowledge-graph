@@ -157,6 +157,10 @@ def _upload_png(card_id: str, local_path: Path, *, overwrite: bool = False) -> d
             return {"uploaded": False, "reason": "already_exists"}
         local_md5 = base64.b64encode(hashlib.md5(local_path.read_bytes()).digest()).decode()
         if blob.md5_hash == local_md5:
+            # Same bytes: keep the image, but bump its `updated` time so
+            # `make render-stale` sees it as current (metadata-only patch).
+            blob.metadata = {**(blob.metadata or {}), "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+            blob.patch()
             return {"uploaded": False, "reason": "unchanged"}
     else:
         blob = bucket.blob(f"{STORAGE_CARDS_PREFIX}/{card_id}.png")

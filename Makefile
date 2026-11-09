@@ -342,7 +342,8 @@ entity-link:
 # rendered (live Firestore doc update_time vs bucket image time). Covers every
 # kind of fix (admin edits, direction fixes, merges, re-extraction). Writes
 # data/render_stale_<UTC ts>.txt (+ .ids). APPLY=1 then force-re-renders exactly
-# those cards on the prod render service, 5 per call (needs gcloud login).
+# those cards on the prod render service, 3 per call (service timeout 120s;
+# needs gcloud login). Failed chunks are listed at the end; exit 1 if any.
 #   make render-stale [APPLY=1]
 render-stale:
 	@set -a; . ./.env.prod; set +a; \
@@ -355,15 +356,20 @@ render-stale:
 	  if [ -z "$$ids" ]; then echo "nothing to re-render"; exit 0; fi; \
 	  URL=$$(gcloud run services describe robotics-render --region us-central1 --project "$$GCP_PROJECT" \
 	    --format='value(status.url)') || { echo "!! gcloud login needed: gcloud auth login"; exit 1; }; \
-	  echo "$$ids" | tr ',' '\n' | xargs -n 5 | while read -r chunk; do \
+	  failed=""; \
+	  for chunk in $$(echo "$$ids" | tr ',' '\n' | xargs -n 3 | tr ' ' ','); do \
 	    TOKEN=$$(gcloud auth print-identity-token) || exit 1; \
-	    list=$$(echo "$$chunk" | sed 's/ /","/g'); \
+	    list=$$(echo "$$chunk" | sed 's/,/","/g'); \
 	    printf '%s → ' "$$chunk"; \
-	    curl -sS --max-time 320 -X POST "$$URL/render-batch" -H "Authorization: Bearer $$TOKEN" \
-	      -H "Content-Type: application/json" \
-	      -d "{\"card_ids\":[\"$$list\"],\"force\":true,\"recaps\":false}" \
-	    | python3 -c "import json,sys; d=json.load(sys.stdin); print({k: d.get(k) for k in ('ok','rendered','failed','uploaded','upload_skipped','graphs_rendered','graphs_failed','error') if k in d})"; \
-	  done
+	    resp=$$(curl -sS --max-time 320 -w '\n%{http_code}' -X POST "$$URL/render-batch" \
+	      -H "Authorization: Bearer $$TOKEN" -H "Content-Type: application/json" \
+	      -d "{\"card_ids\":[\"$$list\"],\"force\":true,\"recaps\":false}"); \
+	    code=$$(echo "$$resp" | tail -1); \
+	    if [ "$$code" = "200" ] && echo "$$resp" | sed '$$d' | python3 dev-utils/render_stale.py --summarize; \
+	    then :; else echo "  !! HTTP $$code — will stay stale"; failed="$$failed,$$chunk"; fi; \
+	  done; \
+	  if [ -n "$$failed" ]; then echo "FAILED (rerun make render-stale APPLY=1): $${failed#,}"; exit 1; fi; \
+	  echo "all chunks OK"
 
 reextract-prod:
 	@test -n "$(IDS)" || { echo '!! usage: make reextract-prod IDS=ROB-…,ROB-… [APPLY=1]'; exit 1; }

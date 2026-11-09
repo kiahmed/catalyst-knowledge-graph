@@ -22,13 +22,25 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from google.cloud import firestore, storage
-
 _ROOT = Path(__file__).resolve().parent.parent
 
 
+def summarize() -> int:
+    """make render-stale APPLY=1: print one render-batch reply; exit 1 if anything failed."""
+    import json  # noqa: PLC0415
+
+    d = json.load(sys.stdin)
+    print({k: d[k] for k in ("rendered", "failed", "uploaded", "upload_skipped", "graphs_rendered", "graphs_failed")
+           if k in d})
+    return 1 if (not d.get("ok") or d.get("failed") or d.get("graphs_failed")) else 0
+
+
 def main() -> int:
+    if "--summarize" in sys.argv:
+        return summarize()
     ap = argparse.ArgumentParser()
+    from google.cloud import firestore, storage  # noqa: PLC0415  (container only; --summarize runs on the host)
+
     ap.add_argument("--out-dir", default=str(_ROOT / "data"))
     ap.add_argument("--collection", default=os.environ.get("FIRESTORE_EXPORT_COLLECTION", "CKG-Robotics"))
     ap.add_argument("--bucket", default=os.environ.get("CARDS_BUCKET", "robotics-cards"))
