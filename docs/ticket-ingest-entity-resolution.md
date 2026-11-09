@@ -1,6 +1,10 @@
 # Ticket: ingest-time entity resolution — stop mislabeling at the source
 
-**Owner:** catalyst-knowledge-graph. **Date:** 2026-11-09. **Status:** spec — not built.
+**Owner:** catalyst-knowledge-graph. **Date:** 2026-11-09. **Status:** built 2026-11-09 (§3.1–3.6), pending review;
+migration (§5) not built yet. Defaults taken for §8: (1) generic → one `group` entity per loose key, **no** place
+parent link (parent = ownership); (2) generic/place word lists cover the names in today's data; (3) legacy aliases
+are unverified unless a safe rule passes (format variant, ticker, initials). Rollout (§6) uses
+`make reextract-prod IDS=…` dry runs on known-bad cards instead of 3 log-only days (ingest paused).
 **Severity:** high. It writes wrong entity endpoints into prod every day.
 **Evidence:** Traction register DA-006/008/009/010/012/013 (2026-11-06..07);
 SEER Robotics → Serve Robotics; "Amazon" → AWS; China, Humanoid, "Venture Capital",
@@ -46,7 +50,11 @@ written) + `resolved` (the LLM's canonical form). For each name:
   ("Bank of China" vs "China Bank" collide). It is used only (a) for generic phrases
   (3.2), and (b) to add candidates to the LLM call.
 
-### 3.2 Generic-descriptor gate (before any lookup)
+### 3.2 Generic-descriptor gate (after the exact canonical / trusted-alias lookup of the mention)
+- **As built:** word lists alone can't tell "China Telecom" from "Chinese telecom company", so the *original
+  casing* decides. Every word must be generic or a place, AND one generic word is lowercase or plural/collective
+  (sector, industry, market…). Title-Case singular names stay names; government phrases go to normal lookup.
+  Checked against every entity name in prod (2026-11-09): 74 flagged, all real descriptors.
 - A name is **generic** when, after `loose_key`, every token is in a generic
   vocabulary (company, firm, startup, maker, manufacturer, provider, supplier, customer,
   investor, operator, sector, industry, market, leading, major, top, global, domestic,
@@ -70,25 +78,29 @@ written) + `resolved` (the LLM's canonical form). For each name:
 3. **Unverified alias hit** → NOT trusted. It goes to the existing per-card LLM call as a
    name with that entity (plus family) as candidates. same_as ≥ 0.8 → use it and mark
    the alias verified. Otherwise new or child per the LLM, and the alias is flagged for
-   admin review (not deleted automatically).
+   admin review (not deleted automatically). As built: the contradiction is appended to
+   `Decision.review`, so `flag_unsure` writes an admin attention entry.
 4. Group-entity `loose_key` match (generic names only).
 5. Everything else → the existing tier-2 LLM. Candidates = today's fuzzy list +
    `loose_key` hits.
 
 ### 3.4 Alias writes (fixes RC1, RC4)
-- Save a mention as an alias ONLY when (a) its `strict_key` equals the entity name's
-  `strict_key` (format variant), or (b) the LLM said same_as ≥ 0.8 for it on this card.
+- Save a mention as an alias ONLY when the LLM said same_as ≥ 0.8 for it on this card
+  (as built: tier-1 matches write no alias; format variants already match by `strict_key`).
   An extraction rewrite (`resolved` ≠ `mention`) is not evidence by itself. In that case
   the mention goes through 3.3 step 3/5 like any other name.
-- `insert_alias` skips a new row whose `strict_key` equals an existing alias's
-  `strict_key` on the same entity (no more case/format duplicates).
-- New columns on `entity_aliases`: `verified BOOL`, `source` (ingest_llm | format |
-  admin | legacy), `created_at`.
+- `insert_alias` skips a new row whose `case_key` (case/punctuation/spacing only) equals an
+  existing alias or the name on the same entity. Legal-suffix variants ("Schaeffler" on
+  Schaeffler AG) are still stored, because consumers match the literal alias strings.
+- New columns on `entity_aliases`: `verified BOOLEAN`, `source VARCHAR` (ingest_llm |
+  ingest_new | generic | admin; NULL = legacy). No `created_at`. Admin alias writes,
+  reverts included, are verified/admin.
 
 ### 3.5 Children / parents (the "path back" rule)
 - Keep the LLM's `parent` / `sister_of` output (already creates the new entity + link).
 - Prompt addition: state-owned enterprises, agencies and subsidiaries are NEW entities with
   `parent` = the owner (e.g. China Telecom → parent China). They are never same_as.
+  As built this is a prompt rule only, with no code guard (same pattern as the rest of tier 2).
 
 ### 3.6 Symmetric edges (fixes RC5)
 - At write time, order symmetric endpoints (lower entity_id first). `dedupe_rows`

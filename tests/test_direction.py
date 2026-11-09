@@ -95,6 +95,19 @@ class TestDb(unittest.TestCase):
         self.assertEqual(self.con.execute("SELECT COUNT(*) FROM relationships").fetchone()[0], 1)
         self.assertEqual(direction.dedupe_rows(self.con, []), 0)
 
+    def test_dedupe_rows_symmetric_types_are_order_free_directional_kept(self):
+        self.con.execute("DELETE FROM relationships")
+        for a, rel, b, conf in ((self.h, "competes_with", self.b, 0.7), (self.b, "competes_with", self.h, 0.9),
+                                (self.h, "supplies", self.b, 0.8), (self.b, "supplies", self.h, 0.8)):
+            self.con.execute("""INSERT INTO relationships (catalyst_id, entity_a_id, rel_type, entity_b_id, confidence)
+                                VALUES (?, ?, ?, ?, ?)""", [self.cid, a, rel, b, conf])
+        self.assertIn("competes_with", direction.symmetric_types())
+        self.assertNotIn("supplies", direction.symmetric_types())
+        self.assertEqual(direction.dedupe_rows(self.con, [self.cid]), 1)      # only the reversed competes_with copy
+        rows = [(t, round(c, 2)) for t, c in self.con.execute(
+            "SELECT rel_type, confidence FROM relationships ORDER BY 1, 2").fetchall()]
+        self.assertEqual(rows, [("competes_with", 0.9), ("supplies", 0.8), ("supplies", 0.8)])
+
     def test_reextract_delete_clears_direction_audit(self):
         self.con.execute("INSERT INTO direction_audits (entry_id, model, checked, flipped, unclear, source) "
                          "VALUES ('ROB-1', 'm', 1, 0, 0, 'ingest')")

@@ -343,7 +343,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
         el('a', { href: '/#card-' + r.entry_id, target: '_blank' }, r.entry_id), ` · ${r.date || ''}`),
       el('h3', {}, 'Story'), el('p', {}, el('b', {}, r.headline)), el('p', {}, r.finding || ''),
       el('h3', {}, 'Mechanism'), el('p', {}, r.mechanism || '—'),
-      el('h3', {}, 'Entities in this card'), el('div', { id: 'cardChips', class: 'kv' }, 'loading…'));
+      el('h3', {}, 'Entities in this card'), el('div', { id: 'cardChips', class: 'kv', 'data-mode': editing ? 'edit' : 'view' }, 'loading…'));
     loadChips(r, editing);
     if (!editing) {
       p.append(el('div', { class: 'tools', style: 'padding:0' },
@@ -399,7 +399,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
     let d = S.chips[r.entry_id];
     try { if (!d) d = S.chips[r.entry_id] = await api('/card/' + encodeURIComponent(r.entry_id)); }
     catch (e) { if (box()) box().textContent = 'could not load: ' + e.message; return; }
-    if (!box() || S.rel !== r) return;   // user moved on
+    if (!box() || S.rel !== r || box().dataset.mode !== (editing ? 'edit' : 'view')) return;   // user moved on / switched mode
     const chip = (e, kind) => el('span', { class: 'tag' + (kind === 'text' ? ' warn' : ''), style: 'display:inline-flex;gap:4px;align-items:center;margin:2px',
         title: kind === 'text' ? `Named in the story${e.via ? ' as "' + e.via + '"' : ''} but not on this card's edges` : `On this card's edges · ${e.type}` },
       el('span', { style: 'cursor:pointer', onclick: () => selectEntity(e.id) }, e.name),

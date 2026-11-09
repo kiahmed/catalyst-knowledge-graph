@@ -192,6 +192,8 @@ def write_extraction(
             name_to_id[resolved_name] = r.entity_id
 
         # Insert relationships whose endpoints were resolvable.
+        symmetric = direction.symmetric_types()
+        written: set[tuple[int, str, int]] = set()
         for rel in result.relationships:
             a_id = name_to_id.get(rel.get("entity_a"))
             b_id = name_to_id.get(rel.get("entity_b"))
@@ -201,6 +203,13 @@ def write_extraction(
                     entry.get("entry_id"), rel,
                 )
                 continue
+            if a_id == b_id:   # both names resolved to one entity (e.g. two generic phrases → one group)
+                continue
+            if rel["rel_type"] in symmetric and a_id > b_id:
+                a_id, b_id = b_id, a_id          # one stored direction for symmetric types
+            if (a_id, rel["rel_type"], b_id) in written:
+                continue
+            written.add((a_id, rel["rel_type"], b_id))
             refs = rel.get("source_refs") or []
             source_refs_json = json.dumps(refs) if refs else None
             db.insert_relationship(

@@ -175,10 +175,19 @@ def dedupe_kept(kept: list[dict[str, Any]]) -> int:
     return removed
 
 
+def symmetric_types() -> set[str]:
+    """Vocab types where A→B and B→A say the same thing (partners_with, competes_with, benchmarks_against)."""
+    from .config import _VOCAB_PATH, _load_yaml  # noqa: PLC0415
+
+    return {v["name"] for v in (_load_yaml(_VOCAB_PATH) or {}).get("vocabulary", []) if not v.get("directional")}
+
+
 def dedupe_rows(con: duckdb.DuckDBPyConnection, catalyst_ids: list[int] | None = None) -> int:
     """Same for stored rows: per card, one row per (a, rel, b) — the highest
     confidence, then lowest rel_id. Lifecycle refs never point at rel_ids,
-    so deleting the extras is safe. Returns rows deleted."""
+    so deleting the extras is safe. Symmetric types count A→B and B→A as the
+    same row (per card only). Returns rows deleted."""
+    sym = sorted(symmetric_types()) or [""]
     scope = ""
     params: list[Any] = []
     if catalyst_ids is not None:
@@ -188,10 +197,13 @@ def dedupe_rows(con: duckdb.DuckDBPyConnection, catalyst_ids: list[int] | None =
         params = list(catalyst_ids)
     doomed = [r[0] for r in con.execute(f"""
         SELECT rel_id FROM (
-          SELECT rel_id, ROW_NUMBER() OVER (PARTITION BY catalyst_id, entity_a_id, rel_type, entity_b_id
-                                            ORDER BY confidence DESC, rel_id) AS rn
+          SELECT rel_id, ROW_NUMBER() OVER (
+                   PARTITION BY catalyst_id, rel_type,
+                     CASE WHEN rel_type IN (SELECT UNNEST(?::VARCHAR[])) THEN LEAST(entity_a_id, entity_b_id) ELSE entity_a_id END,
+                     CASE WHEN rel_type IN (SELECT UNNEST(?::VARCHAR[])) THEN GREATEST(entity_a_id, entity_b_id) ELSE entity_b_id END
+                   ORDER BY confidence DESC, rel_id) AS rn
           FROM relationships WHERE status IN ('active', 'materialized') {scope})
-        WHERE rn > 1""", params).fetchall()]
+        WHERE rn > 1""", [sym, sym, *params]).fetchall()]
     if doomed:
         con.execute(f"DELETE FROM relationships WHERE rel_id IN ({','.join('?' * len(doomed))})", doomed)
     return len(doomed)

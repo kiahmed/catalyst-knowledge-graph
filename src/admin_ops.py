@@ -55,6 +55,10 @@ CREATE TABLE IF NOT EXISTS admin_edits (
 
 def ensure_schema(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(_DDL)
+    # Alias trust columns (same migration as db.init_schema): admin alias
+    # writes are verified, and the admin service may run before any ingest has.
+    con.execute("ALTER TABLE entity_aliases ADD COLUMN IF NOT EXISTS verified BOOLEAN")
+    con.execute("ALTER TABLE entity_aliases ADD COLUMN IF NOT EXISTS source VARCHAR")
 
 
 # ── Reads ──────────────────────────────────────────────────────────
@@ -368,7 +372,7 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
             to_had = bool(con.execute("SELECT 1 FROM entity_aliases WHERE entity_id = ? AND alias = ?",
                                       [to_id, alias]).fetchone())
             if not to_had:
-                con.execute("INSERT INTO entity_aliases (entity_id, alias) VALUES (?, ?)", [to_id, alias])
+                con.execute("INSERT INTO entity_aliases (entity_id, alias, verified, source) VALUES (?, ?, true, 'admin')", [to_id, alias])
         con.execute("DELETE FROM entity_aliases WHERE entity_id = ? AND alias = ?", [from_id, alias])
         # to_had: the target already carried this alias — a revert must not remove it there.
         return ({"alias": alias, "entity_id": from_id}, {"alias": alias, "entity_id": to_id, "to_had": to_had},
@@ -410,7 +414,7 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
         eid = con.execute("INSERT INTO entities (name, ticker, type) VALUES (?, ?, ?) RETURNING entity_id",
                           [name, (p.get("ticker") or None), typ]).fetchone()[0]
         if alias.lower() != name.lower():
-            con.execute("INSERT INTO entity_aliases (entity_id, alias) VALUES (?, ?)", [eid, alias])
+            con.execute("INSERT INTO entity_aliases (entity_id, alias, verified, source) VALUES (?, ?, true, 'admin')", [eid, alias])
         con.execute("DELETE FROM entity_aliases WHERE entity_id = ? AND alias = ?", [from_id, alias])
         for m in moves:
             for side in m["sides"]:
@@ -441,7 +445,7 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
             _rename_entity(con, eid, name)
             if p.get("keep_old_name", True) and name.lower() != name0.lower() and not con.execute(
                     "SELECT 1 FROM entity_aliases WHERE entity_id = ? AND lower(alias) = lower(?)", [eid, name0]).fetchone():
-                con.execute("INSERT INTO entity_aliases (entity_id, alias) VALUES (?, ?)", [eid, name0])
+                con.execute("INSERT INTO entity_aliases (entity_id, alias, verified, source) VALUES (?, ?, true, 'admin')", [eid, name0])
                 alias_added = True
             # Social handles are keyed by the lowercased name: carry them over.
             con.execute("""INSERT INTO entity_handles (name_key, channel, handle, confidence, source, comment)
@@ -468,7 +472,7 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
         aliases = [a for (a,) in con.execute("SELECT alias FROM entity_aliases WHERE entity_id = ?", [eid]).fetchall()]
         links = [list(r) for r in con.execute("""SELECT child_id, parent_id, relation, confidence, reason, source
                                                  FROM entity_links WHERE ? IN (child_id, parent_id)""", [eid]).fetchall()]
-        unresolved = [[m, c, str(t)] for m, c, t in con.execute(
+        unresolved = [[m, c, t.isoformat() if t is not None else None] for m, c, t in con.execute(
             "SELECT mention, catalyst_id, created_at FROM unresolved_entities WHERE resolved_to = ?", [eid]).fetchall()]
         con.execute("UPDATE unresolved_entities SET resolved_to = NULL WHERE resolved_to = ?", [eid])
         con.execute("DELETE FROM entity_aliases WHERE entity_id = ?", [eid])
@@ -635,7 +639,8 @@ def revert_edit(con: duckdb.DuckDBPyConnection, edit_id: str, *, email: str, ip:
         if target is not None and not after.get("to_had") and not con.execute(
                 "SELECT 1 FROM entity_aliases WHERE entity_id = ? AND alias = ?", [target, alias]).fetchone():
             raise EditConflict(f"alias {alias!r} is no longer on entity {target}")
-        con.execute("INSERT INTO entity_aliases (entity_id, alias) VALUES (?, ?) ON CONFLICT DO NOTHING", [orig, alias])
+        con.execute("INSERT INTO entity_aliases (entity_id, alias, verified, source) VALUES (?, ?, true, 'admin') "
+                    "ON CONFLICT DO NOTHING", [orig, alias])
         if target is not None and not after.get("to_had"):
             con.execute("DELETE FROM entity_aliases WHERE entity_id = ? AND alias = ?", [target, alias])
         return _record_manual_revert(con, edit_id, email, ip, before, after)
@@ -692,7 +697,8 @@ def revert_edit(con: duckdb.DuckDBPyConnection, edit_id: str, *, email: str, ip:
             touched.add(_edge(con, m["rel_id"])["catalyst_id"])
         con.execute("DELETE FROM entity_links WHERE child_id = ?", [eid])   # only its own parent link is left
         con.execute("DELETE FROM entity_aliases WHERE entity_id = ?", [eid])
-        con.execute("INSERT INTO entity_aliases (entity_id, alias) VALUES (?, ?) ON CONFLICT DO NOTHING", [orig, alias])
+        con.execute("INSERT INTO entity_aliases (entity_id, alias, verified, source) VALUES (?, ?, true, 'admin') "
+                    "ON CONFLICT DO NOTHING", [orig, alias])
         con.execute("DELETE FROM entities WHERE entity_id = ?", [eid])
         if touched:
             direction.dedupe_rows(con, sorted(touched))
@@ -727,7 +733,8 @@ def revert_edit(con: duckdb.DuckDBPyConnection, edit_id: str, *, email: str, ip:
         con.execute("INSERT INTO entities (entity_id, name, ticker, type) VALUES (?, ?, ?, ?)",
                     [eid, before["name"], before["ticker"], before["type"]])
         for a in before["aliases"]:
-            con.execute("INSERT INTO entity_aliases (entity_id, alias) VALUES (?, ?) ON CONFLICT DO NOTHING", [eid, a])
+            con.execute("INSERT INTO entity_aliases (entity_id, alias, verified, source) VALUES (?, ?, true, 'admin') "
+                    "ON CONFLICT DO NOTHING", [eid, a])
         skipped = []
         for child, parent, rel, conf, reason, source in before["links"]:
             if con.execute("SELECT 1 FROM entities WHERE entity_id = ?", [parent if child == eid else child]).fetchone():
@@ -737,7 +744,8 @@ def revert_edit(con: duckdb.DuckDBPyConnection, edit_id: str, *, email: str, ip:
                 skipped.append([child, parent, rel])
         for mention, cid, created in before.get("unresolved", []):
             con.execute("""UPDATE unresolved_entities SET resolved_to = ? WHERE mention = ? AND catalyst_id = ?
-                           AND CAST(created_at AS VARCHAR) = ? AND resolved_to IS NULL""", [eid, mention, cid, created])
+                           AND created_at IS NOT DISTINCT FROM CAST(? AS TIMESTAMP) AND resolved_to IS NULL""",
+                        [eid, mention, cid, created])
         out = _record_manual_revert(con, edit_id, email, ip, before, after)
         out["links_skipped"] = skipped   # other end no longer exists
         return out

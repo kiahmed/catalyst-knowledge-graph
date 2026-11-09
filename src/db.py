@@ -221,6 +221,10 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
     con.execute("ALTER TABLE entity_handles ADD COLUMN IF NOT EXISTS audited_at TIMESTAMP")
     # Per-catalyst hashtags (JSON array, priority-ordered) — src/hashtags.py.
     con.execute("ALTER TABLE catalysts ADD COLUMN IF NOT EXISTS hashtags TEXT")
+    # Alias trust (docs/ticket-ingest-entity-resolution.md §3.4): only a
+    # verified alias is trusted by ingest without an LLM check. NULL = legacy.
+    con.execute("ALTER TABLE entity_aliases ADD COLUMN IF NOT EXISTS verified BOOLEAN")
+    con.execute("ALTER TABLE entity_aliases ADD COLUMN IF NOT EXISTS source VARCHAR")
     # Arboryx wrote some source_urls as the literal "None" / "" (2026-11
     # dedup sweep): cards showed a "Source" button to /None. NULL them.
     # Same rule as clean_url: valid = URL_RE on the whitespace-trimmed value.
@@ -439,14 +443,32 @@ def insert_entity(
 
 
 def insert_alias(
-    con: duckdb.DuckDBPyConnection, entity_id: int, alias: str
+    con: duckdb.DuckDBPyConnection, entity_id: int, alias: str,
+    *, verified: bool | None = None, source: str | None = None,
 ) -> None:
+    """Add an alias unless the entity already has it in another case /
+    punctuation / spacing form (names.case_key) — no more "Humanoid robots" +
+    "humanoid robots" rows. Legal-suffix variants ("Schaeffler" on Schaeffler
+    AG) are still stored: consumers match the literal alias strings."""
+    from .names import case_key  # noqa: PLC0415
+
+    key = case_key(alias)
+    existing = [n for (n,) in con.execute(
+        "SELECT name FROM entities WHERE entity_id = ? UNION ALL SELECT alias FROM entity_aliases WHERE entity_id = ?",
+        [entity_id, entity_id]).fetchall()]
+    if any(case_key(n) == key for n in existing):
+        if verified:   # a confirmation upgrades the existing spelling's trust (any case/punctuation form)
+            for (a,) in con.execute("SELECT alias FROM entity_aliases WHERE entity_id = ?", [entity_id]).fetchall():
+                if case_key(a) == key:
+                    con.execute("UPDATE entity_aliases SET verified = true, source = COALESCE(source, ?) "
+                                "WHERE entity_id = ? AND alias = ?", [source, entity_id, a])
+        return
     con.execute(
         """
-        INSERT INTO entity_aliases (entity_id, alias) VALUES (?, ?)
+        INSERT INTO entity_aliases (entity_id, alias, verified, source) VALUES (?, ?, ?, ?)
         ON CONFLICT (entity_id, alias) DO NOTHING
         """,
-        [entity_id, alias],
+        [entity_id, alias, verified, source],
     )
 
 

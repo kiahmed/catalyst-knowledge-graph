@@ -69,7 +69,9 @@ class TestResolve(unittest.TestCase):
         d = resolve.Decision(same_as=self.hmg, confidence=0.95, reason="legal name")
         r = self._resolve("Hyundai Motor Co", d, mention="Hyundai Motor")
         self.assertEqual((r.entity_id, r.tier, r.matched_name), (self.hmg, 2, "Hyundai Motor Group"))
-        self.assertEqual(db.find_entity_exact(self.con, "hyundai motor"), self.hmg)
+        # both spellings resolve next time, trusted (verified), via the name key
+        self.assertEqual(resolve.classify(self.con, "hyundai motor", "hyundai motor"), ("trusted", self.hmg))
+        self.assertEqual(resolve.classify(self.con, "Hyundai Motor Co", "Hyundai Motor Co"), ("trusted", self.hmg))
 
     def test_new_entity_gets_llm_links(self):
         d = resolve.Decision(links=[(self.hmg, "subsidiary_of")], confidence=0.9, reason="owned by HMG")
@@ -104,6 +106,98 @@ class TestResolve(unittest.TestCase):
         self.assertEqual((r.entity_id, r.tier), (china, 1))
         r = self._resolve("  European Union ")                       # stray whitespace → same entity
         self.assertEqual(r.entity_id, self.eu)
+
+    # ── 2026-11-09 resolution fix (docs/ticket-ingest-entity-resolution.md) ──
+
+    def _serve_with_legacy_seer_alias(self):
+        serve = db.insert_entity(self.con, "Serve Robotics", None, "public_company")
+        self.con.execute("INSERT INTO entity_aliases (entity_id, alias) VALUES (?, 'SEER Robotics')", [serve])  # legacy
+        return serve
+
+    def test_legacy_alias_is_sent_to_the_llm_not_trusted(self):
+        serve = self._serve_with_legacy_seer_alias()
+        client = FakeClient([{"name": "SEER Robotics", "confidence": 0.95, "reason": "different company"}])
+        out = resolve.decide_entities(self.con, CFG, client, text="SEER Robotics shows a Foxconn robot",
+                                      entities=[{"resolved": "SEER Robotics", "mention": "SEER Robotics"}])
+        self.assertEqual(len(client.calls), 1)
+        self.assertIn("Serve Robotics", client.calls[0])                # the alias's entity is a candidate
+        r = self._resolve("SEER Robotics", out["SEER Robotics"])
+        self.assertEqual(r.tier, 3)                                     # contradicted → its own entity
+        self.assertNotEqual(r.entity_id, serve)
+
+    def test_legacy_alias_confirmed_by_llm_becomes_verified(self):
+        serve = self._serve_with_legacy_seer_alias()
+        r = self._resolve("SEER Robotics", resolve.Decision(same_as=serve, confidence=0.95, reason="same"))
+        self.assertEqual((r.entity_id, r.tier), (serve, 2))
+        self.assertEqual(self.con.execute("SELECT verified FROM entity_aliases WHERE alias = 'SEER Robotics'").fetchone(),
+                         (True,))
+        # now trusted: never sent again
+        client = FakeClient([])
+        resolve.decide_entities(self.con, CFG, client, text="x", entities=[{"resolved": "SEER Robotics"}])
+        self.assertEqual(client.calls, [])
+
+    def test_legacy_alias_without_a_verdict_keeps_todays_match(self):
+        serve = self._serve_with_legacy_seer_alias()
+        r = self._resolve("SEER Robotics")                               # LLM failed / absent
+        self.assertEqual((r.entity_id, r.tier), (serve, 1))
+
+    def test_safe_legacy_aliases_stay_trusted(self):
+        bd = self.bd
+        self.con.execute("INSERT INTO entity_aliases (entity_id, alias) VALUES (?, 'BD')", [bd])            # initials
+        self.con.execute("INSERT INTO entity_aliases (entity_id, alias) VALUES (?, 'Boston Dynamics Inc.')", [bd])
+        self.assertEqual(resolve.classify(self.con, "Boston Dynamics", "BD"), ("trusted", bd))
+        self.assertEqual(resolve.classify(self.con, "Boston Dynamics Inc.", "Boston Dynamics Inc."), ("trusted", bd))
+
+    def test_extractor_rewrite_is_checked_and_saves_no_alias(self):
+        # mention "Hyundai" rewritten to Hyundai Motor Group: the LLM must confirm; nothing saved by tier 1
+        kind, hit = resolve.classify(self.con, "Hyundai Motor Group", "Hyundai")
+        self.assertEqual((kind, hit), ("check", self.hmg))
+        r = self._resolve("Hyundai Motor Group", mention="Hyundai")      # no verdict → today's match
+        self.assertEqual(r.entity_id, self.hmg)
+        self.assertIsNone(self.con.execute("SELECT 1 FROM entity_aliases WHERE alias = 'Hyundai'").fetchone())
+
+    def test_generic_phrases_land_on_one_group_entity_never_on_the_real_one(self):
+        china = db.insert_entity(self.con, "China", None, "government")
+        r1 = self._resolve("China", mention="leading logistics companies in China")
+        r2 = self._resolve("China", mention="Chinese leading logistic company")
+        self.assertEqual(r1.entity_id, r2.entity_id)
+        self.assertNotEqual(r1.entity_id, china)
+        self.assertEqual(self.con.execute("SELECT type FROM entities WHERE entity_id = ?", [r1.entity_id]).fetchone(),
+                         ("group",))
+        self.assertIsNone(self.con.execute("SELECT 1 FROM entity_aliases WHERE entity_id = ?", [china]).fetchone())
+        client = FakeClient([])
+        resolve.decide_entities(self.con, CFG, client, text="x", entities=[
+            {"resolved": "China", "mention": "Chinese telecom companies"}])
+        self.assertEqual(client.calls, [])                               # generic: no LLM
+
+    def test_group_is_named_after_the_phrase_not_the_rewrite_target(self):
+        # reviewer repro: resolved "China Telecom" / mention "Chinese telecom companies" on a fresh DB
+        r = self._resolve("China Telecom", mention="Chinese telecom companies")
+        name, typ = self.con.execute("SELECT name, type FROM entities WHERE entity_id = ?", [r.entity_id]).fetchone()
+        self.assertEqual((name, typ), ("Chinese telecom companies", "group"))
+        self.assertEqual(resolve.classify(self.con, "China Telecom", "China Telecom")[0], "new")   # not captured
+        r = self._resolve("Venture Capital", mention="venture capital firms")
+        self.assertEqual(self.con.execute("SELECT name FROM entities WHERE entity_id = ?", [r.entity_id]).fetchone(),
+                         ("Venture capital firms",))
+
+    def test_contradicted_legacy_alias_is_flagged_for_review(self):
+        self._serve_with_legacy_seer_alias()
+        client = FakeClient([{"name": "SEER Robotics", "confidence": 0.95, "reason": "different company"}])
+        out = resolve.decide_entities(self.con, CFG, client, text="SEER Robotics demo",
+                                      entities=[{"resolved": "SEER Robotics", "mention": "SEER Robotics"}])
+        self.assertTrue(any("Serve Robotics" in r for r in out["SEER Robotics"].review))
+
+    def test_named_company_of_common_words_is_not_generic(self):
+        self.assertEqual(resolve.classify(self.con, "China Telecom", "China Telecom")[0], "new")
+
+    def test_insert_alias_skips_case_and_punctuation_variants_only(self):
+        db.insert_alias(self.con, self.hmg, "Hyundai Motor")
+        db.insert_alias(self.con, self.hmg, "hyundai motor")
+        db.insert_alias(self.con, self.hmg, "Hyundai-Motor")
+        db.insert_alias(self.con, self.hmg, "hyundai motor group")            # the name itself, other case
+        db.insert_alias(self.con, self.hmg, "Hyundai Motor Co")               # legal-suffix variant: kept
+        self.assertEqual(sorted(a for (a,) in self.con.execute("SELECT alias FROM entity_aliases WHERE entity_id = ?",
+                                                               [self.hmg]).fetchall()), ["Hyundai Motor", "Hyundai Motor Co"])
 
     def test_llm_cannot_pick_a_non_candidate(self):
         # European Union exists in the DB but is not among this name's candidates.
