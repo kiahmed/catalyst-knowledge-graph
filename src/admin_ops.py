@@ -193,6 +193,15 @@ def _need(p: dict[str, Any], *keys: str) -> list[Any]:
     return [p[k] for k in keys]
 
 
+def _rel_id_list(rel_ids: Any, *, allow_empty: bool) -> list[int]:
+    """Distinct int relationship ids (type-checked BEFORE hashing, so [[1]] is a 400, not a 500)."""
+    if not isinstance(rel_ids, list) or any(not isinstance(r, int) or isinstance(r, bool) for r in rel_ids) \
+            or len(set(rel_ids)) != len(rel_ids) or (not rel_ids and not allow_empty):
+        raise EditError("rel_ids must be a " + ("" if allow_empty else "non-empty ") +
+                        "list of distinct relationship ids")
+    return rel_ids
+
+
 def _entity_exists(con: duckdb.DuckDBPyConnection, eid: Any) -> int:
     if not isinstance(eid, int) or not con.execute("SELECT 1 FROM entities WHERE entity_id = ?", [eid]).fetchone():
         raise EditError(f"no entity {eid!r}")
@@ -305,10 +314,7 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
         name = (p.get("name") or alias).strip()
         if not name or con.execute("SELECT 1 FROM entities WHERE lower(name) = lower(?)", [name]).fetchone():
             raise EditError(f"entity {name!r} already exists or is empty — move the alias and repoint the edges instead")
-        rel_ids = p.get("rel_ids") or []
-        if not isinstance(rel_ids, list) or any(not isinstance(r, int) or isinstance(r, bool) for r in rel_ids) \
-                or len(set(rel_ids)) != len(rel_ids):
-            raise EditError("rel_ids must be a list of distinct relationship ids")
+        rel_ids = _rel_id_list(p.get("rel_ids") or [], allow_empty=True)
         moves, touched = [], set()
         for rel_id in rel_ids:
             cur = _edge(con, rel_id)
@@ -394,9 +400,7 @@ def repoint_many(con: duckdb.DuckDBPyConnection, *, from_entity_id: int, to_enti
     _entity_exists(con, to_entity_id)
     if from_entity_id == to_entity_id:
         raise EditError("source and target entity are the same")
-    if not isinstance(rel_ids, list) or not rel_ids or len(set(rel_ids)) != len(rel_ids) \
-            or any(not isinstance(r, int) or isinstance(r, bool) for r in rel_ids):
-        raise EditError("rel_ids must be a non-empty list of distinct relationship ids")
+    _rel_id_list(rel_ids, allow_empty=False)
     done, cards = [], set()
     for rel_id in rel_ids:
         cur = _edge(con, rel_id)

@@ -185,7 +185,8 @@ class TestAdminOps(_Fixture):
         for kw in ({"to_entity_id": self.aws, "rel_ids": [self.rel]},              # same entity
                    {"to_entity_id": self.logi, "rel_ids": []},                       # nothing checked
                    {"to_entity_id": self.logi, "rel_ids": [self.rel, self.rel]},     # duplicate
-                   {"to_entity_id": self.dhl, "rel_ids": [self.rel]}):               # would be a self-loop
+                   {"to_entity_id": self.dhl, "rel_ids": [self.rel]},                # would be a self-loop
+                   {"to_entity_id": self.logi, "rel_ids": [[self.rel]]}):            # nested list: clean 400
             with self.assertRaises(ops.EditError):
                 ops.repoint_many(self.con, from_entity_id=self.aws, email=WHO["email"], ip=WHO["ip"], vocab=VOCAB, **kw)
         with self.assertRaises(ops.EditConflict):                                  # edge not on the source
