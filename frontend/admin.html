@@ -51,6 +51,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
 .detail p { line-height: 1.5; margin: 6px 0; }
 .form { display: grid; grid-template-columns: 90px 1fr; gap: 8px; align-items: center; margin: 10px 0; }
 .frozen .col:not(.editing) { pointer-events: none; opacity: .55; }
+#busy { display: none; position: fixed; inset: 0; z-index: 9999; cursor: wait; background: transparent; }
 #banner { padding: 8px 16px; font-size: 12px; display: none; border-bottom: 1px solid var(--border); }
 #banner.warn { display: block; background: #fef3c7; color: #92400e; }
 #banner.bad { display: block; background: #fee2e2; color: #991b1b; }
@@ -98,6 +99,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
   </section>
 </div>
 <div class="modal" id="modal"><div class="box" id="modalBox"></div></div>
+<div id="busy" title="Working…"></div>
 <div id="toast"></div>
 
 <script src="/firebase-config.js"></script>
@@ -124,7 +126,14 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
     const t = $('toast'); t.textContent = msg; t.className = err ? 'err' : ''; t.style.display = 'block';
     clearTimeout(toast.h); toast.h = setTimeout(() => { t.style.display = 'none'; }, err ? 9000 : 4000);
   }
+  // Busy cursor + click shield while a save runs and the columns reload.
+  let busyN = 0;
+  function busy(on) { busyN = Math.max(0, busyN + (on ? 1 : -1)); $('busy').style.display = busyN ? 'block' : 'none'; }
   let api = async function (path, body) {
+    if (body) busy(true);
+    try { return await apiCall(path, body); } finally { if (body) busy(false); }
+  };
+  async function apiCall(path, body) {
     const token = await S.user.getIdToken();
     const res = await fetch(API + path, {
       method: body ? 'POST' : 'GET',
@@ -159,6 +168,10 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
   // After any save/revert: reload every column (entity list counts included),
   // keeping the selected entity and relationship when they still exist.
   async function afterEdit(focusId) {
+    busy(true);
+    try { await reloadAll(focusId); } finally { busy(false); }
+  }
+  async function reloadAll(focusId) {
     const relId = S.rel && S.rel.rel_id, id = focusId || (S.entity && S.entity.id);
     await loadEntities();
     if (!id) return;
