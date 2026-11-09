@@ -126,6 +126,20 @@ class TestDeltaExport(unittest.TestCase):
         os.environ["FIRESTORE_EXPORT_FULL_SYNC"] = "true"
         self.assertEqual(fx._write_catalysts(self.cfg, _cards(4))["written"], 4)
 
+    def test_invalidated_cards_are_rewritten_next_run(self):
+        # Admin edit path: state marked stale on the pushed copy, inline refresh failed.
+        import duckdb
+        fx._write_catalysts(self.cfg, _cards(4))
+        con = duckdb.connect(self.cfg.duckdb_path)
+        con.execute("INSERT INTO export_state (doc_key, content_hash) VALUES ('entities/7', 'h')")
+        fx.invalidate_state(con, ["ROB-T001"])
+        self.assertEqual(con.execute("SELECT content_hash FROM export_state WHERE doc_key = 'entities/7'").fetchone(),
+                         ("",))                                    # kept (delete detection), just stale
+        con.close()
+        self.client.writes.clear()
+        self.assertEqual(fx._write_catalysts(self.cfg, _cards(4))["written"], 1)
+        self.assertEqual([w.rsplit("/", 1)[1] for w in self._item_writes()], ["ROB-T001"])
+
     def test_hash_is_order_independent(self):
         a = {"card_id": "X", "a": 1, "b": [1, 2]}
         b = {"b": [1, 2], "a": 1, "card_id": "X"}

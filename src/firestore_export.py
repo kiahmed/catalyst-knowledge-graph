@@ -407,6 +407,19 @@ def _upload_pngs(
 # ── Public entry point ─────────────────────────────────────────────
 
 
+def invalidate_state(con: Any, entry_ids: list[str]) -> None:
+    """Mark these cards + every entity doc stale in export_state, so the next
+    delta export rewrites them. The admin service calls this on its copy
+    BEFORE pushing: if its inline refresh_cards then fails, the next ingest
+    still repairs Firestore. Hash '' never matches; rows are kept (not
+    deleted) because entity rows also drive delete detection."""
+    con.execute(_STATE_DDL)
+    con.execute("UPDATE export_state SET content_hash = '' WHERE doc_key LIKE 'entities/%'")
+    if entry_ids:
+        con.execute(f"UPDATE export_state SET content_hash = '' WHERE doc_key IN ({','.join('?' * len(entry_ids))})",
+                    [f"catalysts/{e}" for e in entry_ids])
+
+
 def refresh_cards(cfg: RoboticsConfig, entry_ids: list[str]) -> dict[str, Any]:
     """Rewrite just these card docs (+ the entities collection) after an admin
     edit — seconds, not the full export's minute+. The web app builds its

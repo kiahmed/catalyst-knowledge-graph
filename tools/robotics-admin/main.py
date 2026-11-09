@@ -32,7 +32,7 @@ from typing import Any
 import duckdb
 from flask import Flask, jsonify, request
 
-from src import admin_ops, duckdb_sync
+from src import admin_ops, duckdb_sync, firestore_export
 from src.config import load_config
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -215,6 +215,9 @@ def _write(apply) -> tuple[Any, int]:
             try:
                 admin_ops.ensure_schema(con)
                 result = apply(con)
+                # Stale-mark what this edit touched before it leaves this copy, so
+                # the next ingest rewrites it even if the inline refresh fails.
+                firestore_export.invalidate_state(con, result.get("cards", []))
                 con.execute("CHECKPOINT")
             finally:
                 con.close()
