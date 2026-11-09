@@ -171,7 +171,7 @@ rm -rf "$STAGE"
 # re-run after a later-step failure doesn't rebuild for minutes.
 # Set FORCE=1 to rebuild (needed when code changed but the tag didn't).
 echo "── 5/6  build + push images (Cloud Build) ────────────────────"
-for svc in robotics-render; do
+for svc in robotics-render robotics-admin; do
   if [ -z "${FORCE:-}" ] && \
      gcloud artifacts docker images describe "${AR}/${svc}:${TAG}" \
        --project="$GCP_PROJECT" >/dev/null 2>&1; then
@@ -187,6 +187,13 @@ for svc in robotics-render; do
   cp -r "tools/${svc}" "$BSTAGE/tools/"
   cp -r templates/cards "$BSTAGE/templates/"
   cp "tools/${svc}/Dockerfile" "$BSTAGE/Dockerfile"
+  # robotics-admin runs the shared pipeline code (src/) with the deployed
+  # config (config/config.yaml is gitignored — same working-tree copy the
+  # ingest zip ships).
+  if [ "$svc" = "robotics-admin" ]; then
+    cp -r src config "$BSTAGE/"
+    find "$BSTAGE/src" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
+  fi
   gcloud builds submit "$BSTAGE" \
     --project="$GCP_PROJECT" --tag="${AR}/${svc}:${TAG}" --quiet
   rm -rf "$BSTAGE"

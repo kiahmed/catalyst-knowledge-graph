@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" type="image/png" href="/assets/favicon.png">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/auth.css">
+<title>Robotics data admin · Arboryx</title>
+<style>
+:root {
+  --bg: #f3f1ed; --bg-card: #fdfcfa; --bg-detail: #f0ede7; --border: #ddd8cf; --border-focus: #0ea5e9;
+  --text: #1c1917; --text-secondary: #57534e; --text-muted: #a8a29e; --accent: #0ea5e9;
+  --warn: #d97706; --bad: #dc2626; --ok: #16a34a; --radius: 10px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: Inter, system-ui, sans-serif; background: var(--bg); color: var(--text); font-size: 13px; }
+header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border);
+         background: var(--bg-card); position: sticky; top: 0; z-index: 5; }
+header h1 { font-size: 15px; font-weight: 600; }
+header .who { margin-left: auto; color: var(--text-secondary); font-size: 12px; }
+button { font: inherit; border: 1px solid var(--border); background: var(--bg-card); border-radius: 7px; padding: 5px 10px;
+         cursor: pointer; color: var(--text); }
+button:hover:not(:disabled) { border-color: var(--border-focus); }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+button.danger { color: var(--bad); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+input, select { font: inherit; border: 1px solid var(--border); border-radius: 7px; padding: 5px 8px; background: #fff; }
+.cols { display: grid; grid-template-columns: 260px 300px minmax(320px, 1fr) minmax(340px, 1.1fr); gap: 10px;
+        padding: 10px; height: calc(100vh - 90px); }
+.col { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); display: flex;
+       flex-direction: column; min-height: 0; }
+.col h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary);
+          padding: 10px 12px 6px; display: flex; gap: 6px; align-items: center; }
+.col .tools { padding: 0 12px 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+.list { overflow: auto; flex: 1; padding: 0 6px 8px; }
+.item { padding: 7px 8px; border-radius: 7px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
+.item:hover { background: var(--bg-detail); }
+.item.sel { background: #e0f2fe; }
+.item .meta { margin-left: auto; color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+.tag { font-size: 10px; border-radius: 5px; padding: 1px 5px; border: 1px solid var(--border); color: var(--text-secondary); }
+.tag.warn { color: var(--warn); border-color: var(--warn); }
+.tag.bad { color: var(--bad); border-color: var(--bad); }
+.tag.ok { color: var(--ok); border-color: var(--ok); }
+.sec { padding: 4px 12px 10px; }
+.sec h3 { font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin: 8px 0 4px; }
+.kv { color: var(--text-secondary); }
+.mono { font-family: "IBM Plex Mono", monospace; font-size: 12px; }
+.detail { overflow: auto; flex: 1; padding: 4px 12px 12px; }
+.detail p { line-height: 1.5; margin: 6px 0; }
+.form { display: grid; grid-template-columns: 90px 1fr; gap: 8px; align-items: center; margin: 10px 0; }
+.frozen .col:not(.editing) { pointer-events: none; opacity: .55; }
+#banner { padding: 8px 16px; font-size: 12px; display: none; border-bottom: 1px solid var(--border); }
+#banner.warn { display: block; background: #fef3c7; color: #92400e; }
+#banner.bad { display: block; background: #fee2e2; color: #991b1b; }
+#toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: #1c1917; color: #fff;
+         padding: 9px 14px; border-radius: 8px; display: none; max-width: 80vw; z-index: 20; }
+#toast.err { background: var(--bad); }
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: none; align-items: center; justify-content: center; z-index: 10; }
+.modal .box { background: var(--bg-card); border-radius: 12px; padding: 16px; width: min(900px, 94vw); max-height: 84vh; overflow: auto; }
+.modal table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+.modal td, .modal th { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.gate { padding: 40px; text-align: center; color: var(--text-secondary); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Robotics data admin</h1>
+  <button id="btnScan" title="Rule-based scan, no LLM, free">Scan suspects</button>
+  <button id="btnLog">Edit log</button>
+  <span class="who" id="who">Signing in…</span>
+</header>
+<div id="banner"></div>
+<div id="gate" class="gate" hidden></div>
+<div class="cols" id="cols" hidden>
+  <section class="col" id="colEntities">
+    <h2>Entities</h2>
+    <div class="tools"><input id="q" placeholder="Search name or alias" style="flex:1"><button id="btnNewEntity" title="Create entity">+</button></div>
+    <div class="list" id="entityList"></div>
+  </section>
+  <section class="col" id="colEntity">
+    <h2>Entity</h2>
+    <div class="detail" id="entityPane"><p class="kv">Pick an entity.</p></div>
+  </section>
+  <section class="col" id="colRels">
+    <h2>Relationships <span id="relCount" class="tag"></span></h2>
+    <div class="tools">
+      <label><input type="checkbox" id="onlyUnnamed"> not named in card</label>
+      <label title="Send the checked edges to the LLM, review its picks, then apply"><input type="checkbox" id="useLlm"> Fix with LLM</label>
+      <button id="btnFix" disabled>Fix checked</button>
+    </div>
+    <div class="list" id="relList"></div>
+  </section>
+  <section class="col" id="colEdit">
+    <h2>Relationship</h2>
+    <div class="detail" id="relPane"><p class="kv">Pick a relationship.</p></div>
+  </section>
+</div>
+<div class="modal" id="modal"><div class="box" id="modalBox"></div></div>
+<div id="toast"></div>
+
+<script src="/firebase-config.js"></script>
+<script src="/admin-config.js"></script>
+<script src="/assets/auth.js"></script>
+<script>
+(function () {
+  'use strict';
+  // The service's own URL (written by make deploy-frontend into the
+  // gitignored /admin-config.js) — called directly, not via a Hosting rewrite.
+  const API = window.ROBOTICS_ADMIN_API || '';
+  const S = { user: null, me: null, entities: [], suspects: new Set(), entity: null, rel: null, checked: new Set() };
+  const $ = id => document.getElementById(id);
+  const el = (tag, attrs, ...kids) => {
+    const n = document.createElement(tag);
+    Object.entries(attrs || {}).forEach(([k, v]) => {
+      if (k === 'class') n.className = v; else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+      else if (v !== undefined && v !== null && v !== false) n.setAttribute(k, v === true ? '' : v);
+    });
+    kids.flat().forEach(k => n.append(k instanceof Node ? k : document.createTextNode(k == null ? '' : String(k))));
+    return n;
+  };
+  function toast(msg, err) {
+    const t = $('toast'); t.textContent = msg; t.className = err ? 'err' : ''; t.style.display = 'block';
+    clearTimeout(toast.h); toast.h = setTimeout(() => { t.style.display = 'none'; }, err ? 9000 : 4000);
+  }
+  let api = async function (path, body) {
+    const token = await S.user.getIdToken();
+    const res = await fetch(API + path, {
+      method: body ? 'POST' : 'GET',
+      headers: Object.assign({ Authorization: 'Bearer ' + token }, body ? { 'Content-Type': 'application/json' } : {}),
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({ ok: false, error: 'HTTP ' + res.status }));
+    if (!res.ok || data.ok === false) { const e = new Error(data.error || ('HTTP ' + res.status)); e.status = res.status; e.data = data; throw e; }
+    return data;
+  }
+
+  // ── Entities column ───────────────────────────────────────────
+  let qTimer;
+  async function loadEntities() {
+    const data = await api('/entities?q=' + encodeURIComponent($('q').value.trim()));
+    S.entities = data.entities; renderEntities();
+  }
+  function renderEntities() {
+    const list = $('entityList'); list.replaceChildren();
+    S.entities.forEach(e => list.append(el('div', {
+      class: 'item' + (S.entity && S.entity.id === e.id ? ' sel' : ''), onclick: () => selectEntity(e.id) },
+      el('span', {}, e.name), S.suspects.has(e.id) ? el('span', { class: 'tag warn', title: 'Scan: own name rarely in its cards' }, 'suspect') : '',
+      el('span', { class: 'meta' }, `${e.cards} cards · ${e.aliases} al`))));
+  }
+  $('q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(() => loadEntities().catch(e => toast(e.message, true)), 250); });
+
+  // ── Entity column ─────────────────────────────────────────────
+  async function selectEntity(id) {
+    S.entity = await api('/entity/' + id); S.rel = null; S.checked.clear();
+    renderEntities(); renderEntity(); renderRels(); renderRel();
+  }
+  function renderEntity() {
+    const e = S.entity, p = $('entityPane'); p.replaceChildren();
+    if (!e) return;
+    p.append(el('p', {}, el('b', {}, e.name), ' ', el('span', { class: 'kv' }, `${e.type}${e.ticker ? ' · ' + e.ticker : ''} · id ${e.id}`)));
+    p.append(el('h3', {}, 'Aliases'));
+    e.aliases.forEach(a => p.append(el('div', { class: 'item' },
+      el('span', {}, a.alias),
+      a.bare_brand ? el('span', { class: 'tag warn', title: 'One brand word for a longer name — may mean the parent/sister' }, 'brand') : '',
+      a.also_on.length ? el('span', { class: 'tag bad', title: 'Also an alias of: ' + a.also_on.join(', ') }, 'shared') : '',
+      el('span', { class: 'meta' },
+        el('button', { title: 'Move to another entity', onclick: () => moveAlias(a.alias) }, 'move'), ' ',
+        el('button', { class: 'danger', title: 'Remove this alias', onclick: () => dropAlias(a.alias) }, 'drop')))));
+    p.append(el('h3', {}, 'Family'));
+    if (!e.family.length) p.append(el('p', { class: 'kv' }, 'none'));
+    e.family.forEach(f => p.append(el('div', { class: 'item', onclick: () => selectEntity(f.id) },
+      el('span', { class: 'tag' }, f.role), el('span', {}, f.name),
+      el('span', { class: 'meta' }, el('button', { class: 'danger', onclick: ev => { ev.stopPropagation(); unlink(f); } }, 'unlink')))));
+    p.append(el('div', { class: 'tools', style: 'padding:10px 0' },
+      el('button', { onclick: () => linkTo('subsidiary_of') }, 'Set parent…'),
+      el('button', { onclick: () => linkTo('sister_of') }, 'Add sister…'),
+      el('button', { class: 'danger', onclick: mergeInto }, 'Merge into…')));
+  }
+
+  // ── Relationships column ──────────────────────────────────────
+  function visibleRels() {
+    return (S.entity ? S.entity.relationships : []).filter(r => !$('onlyUnnamed').checked || !r.named_in_card);
+  }
+  function renderRels() {
+    const list = $('relList'); list.replaceChildren();
+    const rels = visibleRels();
+    $('relCount').textContent = S.entity ? `${rels.length}` : '';
+    rels.forEach(r => {
+      const other = r.a.id === S.entity.id ? r.b.name : r.a.name;
+      list.append(el('div', { class: 'item' + (S.rel && S.rel.rel_id === r.rel_id ? ' sel' : ''), onclick: () => { S.rel = r; renderRels(); renderRel(); } },
+        el('input', { type: 'checkbox', checked: S.checked.has(r.rel_id), onclick: ev => { ev.stopPropagation();
+          ev.target.checked ? S.checked.add(r.rel_id) : S.checked.delete(r.rel_id); $('btnFix').disabled = !S.checked.size; } }),
+        el('span', {}, `${r.a.name} —${r.rel_type}→ ${r.b.name}`),
+        r.status !== 'active' ? el('span', { class: 'tag bad' }, r.status) : '',
+        r.named_in_card ? '' : el('span', { class: 'tag warn', title: `"${S.entity.name}" not named in this card (only via an alias / inference)` }, 'not named'),
+        el('span', { class: 'meta' }, `${r.evidence} · ${r.date || ''}`)));
+    });
+    $('btnFix').disabled = !S.checked.size;
+  }
+  $('onlyUnnamed').addEventListener('change', renderRels);
+
+  // ── Relationship editor column ────────────────────────────────
+  function renderRel(editing) {
+    const r = S.rel, p = $('relPane'); p.replaceChildren();
+    document.body.classList.toggle('frozen', !!editing);
+    $('colEdit').classList.toggle('editing', !!editing);
+    if (!r) { p.append(el('p', { class: 'kv' }, 'Pick a relationship.')); return; }
+    p.append(el('p', {}, el('b', {}, `${r.a.name} —${r.rel_type}→ ${r.b.name}`)),
+      el('p', { class: 'kv' }, `rel ${r.rel_id} · ${r.evidence} · confidence ${Number(r.confidence).toFixed(2)} · ${r.status} · card `,
+        el('a', { href: '/#card-' + r.entry_id, target: '_blank' }, r.entry_id), ` · ${r.date || ''}`),
+      el('h3', {}, 'Story'), el('p', {}, el('b', {}, r.headline)), el('p', {}, r.finding || ''),
+      el('h3', {}, 'Mechanism'), el('p', {}, r.mechanism || '—'));
+    if (!editing) { p.append(el('button', { class: 'primary', onclick: () => renderRel(true) }, 'Edit')); return; }
+    const pick = (label, ent) => {
+      const inp = el('input', { list: 'dl_' + label, value: ent.name, 'data-id': ent.id, style: 'width:100%' });
+      const dl = el('datalist', { id: 'dl_' + label });
+      let t; inp.addEventListener('input', () => { clearTimeout(t); t = setTimeout(async () => {
+        const d = await api('/entities?limit=25&q=' + encodeURIComponent(inp.value.trim()));
+        dl.replaceChildren(...d.entities.map(e => el('option', { value: e.name, 'data-id': e.id }, `${e.cards} cards`)));
+        const hit = d.entities.find(e => e.name === inp.value); inp.dataset.id = hit ? hit.id : '';
+      }, 200); });
+      return [inp, dl];
+    };
+    const [aIn, aDl] = pick('a', r.a), [bIn, bDl] = pick('b', r.b);
+    const typeSel = el('select', {}, S.me.rel_types.map(t => el('option', { value: t, selected: t === r.rel_type }, t)));
+    const statSel = el('select', {}, S.me.statuses.map(t => el('option', { value: t, selected: t === r.status }, t)));
+    p.append(el('div', { class: 'form' }, 'Source', el('div', {}, aIn, aDl), 'Type', typeSel, 'Target', el('div', {}, bIn, bDl), 'Status', statSel));
+    p.append(el('div', { class: 'tools', style: 'padding:0' },
+      el('button', { class: 'primary', onclick: async ev => {
+        const a = Number(aIn.dataset.id), b = Number(bIn.dataset.id);
+        if (!a || !b) return toast('Pick source and target from the suggestions', true);
+        ev.target.disabled = true;
+        try {
+          const set = {}, expect = {};
+          if (a !== r.a.id) { set.entity_a_id = a; expect.entity_a_id = r.a.id; }
+          if (b !== r.b.id) { set.entity_b_id = b; expect.entity_b_id = r.b.id; }
+          if (typeSel.value !== r.rel_type) { set.rel_type = typeSel.value; expect.rel_type = r.rel_type; }
+          const done = [];
+          if (Object.keys(set).length) done.push(await api('/edit', { op: 'repoint_edge', payload: Object.assign({ rel_id: r.rel_id, expect }, set) }));
+          if (statSel.value !== r.status) done.push(await api('/edit', { op: 'set_edge_status', payload: { rel_id: r.rel_id, status: statSel.value, expect: { status: r.status } } }));
+          toast(done.length ? `Saved (${done.map(d => d.edit_id).join(', ')}) — cards & graph refreshed` : 'Nothing changed');
+          await selectEntity(S.entity.id);
+        } catch (e) { toast(e.message, true); ev.target.disabled = false; }
+      } }, 'Save'),
+      el('button', { onclick: () => renderRel(false) }, 'Cancel')));
+  }
+
+  // ── Entity / alias actions ────────────────────────────────────
+  async function choose(title) {   // pick an entity by exact name
+    const name = prompt(title + '\n(exact entity name)'); if (!name) return null;
+    const d = await api('/entities?limit=50&q=' + encodeURIComponent(name.trim()));
+    const hit = d.entities.find(e => e.name.toLowerCase() === name.trim().toLowerCase());
+    if (!hit) { toast(`No entity named exactly "${name}"`, true); return null; }
+    return hit;
+  }
+  async function run(op, payload, note) {
+    try { const d = await api('/edit', { op, payload }); toast(`${note || op} saved (${d.edit_id})`); return d; }
+    catch (e) { toast(e.message, true); return null; }
+  }
+  async function moveAlias(alias) {
+    const to = await choose(`Move alias "${alias}" from ${S.entity.name} to:`); if (!to) return;
+    if (await run('move_alias', { alias, from_entity_id: S.entity.id, to_entity_id: to.id }, 'Alias move')) selectEntity(S.entity.id);
+  }
+  async function dropAlias(alias) {
+    if (!confirm(`Remove alias "${alias}" from ${S.entity.name}?`)) return;
+    if (await run('move_alias', { alias, from_entity_id: S.entity.id }, 'Alias drop')) selectEntity(S.entity.id);
+  }
+  async function linkTo(relation) {
+    const other = await choose(relation === 'subsidiary_of' ? `Parent of ${S.entity.name}:` : `Sister of ${S.entity.name}:`); if (!other) return;
+    if (await run('link', { child_id: S.entity.id, parent_id: other.id, relation }, 'Link')) selectEntity(S.entity.id);
+  }
+  async function unlink(f) {
+    if (!confirm(`Remove ${f.role} link to ${f.name}?`)) return;
+    const child = f.role === 'child' ? f.id : S.entity.id, parent = f.role === 'child' ? S.entity.id : f.id;
+    if (await run('unlink', { child_id: child, parent_id: parent, relation: f.relation }, 'Unlink')) selectEntity(S.entity.id);
+  }
+  async function mergeInto() {
+    const dst = await choose(`Merge ${S.entity.name} INTO (it disappears; its edges/aliases move):`); if (!dst) return;
+    if (!confirm(`Merge "${S.entity.name}" into "${dst.name}"? This one can NOT be reverted from the log.`)) return;
+    if (await run('merge', { src_id: S.entity.id, dst_id: dst.id }, 'Merge')) { await loadEntities(); selectEntity(dst.id); }
+  }
+  $('btnNewEntity').addEventListener('click', async () => {
+    const name = prompt('New entity name:'); if (!name) return;
+    const type = prompt('Type (public_company, private_company, government, organization):', 'public_company'); if (!type) return;
+    const ticker = prompt('Ticker (optional):', '') || null;
+    const d = await run('create_entity', { name, type, ticker }, 'Entity');
+    if (d) { $('q').value = name; await loadEntities(); selectEntity(d.after.entity_id); }
+  });
+
+  // ── Fix checked (manual or LLM) ───────────────────────────────
+  $('btnFix').addEventListener('click', async () => {
+    const ids = [...S.checked];
+    if (!$('useLlm').checked) {   // manual: open them one by one
+      S.rel = S.entity.relationships.find(r => r.rel_id === ids[0]); renderRels(); renderRel(true);
+      return toast(`Editing 1 of ${ids.length} checked — save, then pick the next`);
+    }
+    $('btnFix').disabled = true; toast(`Asking the LLM about ${ids.length} edge(s)…`);
+    try {
+      const d = await api('/suggest', { entity_id: S.entity.id, rel_ids: ids });
+      showSuggestions(d.suggestions);
+    } catch (e) { toast(e.message, true); }
+    $('btnFix').disabled = false;
+  });
+  function showSuggestions(sugs) {
+    const box = $('modalBox'); box.replaceChildren();
+    const rows = sugs.map(s => {
+      const r = S.entity.relationships.find(x => x.rel_id === s.rel_id);
+      const change = s.suggested_id !== S.entity.id;
+      const cb = el('input', { type: 'checkbox', checked: change && s.confidence >= 0.8, disabled: !change });
+      return { s, r, cb, tr: el('tr', {}, el('td', {}, cb), el('td', {}, `${r.a.name} —${r.rel_type}→ ${r.b.name}`),
+        el('td', {}, change ? el('b', {}, `→ ${s.suggested}`) : 'keep'), el('td', {}, s.confidence.toFixed(2)), el('td', { class: 'kv' }, s.reason)) };
+    });
+    box.append(el('h3', {}, 'LLM suggestions — review, then apply the checked ones'),
+      el('table', {}, el('tr', {}, el('th'), el('th', {}, 'Edge'), el('th', {}, 'Suggestion'), el('th', {}, 'Conf'), el('th', {}, 'Why')), rows.map(x => x.tr)),
+      el('div', { class: 'tools', style: 'padding:0' },
+        el('button', { class: 'primary', onclick: async ev => {
+          ev.target.disabled = true; let n = 0;
+          for (const x of rows.filter(x => x.cb.checked)) {
+            const cur = x.s.side === 'entity_a_id' ? x.r.a.id : x.r.b.id;
+            const payload = { rel_id: x.s.rel_id, expect: { [x.s.side]: cur } }; payload[x.s.side] = x.s.suggested_id;
+            try { await api('/edit', { op: 'repoint_edge', payload }); n++; } catch (e) { toast(`rel ${x.s.rel_id}: ${e.message}`, true); }
+          }
+          $('modal').style.display = 'none'; toast(`Applied ${n} change(s) — each is in the Edit log (revertible)`);
+          S.checked.clear(); selectEntity(S.entity.id);
+        } }, 'Apply checked'),
+        el('button', { onclick: () => { $('modal').style.display = 'none'; } }, 'Close')));
+    $('modal').style.display = 'flex';
+  }
+
+  // ── Scan + edit log ───────────────────────────────────────────
+  $('btnScan').addEventListener('click', async () => {
+    try {
+      const d = await api('/scan');
+      S.suspects = new Set(d.suspect_entities.map(s => s.id));
+      const box = $('modalBox'); box.replaceChildren(
+        el('h3', {}, `Suspect entities (${d.suspect_entities.length}) — own name rarely in their cards`),
+        el('table', {}, d.suspect_entities.map(s => el('tr', { style: 'cursor:pointer', onclick: () => { $('modal').style.display = 'none'; selectEntity(s.id); } },
+          el('td', {}, s.name), el('td', {}, `${s.named_in}/${s.cards} cards name it`)))),
+        el('h3', {}, `Aliases on more than one entity (${d.shared_aliases.length})`),
+        el('table', {}, d.shared_aliases.map(a => el('tr', {}, el('td', {}, a.alias), el('td', {}, a.entities.join(' · '))))),
+        el('button', { onclick: () => { $('modal').style.display = 'none'; } }, 'Close'));
+      $('modal').style.display = 'flex'; renderEntities();
+    } catch (e) { toast(e.message, true); }
+  });
+  $('btnLog').addEventListener('click', async () => {
+    try {
+      const d = await api('/edits');
+      const box = $('modalBox'); box.replaceChildren(el('h3', {}, 'Edit log (newest first)'),
+        el('table', {}, d.edits.map(e => el('tr', {},
+          el('td', { class: 'mono' }, e.edit_id), el('td', {}, e.edited_at), el('td', {}, e.op), el('td', { class: 'kv' }, e.email),
+          el('td', { class: 'mono' }, JSON.stringify(e.before) + ' → ' + JSON.stringify(e.after)),
+          el('td', {}, e.reverted_by ? el('span', { class: 'tag' }, 'reverted') : (e.revertible
+            ? el('button', { onclick: async ev => { if (!confirm('Revert ' + e.edit_id + '?')) return; ev.target.disabled = true;
+                try { await api('/revert', { edit_id: e.edit_id }); toast('Reverted ' + e.edit_id); $('modal').style.display = 'none';
+                      if (S.entity) selectEntity(S.entity.id); } catch (x) { toast(x.message, true); ev.target.disabled = false; } } }, 'Revert')
+            : el('span', { class: 'tag' }, 'not revertible')))))),
+        el('button', { onclick: () => { $('modal').style.display = 'none'; } }, 'Close'));
+      $('modal').style.display = 'flex';
+    } catch (e) { toast(e.message, true); }
+  });
+
+  // ── Backend activity banner (polled) ──────────────────────────
+  // Edits are always safe (the server refuses to overwrite a newer DB), but
+  // editing while an ingest/sweep runs means that run may start from stale
+  // data — so say so, and ask before saving.
+  S.status = { running: [], soon: [] };
+  async function refreshStatus() {
+    try { S.status = await api('/status'); } catch (e) { S.status = { running: [], soon: [], errors: [e.message] }; }
+    const b = $('banner'), r = S.status.running || [], soon = S.status.soon || [];
+    if (r.length) {
+      b.className = 'bad';
+      b.textContent = '⛔ Running now: ' + r.map(x => `${x.what} (started ${x.minutes_since_start} min ago${x.precise ? '' : ', may be done'})`).join(' · ') +
+        ' — we recommend waiting until it finishes before editing, so data stays in sync.';
+    } else if (soon.length) {
+      b.className = 'warn';
+      b.textContent = '⚠ Coming up: ' + soon.map(x => `${x.job} in ${x.minutes_until} min`).join(' · ') +
+        ' — finish edits before then, or come back after it completes.';
+    } else { b.className = ''; b.textContent = ''; }
+    if ((S.status.errors || []).length) console.warn('status:', S.status.errors);
+  }
+  const _origApi = api;
+  api = async function (path, body) {   // confirm writes while something is running
+    if (body && (path === '/edit' || path === '/revert') && (S.status.running || []).length &&
+        !confirm('A backend run is in progress (' + S.status.running.map(x => x.what).join(', ') +
+                 '). We recommend waiting until it finishes. Save anyway? (It will be logged.)')) {
+      throw new Error('Cancelled — backend run in progress');
+    }
+    const out = await _origApi(path, body);
+    if (out && out.warning) toast(out.warning, true);
+    return out;
+  };
+
+  // ── Boot: sign in, then check admin access ────────────────────
+  RoboticsAuth.requireSignIn(window.FIREBASE_CONFIG, async user => {
+    S.user = user;
+    if (!API) { $('gate').hidden = false; $('gate').textContent = 'Admin API not configured (admin-config.js) — run make deploy-frontend.'; return; }
+    try {
+      S.me = await api('/me');
+      $('who').textContent = `${S.me.email} · ${S.me.ip}`;
+      $('cols').hidden = false;
+      await loadEntities();
+      refreshStatus(); setInterval(refreshStatus, 60000);
+    } catch (e) {
+      $('gate').hidden = false;
+      $('gate').textContent = e.status === 403 ? `Not authorized: ${e.message}` : `Admin service unavailable: ${e.message}`;
+      $('who').textContent = user.email || '';
+    }
+  });
+})();
+</script>
+</body>
+</html>

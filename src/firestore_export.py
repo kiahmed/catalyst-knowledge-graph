@@ -401,6 +401,20 @@ def _upload_pngs(
 # ── Public entry point ─────────────────────────────────────────────
 
 
+def refresh_cards(cfg: RoboticsConfig, entry_ids: list[str]) -> dict[str, Any]:
+    """Rewrite just these card docs (+ the entities collection) after an admin
+    edit — seconds, not the full export's minute+. The web app builds its
+    graph from the card docs, so the map reflects the edit on reload; the
+    graph doc / insights / recap catch up at the next ingest."""
+    cards = export.build_cards(cfg, entry_ids)
+    out: dict[str, Any] = {"cards": _write_catalysts(cfg, cards)}
+    try:
+        out["entities"] = _write_entities(cfg)
+    except Exception as exc:  # noqa: BLE001
+        out["entities"] = {"error": f"{type(exc).__name__}: {exc}"}
+    return out
+
+
 def export_to_firestore(
     cfg: RoboticsConfig,
     images_dir: str = "/data/exports/card_images",

@@ -95,10 +95,16 @@ def _load_cards(
     time_window_days: int,
     min_edge_confidence: float,
     show_invalidated: bool,
+    entry_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     # Time-window filter (0 = no cap).
     where_clauses = ["sector = ?"]
     params: list[Any] = [sector]
+    if entry_ids is not None:   # targeted rebuild (admin edits); same card shape as the full export
+        if not entry_ids:
+            return []
+        where_clauses.append(f"entry_id IN ({','.join('?' * len(entry_ids))})")
+        params += list(entry_ids)
     if time_window_days and time_window_days > 0:
         where_clauses.append(f"timestamp >= (CURRENT_DATE - INTERVAL {int(time_window_days)} DAY)")
 
@@ -573,6 +579,17 @@ def _fit_graph_budget(
                 hi = mid - 1
         kept = ordered[:lo]
     return kept, (str(kept[-1].get("date")) if kept else None)
+
+
+def build_cards(cfg: RoboticsConfig, entry_ids: list[str]) -> list[dict[str, Any]]:
+    """Just these cards, built exactly as build_payload builds them."""
+    con = db.connect(cfg.duckdb_path)
+    try:
+        return _load_cards(con, cfg.sector, cfg.export.card_limit, time_window_days=cfg.graph.time_window_days,
+                           min_edge_confidence=cfg.graph.min_edge_confidence,
+                           show_invalidated=cfg.graph.show_invalidated, entry_ids=entry_ids)
+    finally:
+        con.close()
 
 
 def build_payload(cfg: RoboticsConfig) -> dict[str, Any]:

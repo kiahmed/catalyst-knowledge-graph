@@ -71,8 +71,9 @@ resource "google_cloud_run_v2_service" "robotics_render" {
 # Chromium never launches.
 #
 # PUBLIC BY DESIGN: Firebase Hosting rewrites /card/** and /card-img/**
-# here, and Hosting can't attach OIDC — so this service (and ONLY this one)
-# gets an allUsers invoker binding. robotics-render stays IAM-locked; the
+# here, and Hosting can't attach OIDC — so this service gets an allUsers
+# invoker binding (robotics-admin is also public — it enforces admin sign-in
+# + IP allowlist in-app; see admin.tf). robotics-render stays IAM-locked; the
 # exposure here is limited to OG HTML + PNG passthrough for valid card ids.
 resource "google_cloud_run_v2_service" "robotics_og" {
   name     = "robotics-og"

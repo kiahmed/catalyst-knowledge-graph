@@ -10,6 +10,7 @@ config/config.yaml
 /frontend/cards.json
 /frontend/card_images/
 /frontend/firebase-config.js
+/frontend/admin-config.js
 /frontend/features.js
 /frontend/preview.json
 
