@@ -360,6 +360,16 @@ def entities(_who):
         con.close()
 
 
+@app.get("/admin/api/card/<entry_id>")
+@_guard
+def card(_who, entry_id):
+    con = _read_con()
+    try:
+        return jsonify({"ok": True, **admin_ops.card_entities(con, entry_id)})
+    finally:
+        con.close()
+
+
 @app.get("/admin/api/entity/<int:eid>")
 @_guard
 def entity(_who, eid):

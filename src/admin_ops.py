@@ -186,6 +186,42 @@ def _live_rels_with_text(con: duckdb.DuckDBPyConnection, eid: int) -> list[dict[
           AND r.status IN ('active', 'materialized')""", [eid]).fetchall()]
 
 
+def card_entities(con: duckdb.DuckDBPyConnection, entry_id: str) -> dict[str, Any]:
+    """Pick-list for fixing an edge on one card (read-only, no LLM):
+    - on_card: every endpoint of the card's live edges; `new` = created from
+      this card (ingest logged it as a new name for this catalyst);
+    - in_text: existing entities whose name or a capitalized alias appears in
+      the card's story (case-sensitive, whole words) — catches the right company even when
+      extraction resolved the mention to a wrong one (SEER vs Serve)."""
+    row = con.execute("SELECT catalyst_id, headline, raw_finding FROM catalysts WHERE entry_id = ?", [entry_id]).fetchone()
+    if not row:
+        raise EditError(f"no card {entry_id!r}")
+    cid, head, finding = row
+    new_names = {n.lower() for (n,) in con.execute(
+        "SELECT suggested_name FROM unresolved_entities WHERE catalyst_id = ? AND suggested_name IS NOT NULL", [cid]).fetchall()}
+    on_card = [{"id": i, "name": n, "type": t, "new": n.lower() in new_names} for i, n, t in con.execute("""
+        SELECT DISTINCT e.entity_id, e.name, e.type FROM relationships r JOIN entities e
+          ON e.entity_id IN (r.entity_a_id, r.entity_b_id)
+        WHERE r.catalyst_id = ? AND r.status IN ('active', 'materialized') ORDER BY e.name""", [cid]).fetchall()]
+    # Proper names only, matched case-sensitively: an all-lowercase label
+    # ("robotics", "humanoid robot") is a generic phrase, and "Humanoid" the
+    # company must not match "humanoid robots". Story text only: headlines are
+    # Title Case, so every word there looks like a proper name.
+    text = finding or ""
+    seen = {e["id"] for e in on_card}
+    hits: dict[int, dict[str, Any]] = {}
+    for eid, name, typ, label in con.execute("""
+            SELECT e.entity_id, e.name, e.type, e.name FROM entities e WHERE e.type <> 'group'
+            UNION ALL SELECT e.entity_id, e.name, e.type, a.alias FROM entity_aliases a JOIN entities e USING (entity_id)
+            WHERE e.type <> 'group'""").fetchall():
+        if eid in seen or eid in hits or len(label) < 3 or label == label.lower():
+            continue
+        if re.search(r"(?<![A-Za-z0-9])" + re.escape(label) + r"(?![A-Za-z0-9])", text):
+            hits[eid] = {"id": eid, "name": name, "type": typ, "via": None if label == name else label}
+    return {"entry_id": entry_id, "on_card": on_card,
+            "in_text": sorted(hits.values(), key=lambda h: h["name"].lower())}
+
+
 def scan(con: duckdb.DuckDBPyConnection, min_cards: int = 5, max_rate: float = 0.3) -> dict[str, Any]:
     """Free, rule-based suspects (no LLM):
     - entities in a corporate family whose own name (or a distinctive alias)

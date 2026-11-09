@@ -321,6 +321,19 @@ class TestAdminOps(_Fixture):
         self.assertIsNone(self.con.execute("SELECT 1 FROM entities WHERE entity_id = ?", [self.robo]).fetchone())
         self.assertIn("Amazon Robotics", self._aliases(self.aws))
 
+    def test_card_entities_lists_card_endpoints_new_flag_and_names_in_story(self):
+        self.con.execute("UPDATE catalysts SET raw_finding = 'Amazon Robotics and Amazon Logistics vs DHL.' WHERE entry_id = 'ROB-0'")
+        self.con.execute("INSERT INTO unresolved_entities (mention, catalyst_id, suggested_name) VALUES ('DHL', ?, 'DHL')",
+                         [self.cids[0]])
+        d = ops.card_entities(self.con, "ROB-0")
+        self.assertEqual({e["name"]: e["new"] for e in d["on_card"]}, {"Amazon Web Services": False, "DHL": True})
+        self.assertEqual([e["name"] for e in d["in_text"]], ["Amazon Logistics", "Amazon Robotics"])
+        db.insert_alias(self.con, self.dhl, "robotics")                        # lowercase generic alias: ignored
+        self.con.execute("UPDATE catalysts SET raw_finding = 'amazon robotics demo; Amazon Logistics grows.' WHERE entry_id = 'ROB-0'")
+        self.assertEqual([e["name"] for e in ops.card_entities(self.con, "ROB-0")["in_text"]], ["Amazon Logistics"])
+        with self.assertRaises(ops.EditError):
+            ops.card_entities(self.con, "ROB-nope")
+
     def test_materialized_status_round_trip(self):
         self.con.execute("UPDATE relationships SET status = 'materialized' WHERE rel_id = ?", [self.rel])
         out = ops.apply_edit(self.con, "set_edge_status", {"rel_id": self.rel, "status": "rejected",

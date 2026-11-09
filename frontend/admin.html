@@ -172,6 +172,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
   // After any save/revert: reload every column (entity list counts included),
   // keeping the selected entity and relationship when they still exist.
   async function afterEdit(focusId) {
+    S.chips = {};
     busy(true);
     try { await reloadAll(focusId); } finally { busy(false); }
   }
@@ -341,7 +342,9 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
       el('p', { class: 'kv' }, `rel ${r.rel_id} · ${r.evidence} · confidence ${Number(r.confidence).toFixed(2)} · ${r.status} · card `,
         el('a', { href: '/#card-' + r.entry_id, target: '_blank' }, r.entry_id), ` · ${r.date || ''}`),
       el('h3', {}, 'Story'), el('p', {}, el('b', {}, r.headline)), el('p', {}, r.finding || ''),
-      el('h3', {}, 'Mechanism'), el('p', {}, r.mechanism || '—'));
+      el('h3', {}, 'Mechanism'), el('p', {}, r.mechanism || '—'),
+      el('h3', {}, 'Entities in this card'), el('div', { id: 'cardChips', class: 'kv' }, 'loading…'));
+    loadChips(r, editing);
     if (!editing) {
       p.append(el('div', { class: 'tools', style: 'padding:0' },
         el('button', { class: 'primary', onclick: () => renderRel(true) }, 'Edit'),
@@ -385,6 +388,30 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
         } catch (e) { toast(e.message, true); ev.target.disabled = false; }
       } }, 'Save'),
       el('button', { onclick: () => renderRel(false) }, 'Cancel')));
+  }
+
+  // Pick-list chips: entities on this card's edges (+ "new" = created from it)
+  // and existing entities named in its story. Edit mode: src / tgt buttons
+  // fill the Source / Target inputs; otherwise a chip opens that entity.
+  S.chips = {};
+  async function loadChips(r, editing) {
+    const box = () => $('cardChips');
+    let d = S.chips[r.entry_id];
+    try { if (!d) d = S.chips[r.entry_id] = await api('/card/' + encodeURIComponent(r.entry_id)); }
+    catch (e) { if (box()) box().textContent = 'could not load: ' + e.message; return; }
+    if (!box() || S.rel !== r) return;   // user moved on
+    const chip = (e, kind) => el('span', { class: 'tag' + (kind === 'text' ? ' warn' : ''), style: 'display:inline-flex;gap:4px;align-items:center;margin:2px',
+        title: kind === 'text' ? `Named in the story${e.via ? ' as "' + e.via + '"' : ''} but not on this card's edges` : `On this card's edges · ${e.type}` },
+      el('span', { style: 'cursor:pointer', onclick: () => selectEntity(e.id) }, e.name),
+      e.new ? el('b', { title: 'Created from this card' }, 'new') : '',
+      editing ? el('button', { title: 'Use as Source', onclick: () => fill('a', e) }, 'src') : '',
+      editing ? el('button', { title: 'Use as Target', onclick: () => fill('b', e) }, 'tgt') : '');
+    const fill = (side, e) => { const inp = document.querySelector(`input[list="dl_${side}"]`);
+      if (inp) { inp.value = e.name; inp.dataset.id = e.id; } };
+    box().replaceChildren(
+      el('div', {}, el('span', { class: 'kv' }, 'on this card: '), ...d.on_card.map(e => chip(e, 'card'))),
+      el('div', {}, el('span', { class: 'kv' }, 'named in story: '),
+        ...(d.in_text.length ? d.in_text.map(e => chip(e, 'text')) : [el('span', { class: 'kv' }, 'none')])));
   }
 
   // ── Entity / alias actions ────────────────────────────────────
