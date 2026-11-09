@@ -175,16 +175,20 @@ def judge(client: genai.Client, con: duckdb.DuckDBPyConnection, *, model: str, t
 _ALIAS_SIMILAR = 80   # token_set_ratio at/above this = obviously the same name, not audited
 
 
-def suspect_aliases(con: duckdb.DuckDBPyConnection) -> dict[int, list[str]]:
+def suspect_aliases(con: duckdb.DuckDBPyConnection, *, include_similar: bool = False) -> dict[int, list[str]]:
     """Aliases that don't look like their entity's name — where the old fuzzy
-    tier (and LLM resolution slips) parked wrong mentions ("X" → Cognex)."""
+    tier (and LLM resolution slips) parked wrong mentions ("X" → Cognex).
+    include_similar=True returns EVERY alias: token_set_ratio scores a name
+    contained in a longer alias as 100 ("China" ⊂ "China Telecom") and rates
+    look-alikes high ("SEER Robotics" ~ "Serve Robotics", "Samsung SDS" ~
+    "Samsung SDI"), so the filtered set missed those (found 2026-11-09)."""
     from thefuzz import fuzz  # noqa: PLC0415
 
     out: dict[int, list[str]] = {}
     for eid, name, alias in con.execute("""SELECT e.entity_id, e.name, a.alias FROM entity_aliases a
                                            JOIN entities e USING (entity_id) WHERE a.alias <> e.name
                                            ORDER BY e.entity_id, a.alias""").fetchall():
-        if fuzz.token_set_ratio(name.lower(), alias.lower()) < _ALIAS_SIMILAR:
+        if include_similar or fuzz.token_set_ratio(name.lower(), alias.lower()) < _ALIAS_SIMILAR:
             out.setdefault(eid, []).append(alias)
     return out
 
@@ -219,6 +223,39 @@ next mention gets an LLM decision; a wrong one corrupts the graph.
 """
 
 
+def only_via_alias(text: str, name: str, alias: str) -> bool:
+    """True when `text` names `alias` (whole words) but names `name` nowhere
+    outside those alias mentions — "China Telecom ..." alone doesn't count as
+    naming China; "Intel" isn't found inside "Physical Intelligence"."""
+    import re  # noqa: PLC0415
+
+    t = text.lower()
+    a_re = re.compile(r"\b" + re.escape(alias.lower()) + r"\b")
+    if not a_re.search(t):
+        return False
+    n_re = re.compile(r"\b" + re.escape(name.lower()) + r"\b")
+    if a_re.search(name.lower()) and n_re.search(t):
+        return False          # alias inside the name ("Amazon" ⊂ "Amazon Web Services"): the name is there
+    return not n_re.search(a_re.sub(" ", t))
+
+
+def _alias_seen(con: duckdb.DuckDBPyConnection, eid: int, name: str, alias: str) -> str:
+    """Card context for one alias: headlines of this entity's cards that name
+    the alias but not the entity itself, i.e. stories that reached the entity
+    only through this alias (SEER Robotics → Serve Robotics)."""
+    heads = []
+    for head, text in con.execute(
+            """SELECT DISTINCT c.headline, lower(c.headline || ' ' || c.raw_finding) FROM relationships r
+               JOIN catalysts c USING (catalyst_id) WHERE ? IN (r.entity_a_id, r.entity_b_id)
+               AND r.status <> 'rejected' AND lower(c.headline || ' ' || c.raw_finding) LIKE ?""",
+            [eid, f"%{alias.lower()}%"]).fetchall():
+        if only_via_alias(text, name, alias):
+            heads.append(head[:100])
+            if len(heads) == 2:
+                break
+    return f"   (linked only through this alias in: {' | '.join(heads)})" if heads else ""
+
+
 def judge_aliases(client: genai.Client, con: duckdb.DuckDBPyConnection, *, model: str, thinking_level: str,
                   batch: list[tuple[int, list[str]]]) -> list[AliasVerdict]:
     from .extract import _gen_config  # noqa: PLC0415
@@ -233,7 +270,7 @@ def judge_aliases(client: genai.Client, con: duckdb.DuckDBPyConnection, *, model
                WHERE ? IN (r.entity_a_id, r.entity_b_id) AND r.status <> 'rejected' LIMIT 2""", [eid]).fetchall()]
         head = f"- {name} (type={typ}" + (f", ticker={ticker}" if ticker else "") + \
             (f"; seen in: {' | '.join(heads)}" if heads else "") + ")"
-        blocks.append(head + "\n" + "\n".join(f"    alias: {a}" for a in aliases))
+        blocks.append(head + "\n" + "\n".join(f"    alias: {a}" + _alias_seen(con, eid, name, a) for a in aliases))
     prompt = _ALIAS_PROMPT.format(entities="\n".join(blocks))
     resp = call_with_retry(
         lambda: client.models.generate_content(

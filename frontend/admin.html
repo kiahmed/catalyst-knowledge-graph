@@ -180,6 +180,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
       a.bare_brand ? el('span', { class: 'tag warn', title: 'One brand word for a longer name — may mean the parent/sister' }, 'brand') : '',
       a.also_on.length ? el('span', { class: 'tag bad', title: 'Also an alias of: ' + a.also_on.join(', ') }, 'shared') : '',
       el('span', { class: 'meta' },
+        el('button', { title: 'Make this alias its own entity, taking the checked relationships with it', onclick: () => spinOut(a.alias) }, 'spin out'), ' ',
         el('button', { title: 'Move to another entity', onclick: () => moveAlias(a.alias) }, 'move'), ' ',
         el('button', { class: 'danger', title: 'Remove this alias', onclick: () => dropAlias(a.alias) }, 'drop')))));
     p.append(el('h3', {}, 'Family'));
@@ -276,6 +277,16 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
   async function moveAlias(alias) {
     const to = await choose(`Move alias "${alias}" from ${S.entity.name} to:`); if (!to) return;
     if (await run('move_alias', { alias, from_entity_id: S.entity.id, to_entity_id: to.id }, 'Alias move')) afterEdit();
+  }
+  async function spinOut(alias) {
+    const rels = S.entity.relationships.filter(r => S.checked.has(r.rel_id));
+    const name = prompt(`New entity from alias "${alias}" (taken off ${S.entity.name}).\nName:`, alias); if (!name) return;
+    const type = prompt('Type (public_company, private_company, government, organization):', S.entity.type); if (!type) return;
+    const what = rels.length ? `${rels.length} checked relationship(s) move to it:\n` +
+      rels.map(r => `  ${r.a.name} —${r.rel_type}→ ${r.b.name}`).join('\n') : 'No relationships checked: it starts empty.';
+    if (!confirm(`Create "${name}" from alias "${alias}"?\n${what}\n(Revertible from the Edit log.)`)) return;
+    const d = await run('spin_out', { alias, from_entity_id: S.entity.id, name, type, rel_ids: rels.map(r => r.rel_id) }, 'Spin-out');
+    if (d) { S.checked.clear(); afterEdit(); }
   }
   async function dropAlias(alias) {
     if (!confirm(`Remove alias "${alias}" from ${S.entity.name}?`)) return;

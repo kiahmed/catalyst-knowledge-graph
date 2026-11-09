@@ -101,6 +101,69 @@ class TestAdminOps(_Fixture):
                                                          "expect": {"status": "rejected"}}, **WHO)
         self.assertEqual(self._edge()[3], "rejected")
 
+    def test_spin_out_alias_carries_selected_edges_and_reverts_exactly(self):
+        moved, kept = self.rel, self.rel + 1
+        before = self.con.execute("SELECT rel_id, entity_a_id, entity_b_id FROM relationships ORDER BY rel_id").fetchall()
+        out = ops.apply_edit(self.con, "spin_out", {"alias": "Amazon", "from_entity_id": self.aws,
+                                                    "type": "public_company", "rel_ids": [moved]}, **WHO)
+        new = out["after"]["entity_id"]
+        self.assertEqual(self.con.execute("SELECT name FROM entities WHERE entity_id = ?", [new]).fetchone(), ("Amazon",))
+        self.assertEqual(self._edge()[:2], (new, self.dhl))                 # only the chosen edge moved
+        self.assertEqual(self.con.execute("SELECT entity_a_id FROM relationships WHERE rel_id = ?", [kept]).fetchone(),
+                         (self.aws,))
+        aliases = lambda e: {a for (a,) in self.con.execute(  # noqa: E731
+            "SELECT alias FROM entity_aliases WHERE entity_id = ?", [e]).fetchall()}
+        self.assertNotIn("Amazon", aliases(self.aws))
+        self.assertEqual(out["cards"], ["ROB-0"])
+        rev = ops.revert_edit(self.con, out["edit_id"], email=WHO["email"], ip=WHO["ip"], vocab=VOCAB)
+        self.assertEqual(rev["cards"], ["ROB-0"])
+        self.assertEqual(self.con.execute("SELECT rel_id, entity_a_id, entity_b_id FROM relationships ORDER BY rel_id")
+                         .fetchall(), before)
+        self.assertIn("Amazon", aliases(self.aws))
+        self.assertIsNone(self.con.execute("SELECT 1 FROM entities WHERE entity_id = ?", [new]).fetchone())
+
+    def test_spin_out_without_edges_and_its_guards(self):
+        out = ops.apply_edit(self.con, "spin_out", {"alias": "AWS", "from_entity_id": self.aws, "name": "AWS Corp",
+                                                    "type": "private_company"}, **WHO)
+        self.assertEqual(out["cards"], [])
+        self.assertEqual(self.con.execute("SELECT alias FROM entity_aliases WHERE entity_id = ?",
+                                          [out["after"]["entity_id"]]).fetchall(), [("AWS",)])
+        with self.assertRaises(ops.EditConflict):                          # alias already gone
+            ops.apply_edit(self.con, "spin_out", {"alias": "AWS", "from_entity_id": self.aws, "type": "x"}, **WHO)
+        with self.assertRaises(ops.EditError):                             # name taken
+            ops.apply_edit(self.con, "spin_out", {"alias": "Amazon", "from_entity_id": self.aws, "name": "DHL",
+                                                  "type": "x"}, **WHO)
+        with self.assertRaises(ops.EditConflict):                          # edge not on the source entity
+            ops.apply_edit(self.con, "spin_out", {"alias": "Amazon", "from_entity_id": self.logi, "type": "x",
+                                                  "rel_ids": [self.rel]}, **WHO)
+
+    def test_spin_out_revert_refuses_to_recreate_a_live_twin(self):
+        out = ops.apply_edit(self.con, "spin_out", {"alias": "Amazon", "from_entity_id": self.aws,
+                                                    "type": "public_company", "rel_ids": [self.rel]}, **WHO)
+        cid = self.con.execute("SELECT catalyst_id FROM relationships WHERE rel_id = ?", [self.rel]).fetchone()[0]
+        self.con.execute("""INSERT INTO relationships (catalyst_id, entity_a_id, rel_type, entity_b_id, confidence)
+                            VALUES (?, ?, 'competes_with', ?, 0.7)""", [cid, self.aws, self.dhl])
+        n = self.con.execute("SELECT COUNT(*) FROM relationships").fetchone()[0]
+        with self.assertRaises(ops.EditConflict):
+            ops.revert_edit(self.con, out["edit_id"], email=WHO["email"], ip=WHO["ip"], vocab=VOCAB)
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM relationships").fetchone()[0], n)   # nothing deleted
+        self.assertEqual(self._edge()[0], out["after"]["entity_id"])
+
+    def test_spin_out_rejects_non_integer_rel_ids(self):
+        with self.assertRaises(ops.EditError):
+            ops.apply_edit(self.con, "spin_out", {"alias": "Amazon", "from_entity_id": self.aws, "type": "x",
+                                                  "rel_ids": [self.rel, str(self.rel)]}, **WHO)
+
+    def test_spin_out_revert_refuses_once_the_new_entity_is_used(self):
+        out = ops.apply_edit(self.con, "spin_out", {"alias": "Amazon", "from_entity_id": self.aws,
+                                                    "type": "public_company", "rel_ids": [self.rel]}, **WHO)
+        new = out["after"]["entity_id"]
+        ops.apply_edit(self.con, "repoint_edge", {"rel_id": self.rel + 2, "entity_a_id": new,
+                                                  "expect": {"entity_a_id": self.aws}}, **WHO)
+        with self.assertRaises(ops.EditConflict):
+            ops.revert_edit(self.con, out["edit_id"], email=WHO["email"], ip=WHO["ip"], vocab=VOCAB)
+        self.assertEqual(self._edge()[0], new)                              # nothing half-reverted
+
     def test_materialized_status_round_trip(self):
         self.con.execute("UPDATE relationships SET status = 'materialized' WHERE rel_id = ?", [self.rel])
         out = ops.apply_edit(self.con, "set_edge_status", {"rel_id": self.rel, "status": "rejected",

@@ -311,7 +311,7 @@ direction-audit:
 # links on the authoritative cloud DB. entity-audit only writes a report;
 # entity-apply replays a reviewed report (no LLM); unsure claims go to admin
 # attention. Admin fixes always write.
-#   make entity-audit        (or: make alias-audit — aliases unlike their entity's name)
+#   make entity-audit        (or: make alias-audit — aliases unlike their entity's name; ALL=1 = every alias)
 #   make entity-apply REPORT=data/exports/entity_audit/entity_audit_<ts>.jsonl
 #   make entity-merge FROM="Hyundai Motors" INTO="Hyundai Motor Group"
 #   make entity-link CHILD="Hyundai Rotem" PARENT="Hyundai Motor Group" [REL=sister_of]
@@ -323,7 +323,7 @@ ENTITY_AUDIT = set -a; . ./.env.prod; set +a; \
 entity-audit:
 	@$(ENTITY_AUDIT) --audit
 alias-audit:
-	@$(ENTITY_AUDIT) --alias-audit
+	@$(ENTITY_AUDIT) --alias-audit $(if $(ALL),--all-aliases)
 entity-apply:
 	@test -f "$(REPORT)" || { echo '!! usage: make entity-apply REPORT=<entity-audit report .jsonl>'; exit 1; }
 	@$(ENTITY_AUDIT) --apply-report "$(REPORT)"

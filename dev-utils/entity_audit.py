@@ -128,6 +128,8 @@ def main() -> int:
     mode.add_argument("--sister")
     ap.add_argument("--min-merge", type=float, default=0.85)
     ap.add_argument("--min-link", type=float, default=0.80)
+    ap.add_argument("--all-aliases", action="store_true",
+                    help="--alias-audit: judge every alias, not only those unlike their entity's name")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--report-dir", default=str(_REPO_ROOT / "data" / "exports" / "entity_audit"))
     args = ap.parse_args()
@@ -197,9 +199,8 @@ def main() -> int:
         return 0
 
     if args.alias_audit:   # LLM → report only
-        import re  # noqa: PLC0415
 
-        suspects = entities.suspect_aliases(con)
+        suspects = entities.suspect_aliases(con, include_similar=args.all_aliases)
         items = list(suspects.items())
         batches = [items[i:i + 15] for i in range(0, len(items), 15)]
         print(f"{sum(len(v) for v in suspects.values())} suspect alias(es) on {len(suspects)} entities, "
@@ -234,10 +235,7 @@ def main() -> int:
                         SELECT DISTINCT c.entry_id, c.headline || ' ' || c.raw_finding FROM relationships r
                         JOIN catalysts c USING (catalyst_id) JOIN entities e ON e.entity_id IN (r.entity_a_id, r.entity_b_id)
                         WHERE e.name = ? AND r.status <> 'rejected'""", [v.entity]).fetchall():
-                    t = text.lower()
-                    # Whole words: "Intel" must not count as named inside "Physical Intelligence".
-                    if re.search(r"\b" + re.escape(v.alias.lower()) + r"\b", t) \
-                            and not re.search(r"\b" + re.escape(v.entity.lower()) + r"\b", t):
+                    if entities.only_via_alias(text, v.entity, v.alias):
                         cards.add(eid)
         os.makedirs(args.report_dir, exist_ok=True)
         report = Path(args.report_dir) / f"alias_audit_{datetime.now(timezone.utc):%Y%m%dT%H%MZ}.jsonl"

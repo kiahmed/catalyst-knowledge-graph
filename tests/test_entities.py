@@ -154,5 +154,46 @@ class TestMergeAndLink(unittest.TestCase):
                                        source="test"))
 
 
+
+class TestAliasAuditCoverage(unittest.TestCase):
+    """2026-11-09: the similarity filter skipped "China Telecom" on China and
+    "SEER Robotics" on Serve Robotics; the re-extract list missed them too."""
+
+    def setUp(self):
+        self.con = duckdb.connect(":memory:")
+        db.init_schema(self.con)
+        self.china = db.insert_entity(self.con, "China", None, "government")
+        self.serve = db.insert_entity(self.con, "Serve Robotics", None, "public_company")
+        self.fox = db.insert_entity(self.con, "Foxconn", None, "public_company")
+        db.insert_alias(self.con, self.china, "China Telecom")
+        db.insert_alias(self.con, self.serve, "SEER Robotics")
+        self.con.execute("""INSERT INTO catalysts (entry_id, sector, timestamp, raw_finding, headline, sentiment_label)
+                            VALUES ('ROB-S', 'Robotics', CURRENT_DATE, 'SEER Robotics shows a Foxconn-built humanoid.',
+                                    'SEER Robotics, Foxconn unveil humanoid', 'bullish')""")
+        cid = self.con.execute("SELECT catalyst_id FROM catalysts").fetchone()[0]
+        self.con.execute("""INSERT INTO relationships (catalyst_id, entity_a_id, rel_type, entity_b_id, confidence)
+                            VALUES (?, ?, 'supplies', ?, 0.8)""", [cid, self.fox, self.serve])
+
+    def test_all_aliases_mode_includes_look_alikes(self):
+        self.assertEqual(entities.suspect_aliases(self.con), {})          # the old blind spot
+        self.assertEqual(entities.suspect_aliases(self.con, include_similar=True),
+                         {self.china: ["China Telecom"], self.serve: ["SEER Robotics"]})
+
+    def test_only_via_alias(self):
+        self.assertTrue(entities.only_via_alias("China Telecom picks robots", "China", "China Telecom"))
+        self.assertFalse(entities.only_via_alias("China Telecom and China's ministry", "China", "China Telecom"))
+        self.assertFalse(entities.only_via_alias("Physical Intelligence raises", "Intel", "Intel"))
+        self.assertTrue(entities.only_via_alias("SEER Robotics demo", "Serve Robotics", "SEER Robotics"))
+        # brand-word alias contained in the name: the full name in the text wins
+        self.assertFalse(entities.only_via_alias("Amazon Web Services launches", "Amazon Web Services", "Amazon"))
+        self.assertFalse(entities.only_via_alias("Hyundai Motor Group deploys", "Hyundai Motor Group", "Hyundai"))
+        self.assertTrue(entities.only_via_alias("Amazon drones deliver parcels", "Amazon Web Services", "Amazon"))
+
+    def test_judge_sees_the_card_that_came_through_the_alias(self):
+        self.assertIn("SEER Robotics, Foxconn unveil humanoid",
+                      entities._alias_seen(self.con, self.serve, "Serve Robotics", "SEER Robotics"))
+        self.assertEqual(entities._alias_seen(self.con, self.china, "China", "China Telecom"), "")
+
+
 if __name__ == "__main__":
     unittest.main()
