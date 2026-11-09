@@ -202,6 +202,125 @@ class TestAdminOps(_Fixture):
         self.assertNotIn(self.rel + 5, via["Amazon"])
         self.assertEqual(via["AWS"], [])
 
+    def _aliases(self, e):
+        return {a for (a,) in self.con.execute("SELECT alias FROM entity_aliases WHERE entity_id = ?", [e]).fetchall()}
+
+    def test_spin_out_many_carries_alias_only_edges_and_links_parent(self):
+        out = ops.spin_out_many(self.con, from_entity_id=self.aws, aliases=["Amazon", "AWS"], type_="private_company",
+                                make_parent=True, email=WHO["email"], ip=WHO["ip"], vocab=VOCAB)
+        self.assertEqual(out["count"], 2)
+        amazon = self.con.execute("SELECT entity_id FROM entities WHERE name = 'Amazon'").fetchone()[0]
+        aws2 = self.con.execute("SELECT entity_id FROM entities WHERE name = 'AWS'").fetchone()[0]
+        # the 6 "Amazon expands drone delivery" cards never name AWS → all 6 edges follow "Amazon"
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM relationships WHERE entity_a_id = ?", [amazon]).fetchone(), (6,))
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM relationships WHERE entity_a_id = ?", [aws2]).fetchone(), (0,))
+        links = self.con.execute("SELECT child_id FROM entity_links WHERE parent_id = ? AND relation = 'subsidiary_of'",
+                                 [self.aws]).fetchall()
+        self.assertEqual({c for (c,) in links}, {amazon, aws2})
+        self.assertEqual(self._aliases(self.aws), set())
+        # one revertible row each; revert also drops the parent link
+        ops.revert_edit(self.con, out["edit_ids"][0], email=WHO["email"], ip=WHO["ip"], vocab=VOCAB)
+        self.assertIsNone(self.con.execute("SELECT 1 FROM entities WHERE entity_id = ?", [amazon]).fetchone())
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM relationships WHERE entity_a_id = ?", [self.aws]).fetchone(), (6,))
+        self.assertIn("Amazon", self._aliases(self.aws))
+        self.assertIsNone(self.con.execute("SELECT 1 FROM entity_links WHERE child_id = ?", [amazon]).fetchone())
+
+    def test_spin_out_many_is_all_or_nothing_on_bad_input(self):
+        for kw in ({"aliases": []}, {"aliases": ["Amazon", "amazon"]}, {"aliases": ["Amazon"], "type_": "not_a_type"}):
+            args = {"type_": "private_company", **kw}
+            with self.assertRaises(ops.EditError):
+                ops.spin_out_many(self.con, from_entity_id=self.aws, make_parent=False, email=WHO["email"],
+                                  ip=WHO["ip"], vocab=VOCAB, **args)
+
+    def test_edit_entity_rename_retype_keeps_old_name_as_alias_and_reverts(self):
+        out = ops.apply_edit(self.con, "edit_entity", {"entity_id": self.robo, "name": "Amazon Robotics LLC",
+                             "type": "group", "expect": {"name": "Amazon Robotics", "type": "private_company"}}, **WHO)
+        self.assertEqual(self.con.execute("SELECT name, type FROM entities WHERE entity_id = ?", [self.robo]).fetchone(),
+                         ("Amazon Robotics LLC", "group"))
+        self.assertIn("Amazon Robotics", self._aliases(self.robo))          # matching memory kept
+        with self.assertRaises(ops.EditConflict):                            # stale screen
+            ops.apply_edit(self.con, "edit_entity", {"entity_id": self.robo, "type": "government",
+                                                     "expect": {"name": "Amazon Robotics", "type": "private_company"}}, **WHO)
+        with self.assertRaises(ops.EditError):                               # unknown type
+            ops.apply_edit(self.con, "edit_entity", {"entity_id": self.robo, "type": "nonsense",
+                                                     "expect": {"name": "Amazon Robotics LLC", "type": "group"}}, **WHO)
+        with self.assertRaises(ops.EditError):                               # name taken
+            ops.apply_edit(self.con, "edit_entity", {"entity_id": self.robo, "name": "dhl",
+                                                     "expect": {"name": "Amazon Robotics LLC", "type": "group"}}, **WHO)
+        ops.revert_edit(self.con, out["edit_id"], email=WHO["email"], ip=WHO["ip"], vocab=VOCAB)
+        self.assertEqual(self.con.execute("SELECT name, type FROM entities WHERE entity_id = ?", [self.robo]).fetchone(),
+                         ("Amazon Robotics", "private_company"))
+        self.assertNotIn("Amazon Robotics", self._aliases(self.robo))
+
+    def test_edit_entity_type_only_change_retags_its_cards_and_revert_retags_back(self):
+        from src import hashtags
+        calls = []
+        orig = hashtags.store_for_catalyst
+        hashtags.store_for_catalyst = lambda con, cid: calls.append(cid) or orig(con, cid)
+        try:
+            out = ops.apply_edit(self.con, "edit_entity", {"entity_id": self.aws, "type": "group",
+                                 "expect": {"name": "Amazon Web Services", "type": "private_company"}}, **WHO)
+            self.assertEqual(sorted(out["cards"]), [f"ROB-{i}" for i in range(6)])   # type-only still touches cards
+            self.assertEqual(len(set(calls)), 6)
+            calls.clear()
+            rev = ops.revert_edit(self.con, out["edit_id"], email=WHO["email"], ip=WHO["ip"], vocab=VOCAB)
+            self.assertEqual(sorted(rev["cards"]), [f"ROB-{i}" for i in range(6)])
+            self.assertEqual(len(set(calls)), 6)                                     # revert re-tags too
+        finally:
+            hashtags.store_for_catalyst = orig
+
+    def test_rename_an_entity_that_has_relationships_and_aliases_keeps_its_id(self):
+        rel_before = self.con.execute("SELECT rel_id, entity_a_id, entity_b_id FROM relationships ORDER BY 1").fetchall()
+        out = ops.apply_edit(self.con, "edit_entity", {"entity_id": self.aws, "name": "AWS Cloud",
+                             "expect": {"name": "Amazon Web Services", "type": "private_company"}}, **WHO)
+        self.assertEqual(self.con.execute("SELECT name FROM entities WHERE entity_id = ?", [self.aws]).fetchone(),
+                         ("AWS Cloud",))
+        self.assertEqual(self.con.execute("SELECT rel_id, entity_a_id, entity_b_id FROM relationships ORDER BY 1").fetchall(),
+                         rel_before)                                              # every edge still on the same id
+        self.assertEqual(self._aliases(self.aws), {"Amazon", "AWS", "Amazon Web Services"})
+        self.assertIsNone(self.con.execute("SELECT 1 FROM entities WHERE name LIKE '__rename_placeholder_%'").fetchone())
+        ops.revert_edit(self.con, out["edit_id"], email=WHO["email"], ip=WHO["ip"], vocab=VOCAB)
+        self.assertEqual(self.con.execute("SELECT name FROM entities WHERE entity_id = ?", [self.aws]).fetchone(),
+                         ("Amazon Web Services",))
+        self.assertEqual(self._aliases(self.aws), {"Amazon", "AWS"})
+        self.assertEqual(self.con.execute("SELECT rel_id, entity_a_id, entity_b_id FROM relationships ORDER BY 1").fetchall(),
+                         rel_before)
+
+    def test_delete_entity_revert_restores_unresolved_links(self):
+        cid = self.cids[0]
+        self.con.execute("INSERT INTO unresolved_entities (mention, catalyst_id, resolved, resolved_to) "
+                         "VALUES ('Amzn Robotics', ?, true, ?)", [cid, self.robo])
+        out = ops.apply_edit(self.con, "delete_entity", {"entity_id": self.robo, "expect_name": "Amazon Robotics"}, **WHO)
+        self.assertEqual(self.con.execute("SELECT resolved_to FROM unresolved_entities").fetchone(), (None,))
+        ops.revert_edit(self.con, out["edit_id"], email=WHO["email"], ip=WHO["ip"], vocab=VOCAB)
+        self.assertEqual(self.con.execute("SELECT resolved_to FROM unresolved_entities").fetchone(), (self.robo,))
+
+    def test_delete_entity_only_without_relationships_and_revert_restores_it(self):
+        with self.assertRaises(ops.EditError):                               # AWS has edges
+            ops.apply_edit(self.con, "delete_entity", {"entity_id": self.aws, "expect_name": "Amazon Web Services"}, **WHO)
+        db.insert_alias(self.con, self.robo, "AR")
+        entities.link(self.con, self.robo, self.aws, "subsidiary_of", confidence=1, reason="r", source="test")
+        out = ops.apply_edit(self.con, "delete_entity", {"entity_id": self.robo, "expect_name": "Amazon Robotics"}, **WHO)
+        self.assertIsNone(self.con.execute("SELECT 1 FROM entities WHERE entity_id = ?", [self.robo]).fetchone())
+        self.assertIsNone(self.con.execute("SELECT 1 FROM entity_links WHERE child_id = ?", [self.robo]).fetchone())
+        ops.revert_edit(self.con, out["edit_id"], email=WHO["email"], ip=WHO["ip"], vocab=VOCAB)
+        self.assertEqual(self.con.execute("SELECT name FROM entities WHERE entity_id = ?", [self.robo]).fetchone(),
+                         ("Amazon Robotics",))
+        self.assertEqual(self._aliases(self.robo), {"AR"})
+        self.assertTrue(self.con.execute("SELECT 1 FROM entity_links WHERE child_id = ? AND parent_id = ?",
+                                         [self.robo, self.aws]).fetchone())
+
+    def test_spin_in_many_folds_children_back_as_aliases(self):
+        entities.link(self.con, self.robo, self.aws, "subsidiary_of", confidence=1, reason="r", source="test")
+        with self.assertRaises(ops.EditError):                               # Logistics is a sister, not a child
+            ops.spin_in_many(self.con, into_entity_id=self.aws, child_ids=[self.logi], email=WHO["email"],
+                             ip=WHO["ip"], vocab=VOCAB)
+        out = ops.spin_in_many(self.con, into_entity_id=self.aws, child_ids=[self.robo], email=WHO["email"],
+                               ip=WHO["ip"], vocab=VOCAB)
+        self.assertEqual(out["count"], 1)
+        self.assertIsNone(self.con.execute("SELECT 1 FROM entities WHERE entity_id = ?", [self.robo]).fetchone())
+        self.assertIn("Amazon Robotics", self._aliases(self.aws))
+
     def test_materialized_status_round_trip(self):
         self.con.execute("UPDATE relationships SET status = 'materialized' WHERE rel_id = ?", [self.rel])
         out = ops.apply_edit(self.con, "set_edge_status", {"rel_id": self.rel, "status": "rejected",

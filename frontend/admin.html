@@ -87,6 +87,8 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
   <section class="col" id="colRels">
     <h2>Relationships <span id="relCount" class="tag"></span></h2>
     <div class="tools">
+      <input id="relFilter" placeholder="filter by card text…" title="Shows only relationships whose card headline/story/mechanism or endpoint contains this text" style="width:150px">
+      <label title="Case-sensitive filter (e.g. 'Humanoid' the company vs 'humanoid robots')"><input type="checkbox" id="relCase"> Aa</label>
       <label title="Tick / untick every relationship shown"><input type="checkbox" id="tickAll"> all</label>
       <label><input type="checkbox" id="onlyUnnamed"> not named in card</label>
       <label title="Send the checked edges to the LLM, review its picks, then apply"><input type="checkbox" id="useLlm"> Fix with LLM</label>
@@ -164,7 +166,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
 
   // ── Entity column ─────────────────────────────────────────────
   async function selectEntity(id) {
-    S.entity = await api('/entity/' + id); S.rel = null; S.checked.clear();
+    S.entity = await api('/entity/' + id); S.rel = null; S.checked.clear(); S.selA = new Set(); S.selC = new Set();
     renderEntities(); renderEntity(); renderRels(); renderRel();
   }
   // After any save/revert: reload every column (entity list counts included),
@@ -188,9 +190,20 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
   function renderEntity() {
     const e = S.entity, p = $('entityPane'); p.replaceChildren();
     if (!e) return;
+    S.selA = S.selA || new Set(); S.selC = S.selC || new Set();
     p.append(el('p', {}, el('b', {}, e.name), ' ', el('span', { class: 'kv' }, `${e.type}${e.ticker ? ' · ' + e.ticker : ''} · id ${e.id}`)));
+    const bulk = el('div', { class: 'tools', style: 'padding:4px 0 8px' },
+      el('button', { id: 'btnSpinOutMany', onclick: spinOutMany,
+                     title: 'Each ticked alias becomes its own entity, taking the relationships that reached ' + e.name + ' only through it' }, 'Spin out aliases'),
+      el('button', { id: 'btnSpinInMany', onclick: spinInMany, class: 'danger',
+                     title: 'Each ticked child folds back into ' + e.name + ' as an alias (a merge — one-way)' }, 'Spin in children'),
+      el('button', { onclick: editEntity, title: 'Rename or change type (old name stays as an alias)' }, 'Edit entity'),
+      el('button', { class: 'danger', onclick: deleteEntity, title: 'Only possible when no relationship points at it' }, 'Delete entity'));
+    p.append(bulk);
     p.append(el('h3', {}, 'Aliases'));
     e.aliases.forEach(a => p.append(el('div', { class: 'item' },
+      el('input', { type: 'checkbox', checked: S.selA.has(a.alias), title: 'Select for bulk spin-out',
+                    onclick: ev => { ev.stopPropagation(); ev.target.checked ? S.selA.add(a.alias) : S.selA.delete(a.alias); syncSel2(); } }),
       el('span', { style: 'cursor:pointer', title: 'Tick the relationships that reached this entity only through this alias',
                    onclick: () => tickVia(a) }, a.alias),
       a.via_rel_ids && a.via_rel_ids.length ? el('span', { class: 'tag warn',
@@ -205,17 +218,70 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
     p.append(el('h3', {}, 'Family'));
     if (!e.family.length) p.append(el('p', { class: 'kv' }, 'none'));
     e.family.forEach(f => p.append(el('div', { class: 'item', onclick: () => selectEntity(f.id) },
+      f.role === 'child' ? el('input', { type: 'checkbox', checked: S.selC.has(f.id), title: 'Select for bulk spin-in',
+        onclick: ev => { ev.stopPropagation(); ev.target.checked ? S.selC.add(f.id) : S.selC.delete(f.id); syncSel2(); } }) : '',
       el('span', { class: 'tag' }, f.role), el('span', {}, f.name),
       el('span', { class: 'meta' }, el('button', { class: 'danger', onclick: ev => { ev.stopPropagation(); unlink(f); } }, 'unlink')))));
     p.append(el('div', { class: 'tools', style: 'padding:10px 0' },
       el('button', { onclick: () => linkTo('subsidiary_of') }, 'Set parent…'),
       el('button', { onclick: () => linkTo('sister_of') }, 'Add sister…'),
       el('button', { class: 'danger', onclick: mergeInto }, 'Merge into…')));
+    syncSel2();
+  }
+  function syncSel2() {
+    const a = S.selA ? S.selA.size : 0, c = S.selC ? S.selC.size : 0;
+    const bo = $('btnSpinOutMany'), bi = $('btnSpinInMany');
+    if (bo) { bo.disabled = !a; bo.textContent = a ? `Spin out ${a} alias${a > 1 ? 'es' : ''}` : 'Spin out aliases'; }
+    if (bi) { bi.disabled = !c; bi.textContent = c ? `Spin in ${c} child${c > 1 ? 'ren' : ''}` : 'Spin in children'; }
+  }
+  function pickType(label, dflt) {
+    const types = (S.me && S.me.entity_types) || ['public_company', 'private_company', 'government', 'organization', 'group'];
+    const t = prompt(`${label}\nType — one of: ${types.join(', ')}`, dflt); if (!t) return null;
+    if (!types.includes(t.trim())) { toast(`Unknown type "${t}"`, true); return null; }
+    return t.trim();
+  }
+  async function spinOutMany() {
+    const e = S.entity, aliases = e.aliases.filter(a => S.selA.has(a.alias));
+    if (!aliases.length) return;
+    const type = pickType(`Spin out ${aliases.length} alias(es) of ${e.name} as their own entities.`, 'private_company'); if (!type) return;
+    const parent = prompt(`Make ${e.name} their parent (they become its children)? y / n`, 'y'); if (parent === null) return;
+    const makeParent = /^y/i.test(parent.trim());
+    const list = aliases.map(a => `  ${a.alias}  (takes ${(a.via_rel_ids || []).length} relationship(s))`).join('\n');
+    if (!confirm(`Create ${aliases.length} entit${aliases.length > 1 ? 'ies' : 'y'} [${type}]${makeParent ? ', children of ' + e.name : ''}:\n${list}\n\nEach takes the relationships that reached ${e.name} only through its alias (re-checked at save). All or nothing; each one is revertible.`)) return;
+    const d = await run('spin_out_many', { from_entity_id: e.id, aliases: aliases.map(a => a.alias), type, make_parent: makeParent },
+                        `Spun out ${aliases.length}`);
+    if (d) afterEdit();
+  }
+  async function spinInMany() {
+    const e = S.entity, kids = e.family.filter(f => f.role === 'child' && S.selC.has(f.id));
+    if (!kids.length) return;
+    if (!confirm(`Fold ${kids.length} child entit${kids.length > 1 ? 'ies' : 'y'} back into ${e.name}?\n${kids.map(k => '  ' + k.name).join('\n')}\n\nEach name becomes an alias of ${e.name} and its relationships move to ${e.name}. This is a merge: it can NOT be reverted from the log.`)) return;
+    const d = await run('spin_in_many', { into_entity_id: e.id, child_ids: kids.map(k => k.id) }, `Spun in ${kids.length}`);
+    if (d) afterEdit();
+  }
+  async function editEntity() {
+    const e = S.entity;
+    const name = prompt(`Rename ${e.name} (the old name stays as an alias):`, e.name); if (name === null) return;
+    const type = pickType(`Type for "${name.trim() || e.name}"`, e.type); if (!type) return;
+    if (name.trim() === e.name && type === e.type) return toast('Nothing changed');
+    const d = await run('edit_entity', { entity_id: e.id, name: name.trim() || e.name, type, expect: { name: e.name, type: e.type } }, 'Entity');
+    if (d) afterEdit();
+  }
+  async function deleteEntity() {
+    const e = S.entity;
+    const goes = [e.aliases.length ? 'aliases: ' + e.aliases.map(a => a.alias).join(', ') : '',
+                  e.family.length ? 'family links: ' + e.family.map(f => `${f.role} ${f.name}`).join(', ') : ''].filter(Boolean);
+    if (!confirm(`Delete "${e.name}"? Only allowed when no relationship points at it.${goes.length ? '\nAlso removed:\n  ' + goes.join('\n  ') : ''}\nRevertible from the Edit log.`)) return;
+    const d = await run('delete_entity', { entity_id: e.id, expect_name: e.name }, 'Delete');
+    if (d) afterEdit();
   }
 
   // ── Relationships column ──────────────────────────────────────
   function visibleRels() {
-    return (S.entity ? S.entity.relationships : []).filter(r => !$('onlyUnnamed').checked || !r.named_in_card);
+    const q = $('relFilter').value.trim(), cs = $('relCase').checked;
+    const has = t => cs ? t.includes(q) : t.toLowerCase().includes(q.toLowerCase());
+    return (S.entity ? S.entity.relationships : []).filter(r => (!$('onlyUnnamed').checked || !r.named_in_card)
+      && (!q || has(`${r.headline || ''} ${r.finding || ''} ${r.mechanism || ''} ${r.a.name} ${r.b.name}`)));
   }
   function renderRels() {
     const list = $('relList'); list.replaceChildren();
@@ -262,6 +328,8 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
     if (d) { S.checked.clear(); afterEdit(); }
   });
   $('onlyUnnamed').addEventListener('change', renderRels);
+  $('relFilter').addEventListener('input', renderRels);
+  $('relCase').addEventListener('change', renderRels);
 
   // ── Relationship editor column ────────────────────────────────
   function renderRel(editing) {
@@ -274,7 +342,17 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
         el('a', { href: '/#card-' + r.entry_id, target: '_blank' }, r.entry_id), ` · ${r.date || ''}`),
       el('h3', {}, 'Story'), el('p', {}, el('b', {}, r.headline)), el('p', {}, r.finding || ''),
       el('h3', {}, 'Mechanism'), el('p', {}, r.mechanism || '—'));
-    if (!editing) { p.append(el('button', { class: 'primary', onclick: () => renderRel(true) }, 'Edit')); return; }
+    if (!editing) {
+      p.append(el('div', { class: 'tools', style: 'padding:0' },
+        el('button', { class: 'primary', onclick: () => renderRel(true) }, 'Edit'),
+        r.status !== 'rejected' ? el('button', { class: 'danger', title: 'Hide this relationship everywhere (status rejected; revertible)',
+          onclick: async () => {
+            if (!confirm(`Reject ${r.a.name} —${r.rel_type}→ ${r.b.name}?`)) return;
+            const d = await run('set_edge_status', { rel_id: r.rel_id, status: 'rejected', expect: { status: r.status } }, 'Rejected');
+            if (d) afterEdit();
+          } }, 'Reject edge') : ''));
+      return;
+    }
     const pick = (label, ent) => {
       const inp = el('input', { list: 'dl_' + label, value: ent.name, 'data-id': ent.id, style: 'width:100%' });
       const dl = el('datalist', { id: 'dl_' + label });
@@ -328,7 +406,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
   async function spinOut(alias) {
     const rels = S.entity.relationships.filter(r => S.checked.has(r.rel_id));
     const name = prompt(`New entity from alias "${alias}" (taken off ${S.entity.name}).\nName:`, alias); if (!name) return;
-    const type = prompt('Type (public_company, private_company, government, organization):', S.entity.type); if (!type) return;
+    const type = pickType(`Type for "${name}"`, 'private_company'); if (!type) return;
     const what = rels.length ? `${rels.length} checked relationship(s) move to it:\n` +
       rels.map(r => `  ${r.a.name} —${r.rel_type}→ ${r.b.name}`).join('\n') : 'No relationships checked: it starts empty.';
     if (!confirm(`Create "${name}" from alias "${alias}"?\n${what}\n(Revertible from the Edit log.)`)) return;
@@ -355,7 +433,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
   }
   $('btnNewEntity').addEventListener('click', async () => {
     const name = prompt('New entity name:'); if (!name) return;
-    const type = prompt('Type (public_company, private_company, government, organization):', 'public_company'); if (!type) return;
+    const type = pickType(`Type for "${name}"`, 'private_company'); if (!type) return;
     const ticker = prompt('Ticker (optional):', '') || null;
     const d = await run('create_entity', { name, type, ticker }, 'Entity');
     if (d) { $('q').value = name; afterEdit(d.after.entity_id); }

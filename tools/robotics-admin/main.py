@@ -340,7 +340,7 @@ def _backend_status() -> dict[str, Any]:
 def me(who):
     return jsonify({"ok": True, "email": who[0], "ip": who[1], "sector": CFG.sector,
                     "rel_types": sorted(_vocab()), "statuses": list(admin_ops.EDGE_STATUSES),
-                    "link_relations": list(admin_ops.LINK_RELATIONS)})
+                    "link_relations": list(admin_ops.LINK_RELATIONS), "entity_types": list(admin_ops.ENTITY_TYPES)})
 
 
 @app.get("/admin/api/status")
@@ -399,11 +399,20 @@ def edit(who):
     busy = _backend_status()
     if busy["running"]:   # recorded on the audit row: edited while a backend run was in flight
         payload["_backend_running"] = [r["what"] for r in busy["running"]]
+    extra = {"_backend_running": payload["_backend_running"]} if "_backend_running" in payload else None
     if op == "repoint_many":   # one save (one push + one refresh) for many single repoints
-        extra = {"_backend_running": payload["_backend_running"]} if "_backend_running" in payload else None
         body_out, code = _write(lambda con: admin_ops.repoint_many(
             con, from_entity_id=payload.get("from_entity_id"), to_entity_id=payload.get("to_entity_id"),
             rel_ids=payload.get("rel_ids"), email=who[0], ip=who[1], vocab=_vocab(), extra=extra))
+    elif op == "spin_out_many":
+        body_out, code = _write(lambda con: admin_ops.spin_out_many(
+            con, from_entity_id=payload.get("from_entity_id"), aliases=payload.get("aliases"),
+            type_=payload.get("type"), make_parent=bool(payload.get("make_parent")), email=who[0], ip=who[1],
+            vocab=_vocab(), extra=extra))
+    elif op == "spin_in_many":
+        body_out, code = _write(lambda con: admin_ops.spin_in_many(
+            con, into_entity_id=payload.get("into_entity_id"), child_ids=payload.get("child_ids"), email=who[0],
+            ip=who[1], vocab=_vocab(), extra=extra))
     else:
         body_out, code = _write(lambda con: admin_ops.apply_edit(con, op, payload, email=who[0], ip=who[1],
                                                                  vocab=_vocab()))

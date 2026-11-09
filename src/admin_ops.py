@@ -23,6 +23,9 @@ from . import direction, entities, hashtags
 LIVE = ("active", "materialized")
 EDGE_STATUSES = ("active", "materialized", "invalidated", "rejected")   # every status a relationship can hold
 LINK_RELATIONS = ("subsidiary_of", "sister_of")
+# "group" = a generic bucket ("Venture Capital", "European robotics companies"):
+# kept as an entity so later mentions match it for free, but not a company.
+ENTITY_TYPES = ("public_company", "private_company", "government", "organization", "group")
 
 
 class EditError(ValueError):
@@ -137,10 +140,50 @@ def entity_detail(con: duckdb.DuckDBPyConnection, eid: int) -> dict[str, Any]:
     # Pre-tick support: per alias, the live edges on cards that reached this
     # entity ONLY through that alias (card never names the entity itself).
     for al in aliases:
-        al["via_rel_ids"] = [r["rel_id"] for r in rels if r["status"] in ("active", "materialized")
-                             and entities.only_via_alias(f"{r['headline']} {r['finding'] or ''}", name, al["alias"])]
+        al["via_rel_ids"] = _via(rels, name, al["alias"])
     return {"id": eid, "name": name, "type": typ, "ticker": ticker, "aliases": aliases, "family": family,
             "relationships": rels}
+
+
+def _rename_entity(con: duckdb.DuckDBPyConnection, eid: int, new_name: str) -> None:
+    """Rename keeping entity_id. DuckDB rejects updating a UNIQUE column (name)
+    of a row other rows reference by foreign key (aliases, relationships), so
+    those rows are parked on a throw-away placeholder, the entity renamed,
+    and the rows moved back. Each statement autocommits; any failure raises
+    and the admin service discards its working copy (nothing is pushed)."""
+    refs = con.execute("""SELECT (SELECT COUNT(*) FROM relationships WHERE ? IN (entity_a_id, entity_b_id))
+                               + (SELECT COUNT(*) FROM entity_aliases WHERE entity_id = ?)""", [eid, eid]).fetchone()[0]
+    if not refs:
+        con.execute("UPDATE entities SET name = ? WHERE entity_id = ?", [new_name, eid])
+        return
+    typ, = con.execute("SELECT type FROM entities WHERE entity_id = ?", [eid]).fetchone()
+    tmp = con.execute("INSERT INTO entities (name, type) VALUES (?, ?) RETURNING entity_id",
+                      [f"__rename_placeholder_{eid}_{uuid.uuid4().hex[:8]}", typ]).fetchone()[0]
+    for src, dst in ((eid, tmp), (tmp, eid)):
+        if src == tmp:
+            con.execute("UPDATE entities SET name = ? WHERE entity_id = ?", [new_name, eid])
+        for col in ("entity_a_id", "entity_b_id"):
+            con.execute(f"UPDATE relationships SET {col} = ? WHERE {col} = ?", [dst, src])
+        con.execute("UPDATE entity_aliases SET entity_id = ? WHERE entity_id = ?", [dst, src])
+    con.execute("DELETE FROM entities WHERE entity_id = ?", [tmp])
+
+
+def _live_catalysts(con: duckdb.DuckDBPyConnection, eid: int) -> set[int]:
+    return {r[0] for r in con.execute("SELECT DISTINCT catalyst_id FROM relationships WHERE ? IN "
+                                      "(entity_a_id, entity_b_id) AND status IN ('active', 'materialized')",
+                                      [eid]).fetchall()}
+
+
+def _via(rels: list[dict[str, Any]], name: str, alias: str) -> list[int]:
+    return [r["rel_id"] for r in rels if r["status"] in LIVE
+            and entities.only_via_alias(f"{r['headline']} {r['finding'] or ''}", name, alias)]
+
+
+def _live_rels_with_text(con: duckdb.DuckDBPyConnection, eid: int) -> list[dict[str, Any]]:
+    return [{"rel_id": i, "status": st, "headline": h, "finding": f} for i, st, h, f in con.execute("""
+        SELECT r.rel_id, r.status, c.headline, c.raw_finding FROM relationships r JOIN catalysts c USING (catalyst_id)
+        WHERE ? IN (r.entity_a_id, r.entity_b_id) AND r.entity_a_id <> r.entity_b_id
+          AND r.status IN ('active', 'materialized')""", [eid]).fetchall()]
 
 
 def scan(con: duckdb.DuckDBPyConnection, min_cards: int = 5, max_rate: float = 0.3) -> dict[str, Any]:
@@ -323,6 +366,11 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
                 raise EditConflict(f"relationship {rel_id} no longer involves entity {from_id}")
             moves.append({"rel_id": rel_id, "sides": sides})
             touched.add(cur["catalyst_id"])
+        if typ not in ENTITY_TYPES:
+            raise EditError(f"type must be one of {ENTITY_TYPES}")
+        parent = p.get("parent_id")
+        if parent is not None:
+            _entity_exists(con, parent)
         eid = con.execute("INSERT INTO entities (name, ticker, type) VALUES (?, ?, ?) RETURNING entity_id",
                           [name, (p.get("ticker") or None), typ]).fetchone()[0]
         if alias.lower() != name.lower():
@@ -331,8 +379,67 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
         for m in moves:
             for side in m["sides"]:
                 con.execute(f"UPDATE relationships SET {side} = ? WHERE rel_id = ?", [eid, m["rel_id"]])
+        if parent is not None:   # "child of" the entity it was spun out of (or another one)
+            entities.link(con, eid, parent, "subsidiary_of", confidence=None, reason="admin spin-out", source="admin")
         return ({"alias": alias, "entity_id": from_id, "moves": moves},
-                {"entity_id": eid, "name": name, "alias_kept": alias.lower() != name.lower()}, True, touched)
+                {"entity_id": eid, "name": name, "alias_kept": alias.lower() != name.lower(), "parent_id": parent},
+                True, touched)
+
+    if op == "edit_entity":   # rename and/or retype; old name kept as an alias (matching memory)
+        eid, expect = _need(p, "entity_id", "expect")
+        _entity_exists(con, eid)
+        name0, typ0 = con.execute("SELECT name, type FROM entities WHERE entity_id = ?", [eid]).fetchone()
+        _check_expect({"name": name0, "type": typ0}, expect, ["name", "type"])
+        name, typ = (p.get("name") or name0).strip(), p.get("type") or typ0
+        if typ not in ENTITY_TYPES:
+            raise EditError(f"type must be one of {ENTITY_TYPES}")
+        if not name:
+            raise EditError("name can't be empty")
+        if name == name0 and typ == typ0:
+            raise EditError("nothing to change")
+        if name.lower() != name0.lower() and con.execute(
+                "SELECT 1 FROM entities WHERE lower(name) = lower(?) AND entity_id <> ?", [name, eid]).fetchone():
+            raise EditError(f"entity {name!r} already exists — merge instead")
+        alias_added = False
+        if name != name0:
+            _rename_entity(con, eid, name)
+            if p.get("keep_old_name", True) and name.lower() != name0.lower() and not con.execute(
+                    "SELECT 1 FROM entity_aliases WHERE entity_id = ? AND lower(alias) = lower(?)", [eid, name0]).fetchone():
+                con.execute("INSERT INTO entity_aliases (entity_id, alias) VALUES (?, ?)", [eid, name0])
+                alias_added = True
+            # Social handles are keyed by the lowercased name: carry them over.
+            con.execute("""INSERT INTO entity_handles (name_key, channel, handle, confidence, source, comment)
+                           SELECT lower(trim(?)), channel, handle, confidence, source, comment FROM entity_handles
+                           WHERE name_key = lower(trim(?)) ON CONFLICT DO NOTHING""", [name, name0])
+        if typ != typ0:
+            con.execute("UPDATE entities SET type = ? WHERE entity_id = ?", [typ, eid])
+        # Card docs carry entity name + type and hashtags are derived from both
+        # (hashtags.py tags by type): any change re-tags + refreshes its cards.
+        touched = _live_catalysts(con, eid)
+        return ({"entity_id": eid, "name": name0, "type": typ0},
+                {"entity_id": eid, "name": name, "type": typ, "alias_added": alias_added}, True, touched)
+
+    if op == "delete_entity":   # only an entity no relationship row points at
+        eid, expect_name = _need(p, "entity_id", "expect_name")
+        _entity_exists(con, eid)
+        name, ticker, typ = con.execute("SELECT name, ticker, type FROM entities WHERE entity_id = ?", [eid]).fetchone()
+        if name != expect_name:
+            raise EditConflict(f"entity {eid} is now named {name!r}")
+        n = con.execute("SELECT COUNT(*) FROM relationships WHERE ? IN (entity_a_id, entity_b_id)", [eid]).fetchone()[0]
+        if n:
+            raise EditError(f"{name!r} still has {n} relationship row(s) (rejected ones count) — repoint them first, "
+                            "or spin it back in")
+        aliases = [a for (a,) in con.execute("SELECT alias FROM entity_aliases WHERE entity_id = ?", [eid]).fetchall()]
+        links = [list(r) for r in con.execute("""SELECT child_id, parent_id, relation, confidence, reason, source
+                                                 FROM entity_links WHERE ? IN (child_id, parent_id)""", [eid]).fetchall()]
+        unresolved = [[m, c, str(t)] for m, c, t in con.execute(
+            "SELECT mention, catalyst_id, created_at FROM unresolved_entities WHERE resolved_to = ?", [eid]).fetchall()]
+        con.execute("UPDATE unresolved_entities SET resolved_to = NULL WHERE resolved_to = ?", [eid])
+        con.execute("DELETE FROM entity_aliases WHERE entity_id = ?", [eid])
+        con.execute("DELETE FROM entity_links WHERE ? IN (child_id, parent_id)", [eid])
+        con.execute("DELETE FROM entities WHERE entity_id = ?", [eid])
+        return ({"entity_id": eid, "name": name, "ticker": ticker, "type": typ, "aliases": aliases, "links": links,
+                 "unresolved": unresolved}, {"deleted": eid}, True, set())
 
     if op in ("link", "unlink"):
         child, parent, relation = _need(p, "child_id", "parent_id", "relation")
@@ -419,6 +526,54 @@ def repoint_many(con: duckdb.DuckDBPyConnection, *, from_entity_id: int, to_enti
             "cards": sorted(cards)}
 
 
+def spin_out_many(con: duckdb.DuckDBPyConnection, *, from_entity_id: int, aliases: list[str], type_: str,
+                  make_parent: bool, email: str, ip: str | None, vocab: set[str],
+                  extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Each alias → its own entity (name = alias), carrying the live edges that
+    reached from_entity ONLY through that alias (computed here, at save time,
+    from the card text — same rule as the alias pre-tick); optionally a child
+    of from_entity. Each goes through apply_edit("spin_out") — same guards,
+    one revertible audit row each. All-or-nothing via the caller's _write."""
+    _entity_exists(con, from_entity_id)
+    if not isinstance(aliases, list) or not aliases or len({a.lower() for a in aliases if isinstance(a, str)}) != len(aliases):
+        raise EditError("aliases must be a non-empty list of distinct alias strings")
+    name, = con.execute("SELECT name FROM entities WHERE entity_id = ?", [from_entity_id]).fetchone()
+    done, cards = [], set()
+    for alias in aliases:
+        rel_ids = _via(_live_rels_with_text(con, from_entity_id), name, alias)   # after earlier spins in this batch
+        payload = {"alias": alias, "from_entity_id": from_entity_id, "type": type_, "rel_ids": rel_ids,
+                   **({"parent_id": from_entity_id} if make_parent else {}), **(extra or {})}
+        try:
+            out = apply_edit(con, "spin_out", payload, email=email, ip=ip, vocab=vocab)
+        except (EditError, EditConflict) as exc:
+            raise type(exc)(f"alias {alias!r}: {exc} — nothing was saved") from exc
+        done.append(out["edit_id"])
+        cards.update(out["cards"])
+    return {"edit_id": ",".join(done), "edit_ids": done, "op": "spin_out_many", "count": len(done),
+            "cards": sorted(cards)}
+
+
+def spin_in_many(con: duckdb.DuckDBPyConnection, *, into_entity_id: int, child_ids: list[int], email: str,
+                 ip: str | None, vocab: set[str], extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Each listed CHILD of into_entity folds back into it (its name becomes an
+    alias, its edges move over) — a merge, so one-way. Only entities recorded
+    as subsidiary_of into_entity qualify."""
+    _entity_exists(con, into_entity_id)
+    child_ids = _rel_id_list(child_ids, allow_empty=False)
+    for c in child_ids:
+        if not con.execute("SELECT 1 FROM entity_links WHERE child_id = ? AND parent_id = ? AND relation = 'subsidiary_of'",
+                           [c, into_entity_id]).fetchone():
+            raise EditError(f"entity {c} is not a child of {into_entity_id}")
+    done, cards = [], set()
+    for c in child_ids:
+        out = apply_edit(con, "merge", {"src_id": c, "dst_id": into_entity_id, **(extra or {})},
+                         email=email, ip=ip, vocab=vocab)
+        done.append(out["edit_id"])
+        cards.update(out["cards"])
+    return {"edit_id": ",".join(done), "edit_ids": done, "op": "spin_in_many", "count": len(done),
+            "cards": sorted(cards)}
+
+
 def revert_edit(con: duckdb.DuckDBPyConnection, edit_id: str, *, email: str, ip: str | None,
                 vocab: set[str]) -> dict[str, Any]:
     """Apply the inverse of a recorded edit (guarded by its `after` state)."""
@@ -467,11 +622,14 @@ def revert_edit(con: duckdb.DuckDBPyConnection, edit_id: str, *, email: str, ip:
             cur = _edge(con, m["rel_id"])
             if any(cur[side] != eid for side in m["sides"]):
                 raise EditConflict(f"relationship {m['rel_id']} was changed since the spin-out")
+        parent = after.get("parent_id")   # the spin-out's own parent link doesn't count as "other"
         others = con.execute("""SELECT (SELECT COUNT(*) FROM relationships WHERE ? IN (entity_a_id, entity_b_id)
                                         AND rel_id NOT IN (SELECT UNNEST(?::BIGINT[])))
                                      + (SELECT COUNT(*) FROM entity_aliases WHERE entity_id = ? AND alias <> ?)
-                                     + (SELECT COUNT(*) FROM entity_links WHERE ? IN (child_id, parent_id))""",
-                             [eid, sorted(moved) or [0], eid, alias, eid]).fetchone()[0]
+                                     + (SELECT COUNT(*) FROM entity_links WHERE ? IN (child_id, parent_id)
+                                        AND NOT (child_id = ? AND parent_id = ? AND relation = 'subsidiary_of'))""",
+                             [eid, sorted(moved) or [0], eid, alias, eid, eid, parent if parent is not None else -1]
+                             ).fetchone()[0]
         if others:
             raise EditConflict(f"{after['name']!r} gained {others} other reference(s) since — move them first")
         if after.get("alias_kept") and not con.execute(
@@ -496,6 +654,7 @@ def revert_edit(con: duckdb.DuckDBPyConnection, edit_id: str, *, email: str, ip:
             for side in m["sides"]:
                 con.execute(f"UPDATE relationships SET {side} = ? WHERE rel_id = ?", [orig, m["rel_id"]])
             touched.add(_edge(con, m["rel_id"])["catalyst_id"])
+        con.execute("DELETE FROM entity_links WHERE child_id = ?", [eid])   # only its own parent link is left
         con.execute("DELETE FROM entity_aliases WHERE entity_id = ?", [eid])
         con.execute("INSERT INTO entity_aliases (entity_id, alias) VALUES (?, ?) ON CONFLICT DO NOTHING", [orig, alias])
         con.execute("DELETE FROM entities WHERE entity_id = ?", [eid])
@@ -504,6 +663,48 @@ def revert_edit(con: duckdb.DuckDBPyConnection, edit_id: str, *, email: str, ip:
             for cid in touched:
                 hashtags.store_for_catalyst(con, cid)
         return _record_manual_revert(con, edit_id, email, ip, before, after, cards=_card_ids(con, touched))
+    elif op == "edit_entity":
+        eid = before["entity_id"]
+        if not con.execute("SELECT 1 FROM entities WHERE entity_id = ?", [eid]).fetchone():
+            raise EditConflict(f"entity {eid} no longer exists")
+        cur_name, cur_type = con.execute("SELECT name, type FROM entities WHERE entity_id = ?", [eid]).fetchone()
+        if (cur_name, cur_type) != (after["name"], after["type"]):
+            raise EditConflict(f"entity {eid} changed since (now {cur_name!r}, {cur_type})")
+        if before["name"] != cur_name and con.execute(
+                "SELECT 1 FROM entities WHERE lower(name) = lower(?) AND entity_id <> ?", [before["name"], eid]).fetchone():
+            raise EditConflict(f"name {before['name']!r} is taken by another entity now")
+        if after.get("alias_added"):
+            con.execute("DELETE FROM entity_aliases WHERE entity_id = ? AND alias = ?", [eid, before["name"]])
+        if before["name"] != cur_name:
+            _rename_entity(con, eid, before["name"])
+        if before["type"] != cur_type:
+            con.execute("UPDATE entities SET type = ? WHERE entity_id = ?", [before["type"], eid])
+        touched = _live_catalysts(con, eid)
+        for cid in touched:
+            hashtags.store_for_catalyst(con, cid)
+        return _record_manual_revert(con, edit_id, email, ip, before, after, cards=_card_ids(con, touched))
+    elif op == "delete_entity":
+        eid = before["entity_id"]
+        if con.execute("SELECT 1 FROM entities WHERE entity_id = ? OR lower(name) = lower(?)",
+                       [eid, before["name"]]).fetchone():
+            raise EditConflict(f"id {eid} or name {before['name']!r} is in use again — restore by hand")
+        con.execute("INSERT INTO entities (entity_id, name, ticker, type) VALUES (?, ?, ?, ?)",
+                    [eid, before["name"], before["ticker"], before["type"]])
+        for a in before["aliases"]:
+            con.execute("INSERT INTO entity_aliases (entity_id, alias) VALUES (?, ?) ON CONFLICT DO NOTHING", [eid, a])
+        skipped = []
+        for child, parent, rel, conf, reason, source in before["links"]:
+            if con.execute("SELECT 1 FROM entities WHERE entity_id = ?", [parent if child == eid else child]).fetchone():
+                con.execute("""INSERT INTO entity_links (child_id, parent_id, relation, confidence, reason, source)
+                               VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING""", [child, parent, rel, conf, reason, source])
+            else:
+                skipped.append([child, parent, rel])
+        for mention, cid, created in before.get("unresolved", []):
+            con.execute("""UPDATE unresolved_entities SET resolved_to = ? WHERE mention = ? AND catalyst_id = ?
+                           AND CAST(created_at AS VARCHAR) = ? AND resolved_to IS NULL""", [eid, mention, cid, created])
+        out = _record_manual_revert(con, edit_id, email, ip, before, after)
+        out["links_skipped"] = skipped   # other end no longer exists
+        return out
     elif op in ("link", "unlink"):
         key = {k: before[k] for k in ("child_id", "parent_id", "relation")}
         inverse = ("unlink" if op == "link" else "link", key)
