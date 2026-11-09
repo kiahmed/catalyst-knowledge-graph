@@ -134,6 +134,11 @@ def entity_detail(con: duckdb.DuckDBPyConnection, eid: int) -> dict[str, Any]:
                      "evidence": ev, "confidence": conf, "status": status, "mechanism": mech, "entry_id": entry_id,
                      "date": date.isoformat() if date else None, "headline": headline, "finding": finding,
                      "named_in_card": _mentions(f"{headline} {finding}", names)})
+    # Pre-tick support: per alias, the live edges on cards that reached this
+    # entity ONLY through that alias (card never names the entity itself).
+    for al in aliases:
+        al["via_rel_ids"] = [r["rel_id"] for r in rels if r["status"] in ("active", "materialized")
+                             and entities.only_via_alias(f"{r['headline']} {r['finding'] or ''}", name, al["alias"])]
     return {"id": eid, "name": name, "type": typ, "ticker": ticker, "aliases": aliases, "family": family,
             "relationships": rels}
 
@@ -376,6 +381,38 @@ def apply_edit(con: duckdb.DuckDBPyConnection, op: str, payload: dict[str, Any],
         con.execute("UPDATE admin_edits SET reverted_by = ? WHERE edit_id = ?", [edit_id, reverts])
     return {"edit_id": edit_id, "op": op, "before": before, "after": after, "revertible": revertible,
             "cards": _card_ids(con, touched)}
+
+
+def repoint_many(con: duckdb.DuckDBPyConnection, *, from_entity_id: int, to_entity_id: int, rel_ids: list[int],
+                 email: str, ip: str | None, vocab: set[str], extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Bulk repoint: every listed edge's side(s) that equal from_entity_id move
+    to to_entity_id. Each edge goes through apply_edit("repoint_edge") — same
+    guards (expect, self-loop, live-twin), same dedupe/hashtags, one audit row
+    each (individually revertible). All-or-nothing: any refusal raises and the
+    caller's working copy is discarded, so nothing is pushed."""
+    _entity_exists(con, from_entity_id)
+    _entity_exists(con, to_entity_id)
+    if from_entity_id == to_entity_id:
+        raise EditError("source and target entity are the same")
+    if not isinstance(rel_ids, list) or not rel_ids or len(set(rel_ids)) != len(rel_ids) \
+            or any(not isinstance(r, int) or isinstance(r, bool) for r in rel_ids):
+        raise EditError("rel_ids must be a non-empty list of distinct relationship ids")
+    done, cards = [], set()
+    for rel_id in rel_ids:
+        cur = _edge(con, rel_id)
+        sides = [k for k in ("entity_a_id", "entity_b_id") if cur[k] == from_entity_id]
+        if not sides:
+            raise EditConflict(f"relationship {rel_id} no longer involves entity {from_entity_id}")
+        payload = {"rel_id": rel_id, **{k: to_entity_id for k in sides},
+                   "expect": {k: from_entity_id for k in sides}, **(extra or {})}
+        try:
+            out = apply_edit(con, "repoint_edge", payload, email=email, ip=ip, vocab=vocab)
+        except (EditError, EditConflict) as exc:
+            raise type(exc)(f"relationship {rel_id}: {exc} — nothing was saved") from exc
+        done.append(out["edit_id"])
+        cards.update(out["cards"])
+    return {"edit_id": ",".join(done), "edit_ids": done, "op": "repoint_many", "count": len(done),
+            "cards": sorted(cards)}
 
 
 def revert_edit(con: duckdb.DuckDBPyConnection, edit_id: str, *, email: str, ip: str | None,

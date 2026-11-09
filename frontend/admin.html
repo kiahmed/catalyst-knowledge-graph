@@ -87,9 +87,11 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
   <section class="col" id="colRels">
     <h2>Relationships <span id="relCount" class="tag"></span></h2>
     <div class="tools">
+      <label title="Tick / untick every relationship shown"><input type="checkbox" id="tickAll"> all</label>
       <label><input type="checkbox" id="onlyUnnamed"> not named in card</label>
       <label title="Send the checked edges to the LLM, review its picks, then apply"><input type="checkbox" id="useLlm"> Fix with LLM</label>
       <button id="btnFix" disabled>Fix checked</button>
+      <button id="btnRepointMany" disabled title="Move the checked relationships from this entity to another existing entity">Repoint checked →</button>
     </div>
     <div class="list" id="relList"></div>
   </section>
@@ -189,7 +191,11 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
     p.append(el('p', {}, el('b', {}, e.name), ' ', el('span', { class: 'kv' }, `${e.type}${e.ticker ? ' · ' + e.ticker : ''} · id ${e.id}`)));
     p.append(el('h3', {}, 'Aliases'));
     e.aliases.forEach(a => p.append(el('div', { class: 'item' },
-      el('span', {}, a.alias),
+      el('span', { style: 'cursor:pointer', title: 'Tick the relationships that reached this entity only through this alias',
+                   onclick: () => tickVia(a) }, a.alias),
+      a.via_rel_ids && a.via_rel_ids.length ? el('span', { class: 'tag warn',
+        title: `${a.via_rel_ids.length} relationship(s) on cards that never name ${e.name} — click the alias to tick them` },
+        `only via: ${a.via_rel_ids.length}`) : '',
       a.bare_brand ? el('span', { class: 'tag warn', title: 'One brand word for a longer name — may mean the parent/sister' }, 'brand') : '',
       a.also_on.length ? el('span', { class: 'tag bad', title: 'Also an alias of: ' + a.also_on.join(', ') }, 'shared') : '',
       el('span', { class: 'meta' },
@@ -219,14 +225,42 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
       const other = r.a.id === S.entity.id ? r.b.name : r.a.name;
       list.append(el('div', { class: 'item' + (S.rel && S.rel.rel_id === r.rel_id ? ' sel' : ''), onclick: () => { S.rel = r; renderRels(); renderRel(); } },
         el('input', { type: 'checkbox', checked: S.checked.has(r.rel_id), onclick: ev => { ev.stopPropagation();
-          ev.target.checked ? S.checked.add(r.rel_id) : S.checked.delete(r.rel_id); $('btnFix').disabled = !S.checked.size; } }),
+          ev.target.checked ? S.checked.add(r.rel_id) : S.checked.delete(r.rel_id); syncChecked(); } }),
         el('span', {}, `${r.a.name} —${r.rel_type}→ ${r.b.name}`),
         r.status !== 'active' ? el('span', { class: 'tag bad' }, r.status) : '',
         r.named_in_card ? '' : el('span', { class: 'tag warn', title: `"${S.entity.name}" not named in this card (only via an alias / inference)` }, 'not named'),
         el('span', { class: 'meta' }, `${r.evidence} · ${r.date || ''}`)));
     });
-    $('btnFix').disabled = !S.checked.size;
+    syncChecked();
   }
+  function syncChecked() {
+    const n = S.checked.size, shown = visibleRels();
+    $('btnFix').disabled = !n; $('btnRepointMany').disabled = !n;
+    $('btnRepointMany').textContent = n ? `Repoint ${n} checked →` : 'Repoint checked →';
+    $('tickAll').checked = shown.length > 0 && shown.every(r => S.checked.has(r.rel_id));
+  }
+  function tickVia(a) {
+    S.checked = new Set(a.via_rel_ids || []);
+    $('onlyUnnamed').checked = false;
+    renderRels();
+    toast(S.checked.size ? `Ticked ${S.checked.size} relationship(s) that reached ${S.entity.name} only through "${a.alias}" — review, then spin out or repoint`
+                         : `No relationship reached ${S.entity.name} only through "${a.alias}"`);
+  }
+  $('tickAll').addEventListener('change', ev => {
+    visibleRels().forEach(r => ev.target.checked ? S.checked.add(r.rel_id) : S.checked.delete(r.rel_id));
+    renderRels();
+  });
+  $('btnRepointMany').addEventListener('click', async () => {
+    const rels = S.entity.relationships.filter(r => S.checked.has(r.rel_id));
+    if (!rels.length) return;
+    const to = await choose(`Move ${rels.length} checked relationship(s) from ${S.entity.name} to:`); if (!to) return;
+    if (to.id === S.entity.id) return toast('That is the same entity', true);
+    const list = rels.map(r => `  ${r.a.name} —${r.rel_type}→ ${r.b.name}`).join('\n');
+    if (!confirm(`Replace ${S.entity.name} with ${to.name} in these ${rels.length} relationship(s)?\n${list}\n\nAll or nothing; each one is logged and revertible.`)) return;
+    const d = await run('repoint_many', { from_entity_id: S.entity.id, to_entity_id: to.id, rel_ids: rels.map(r => r.rel_id) },
+                        `Repointed ${rels.length}`);
+    if (d) { S.checked.clear(); afterEdit(); }
+  });
   $('onlyUnnamed').addEventListener('change', renderRels);
 
   // ── Relationship editor column ────────────────────────────────

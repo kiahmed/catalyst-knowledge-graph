@@ -381,6 +381,8 @@ Hand-fix entities and edges (wrong alias landing, mis-pointed edge, missing pare
 1. Search an entity. The columns are entity → aliases/family → relationships → counterpart and evidence.
 2. Click **Edit**. The screen freezes, so what you saw is what gets checked.
 3. Make the change: repoint an edge's source/target/type, set its status, move or drop an alias, create an entity, link or unlink parent/sister, or merge.
+   - **Pre-tick from an alias:** click an alias name. The third column ticks every live relationship on cards that reached this entity only through that alias (the card never names the entity). The "only via: N" tag shows the count. Review the ticks, then spin out or repoint.
+   - **Repoint checked → …:** moves the ticked relationships from this entity to another existing entity in one save (the "all" box ticks everything shown). Each edge goes through the normal single repoint (same guards, dedupe, hashtags, card/entity refresh, re-embedding) and gets its own revertible log row. It's all or nothing: if any one is refused, nothing is saved.
    - **Spin out** (button on an alias): when an alias really names another organization ("SEER Robotics" on Serve Robotics), it becomes its own entity. The relationships you checked in the third column move with it, and only the side that pointed at the current entity changes. With nothing checked, it just creates the bare entity and removes the alias. One revertible edit; the revert is refused once the new entity has other edges, aliases or links.
 4. **Save** applies it right away:
    - pull the GCS DuckDB → apply → push (generation-checked; if someone else changed it, you get a 409, so reload);

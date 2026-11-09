@@ -164,6 +164,43 @@ class TestAdminOps(_Fixture):
             ops.revert_edit(self.con, out["edit_id"], email=WHO["email"], ip=WHO["ip"], vocab=VOCAB)
         self.assertEqual(self._edge()[0], new)                              # nothing half-reverted
 
+    def test_repoint_many_moves_only_the_source_side_with_one_audit_row_each(self):
+        rels = [self.rel, self.rel + 1, self.rel + 2]
+        out = ops.repoint_many(self.con, from_entity_id=self.aws, to_entity_id=self.logi, rel_ids=rels,
+                               email=WHO["email"], ip=WHO["ip"], vocab=VOCAB)
+        self.assertEqual(out["count"], 3)
+        self.assertEqual(out["cards"], ["ROB-0", "ROB-1", "ROB-2"])
+        got = self.con.execute(f"SELECT entity_a_id, entity_b_id FROM relationships WHERE rel_id IN ({','.join(map(str, rels))})"
+                               ).fetchall()
+        self.assertEqual(set(got), {(self.logi, self.dhl)})
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM relationships WHERE entity_a_id = ?", [self.aws]).fetchone(),
+                         (3,))                                              # the unchecked three stay
+        log = ops.edits(self.con)
+        self.assertEqual(len(log), 3)
+        ops.revert_edit(self.con, out["edit_ids"][1], email=WHO["email"], ip=WHO["ip"], vocab=VOCAB)   # one by one
+        self.assertEqual(self.con.execute("SELECT entity_a_id FROM relationships WHERE rel_id = ?", [self.rel + 1]).fetchone(),
+                         (self.aws,))
+
+    def test_repoint_many_refuses_bad_input_before_touching_anything(self):
+        for kw in ({"to_entity_id": self.aws, "rel_ids": [self.rel]},              # same entity
+                   {"to_entity_id": self.logi, "rel_ids": []},                       # nothing checked
+                   {"to_entity_id": self.logi, "rel_ids": [self.rel, self.rel]},     # duplicate
+                   {"to_entity_id": self.dhl, "rel_ids": [self.rel]}):               # would be a self-loop
+            with self.assertRaises(ops.EditError):
+                ops.repoint_many(self.con, from_entity_id=self.aws, email=WHO["email"], ip=WHO["ip"], vocab=VOCAB, **kw)
+        with self.assertRaises(ops.EditConflict):                                  # edge not on the source
+            ops.repoint_many(self.con, from_entity_id=self.logi, to_entity_id=self.robo, rel_ids=[self.rel],
+                             email=WHO["email"], ip=WHO["ip"], vocab=VOCAB)
+        self.assertEqual(self._edge()[0], self.aws)
+
+    def test_alias_pre_tick_lists_edges_on_cards_that_never_name_the_entity(self):
+        self.con.execute("UPDATE catalysts SET raw_finding = 'Amazon Web Services adds GPUs vs DHL.' WHERE entry_id = 'ROB-5'")
+        d = ops.entity_detail(self.con, self.aws)
+        via = {a["alias"]: a["via_rel_ids"] for a in d["aliases"]}
+        self.assertEqual(len(via["Amazon"]), 5)                     # ROB-0..4: "Amazon" only; ROB-5 names AWS
+        self.assertNotIn(self.rel + 5, via["Amazon"])
+        self.assertEqual(via["AWS"], [])
+
     def test_materialized_status_round_trip(self):
         self.con.execute("UPDATE relationships SET status = 'materialized' WHERE rel_id = ?", [self.rel])
         out = ops.apply_edit(self.con, "set_edge_status", {"rel_id": self.rel, "status": "rejected",

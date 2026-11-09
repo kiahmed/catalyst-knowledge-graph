@@ -397,8 +397,14 @@ def edit(who):
     busy = _backend_status()
     if busy["running"]:   # recorded on the audit row: edited while a backend run was in flight
         payload["_backend_running"] = [r["what"] for r in busy["running"]]
-    body_out, code = _write(lambda con: admin_ops.apply_edit(con, op, payload, email=who[0], ip=who[1],
-                                                             vocab=_vocab()))
+    if op == "repoint_many":   # one save (one push + one refresh) for many single repoints
+        extra = {"_backend_running": payload["_backend_running"]} if "_backend_running" in payload else None
+        body_out, code = _write(lambda con: admin_ops.repoint_many(
+            con, from_entity_id=payload.get("from_entity_id"), to_entity_id=payload.get("to_entity_id"),
+            rel_ids=payload.get("rel_ids"), email=who[0], ip=who[1], vocab=_vocab(), extra=extra))
+    else:
+        body_out, code = _write(lambda con: admin_ops.apply_edit(con, op, payload, email=who[0], ip=who[1],
+                                                                 vocab=_vocab()))
     if busy["running"]:
         body_out["warning"] = ("Saved while " + ", ".join(r["what"] for r in busy["running"]) + " was running — "
                                "recheck this record after it finishes.")
