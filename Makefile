@@ -338,6 +338,33 @@ entity-link:
 # Re-extract specific cards on the authoritative cloud DB (same path as a
 # cloud ingest: direction check + LLM entity resolution). Dry run unless APPLY=1.
 #   make reextract-prod IDS=ROB-…,ROB-… [APPLY=1]   (IDS=@file also works)
+# Stale card images: card data changed after its card PNG / graph poster was
+# rendered (live Firestore doc update_time vs bucket image time). Covers every
+# kind of fix (admin edits, direction fixes, merges, re-extraction). Writes
+# data/render_stale_<UTC ts>.txt (+ .ids). APPLY=1 then force-re-renders exactly
+# those cards on the prod render service, 5 per call (needs gcloud login).
+#   make render-stale [APPLY=1]
+render-stale:
+	@set -a; . ./.env.prod; set +a; \
+	  ids_file=$$(docker compose run --rm --no-deps -v "$(CURDIR):/repo" -w /repo \
+	    -v "$$FIREBASE_DEPLOY_KEY:/tmp/sa.json:ro" -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json \
+	    -e GCP_PROJECT="$$GCP_PROJECT" -e CARDS_BUCKET="$$CARDS_BUCKET" \
+	    --entrypoint python robotics-ingest dev-utils/render_stale.py | tail -1) && test -f "$$ids_file" || exit 1; \
+	  ids=$$(tr -d '[:space:]' < "$$ids_file"); \
+	  if [ -z "$(APPLY)" ]; then echo "report: $${ids_file%.ids}.txt  (APPLY=1 to re-render)"; exit 0; fi; \
+	  if [ -z "$$ids" ]; then echo "nothing to re-render"; exit 0; fi; \
+	  URL=$$(gcloud run services describe robotics-render --region us-central1 --project "$$GCP_PROJECT" \
+	    --format='value(status.url)') || { echo "!! gcloud login needed: gcloud auth login"; exit 1; }; \
+	  echo "$$ids" | tr ',' '\n' | xargs -n 5 | while read -r chunk; do \
+	    TOKEN=$$(gcloud auth print-identity-token) || exit 1; \
+	    list=$$(echo "$$chunk" | sed 's/ /","/g'); \
+	    printf '%s → ' "$$chunk"; \
+	    curl -sS --max-time 320 -X POST "$$URL/render-batch" -H "Authorization: Bearer $$TOKEN" \
+	      -H "Content-Type: application/json" \
+	      -d "{\"card_ids\":[\"$$list\"],\"force\":true,\"recaps\":false}" \
+	    | python3 -c "import json,sys; d=json.load(sys.stdin); print({k: d.get(k) for k in ('ok','rendered','failed','uploaded','upload_skipped','graphs_rendered','graphs_failed','error') if k in d})"; \
+	  done
+
 reextract-prod:
 	@test -n "$(IDS)" || { echo '!! usage: make reextract-prod IDS=ROB-…,ROB-… [APPLY=1]'; exit 1; }
 	@set -a; . ./.env.prod; set +a; \

@@ -138,18 +138,28 @@ def _bucket_png_ids() -> set[str]:
     }
 
 
-def _upload_png(card_id: str, local_path: Path) -> dict[str, Any]:
+def _upload_png(card_id: str, local_path: Path, *, overwrite: bool = False) -> dict[str, Any]:
     """Upload a single PNG to Firebase Storage. No-op when upload disabled.
 
-    Idempotent — skips when the blob already exists. Returns a small dict
-    summarizing what happened.
+    Default: skips when the blob already exists. overwrite=True (forced
+    re-renders, explicit /render) replaces it unless the content is
+    byte-identical — before 2026-11-09 forced runs re-rendered but never
+    replaced existing card PNGs, so data fixes never reached the images.
     """
+    import hashlib  # noqa: PLC0415
+
     bucket = _storage_bucket()
     if bucket is None:
         return {"uploaded": False, "reason": "upload_disabled"}
-    blob = bucket.blob(f"{STORAGE_CARDS_PREFIX}/{card_id}.png")
-    if blob.exists():
-        return {"uploaded": False, "reason": "already_exists"}
+    blob = bucket.get_blob(f"{STORAGE_CARDS_PREFIX}/{card_id}.png")
+    if blob is not None:
+        if not overwrite:
+            return {"uploaded": False, "reason": "already_exists"}
+        local_md5 = base64.b64encode(hashlib.md5(local_path.read_bytes()).digest()).decode()
+        if blob.md5_hash == local_md5:
+            return {"uploaded": False, "reason": "unchanged"}
+    else:
+        blob = bucket.blob(f"{STORAGE_CARDS_PREFIX}/{card_id}.png")
     # Private bucket — no make_public(). Browsers read via the Firebase
     # Storage SDK gated by storage.rules; this SA write is IAM-governed.
     blob.upload_from_filename(str(local_path), content_type="image/png")
@@ -899,7 +909,7 @@ def render_one():
     png = _render_png(card)
     out_path.write_bytes(png)
 
-    upload = _upload_png(card_id, out_path)
+    upload = _upload_png(card_id, out_path, overwrite=True)   # explicit single render = refresh
     duration = round(time.monotonic() - start, 2)
     _log("render_ok", card_id=card_id, bytes=len(png), duration_s=duration, upload=upload)
     return jsonify({
@@ -1057,7 +1067,7 @@ def render_batch():
         # the case where local PNGs exist but Storage doesn't (first cutover).
         if card_upload_needed:
             try:
-                up = _upload_png(entry_id, out_path)
+                up = _upload_png(entry_id, out_path, overwrite=force)
                 if up.get("uploaded"):
                     uploaded += 1
                 else:
