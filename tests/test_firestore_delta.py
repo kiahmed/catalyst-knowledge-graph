@@ -39,6 +39,12 @@ class _FakeCol:
     def document(self, name):
         return _FakeDoc(self.store, f"{self.path}/{name}")
 
+    def stream(self):
+        pre = self.path + "/"
+        for k, v in list(self.store.docs.items()):
+            if k.startswith(pre) and "/" not in k[len(pre):]:
+                yield SimpleNamespace(id=k[len(pre):], to_dict=lambda v=v: v)
+
 
 class _FakeBatch:
     def __init__(self, store):
@@ -47,11 +53,17 @@ class _FakeBatch:
     def set(self, doc, data, merge=False):
         self.ops.append((doc, data))
 
+    def delete(self, doc):
+        self.ops.append((doc, None))
+
     def commit(self):
         if self.store.fail_commit:
             raise RuntimeError("firestore unavailable")
         for doc, data in self.ops:
-            doc.set(data, merge=True)
+            if data is None:
+                self.store.docs.pop(doc.path, None)
+            else:
+                doc.set(data, merge=True)
 
 
 class _FakeClient:
@@ -139,6 +151,30 @@ class TestDeltaExport(unittest.TestCase):
         self.client.writes.clear()
         self.assertEqual(fx._write_catalysts(self.cfg, _cards(4))["written"], 1)
         self.assertEqual([w.rsplit("/", 1)[1] for w in self._item_writes()], ["ROB-T001"])
+
+    def test_admin_alias_drop_without_cards_still_refreshes_entity_docs(self):
+        import duckdb
+        from src import db
+        con = duckdb.connect(self.cfg.duckdb_path)
+        db.init_schema(con)
+        serve, fox = db.insert_entity(con, "Serve Robotics", None, "public_company"), \
+            db.insert_entity(con, "Foxconn", None, "public_company")
+        db.insert_alias(con, serve, "SEER Robotics")
+        con.execute("""INSERT INTO catalysts (entry_id, sector, timestamp, raw_finding, headline, sentiment_label)
+                       VALUES ('ROB-E', 'Robotics', CURRENT_DATE, 'f', 'h', 'bullish')""")
+        cid = con.execute("SELECT catalyst_id FROM catalysts").fetchone()[0]
+        con.execute("INSERT INTO relationships (catalyst_id, entity_a_id, rel_type, entity_b_id, confidence) "
+                    "VALUES (?, ?, 'supplies', ?, 0.8)", [cid, fox, serve])
+        con.close()
+        fx.refresh_entities(self.cfg)
+        doc = lambda: self.client.docs[f"CKG-Robotics/entities/items/{serve}"]   # noqa: E731
+        self.assertEqual(doc()["aliases"], ["SEER Robotics"])
+        con = duckdb.connect(self.cfg.duckdb_path)
+        con.execute("DELETE FROM entity_aliases WHERE entity_id = ?", [serve])   # the admin alias drop
+        con.close()
+        out = fx.refresh_entities(self.cfg)
+        self.assertEqual(out["entities"]["written"], 1)                         # only the changed doc
+        self.assertEqual(doc()["aliases"], [])
 
     def test_hash_is_order_independent(self):
         a = {"card_id": "X", "a": 1, "b": [1, 2]}

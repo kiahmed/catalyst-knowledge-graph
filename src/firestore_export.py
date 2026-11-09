@@ -420,6 +420,14 @@ def invalidate_state(con: Any, entry_ids: list[str]) -> None:
                     [f"catalysts/{e}" for e in entry_ids])
 
 
+def refresh_entities(cfg: RoboticsConfig) -> dict[str, Any]:
+    """Entities collection only, diffed against the live docs — for admin
+    edits that touch no card (alias move/drop, link/unlink, bare entity):
+    entity docs carry aliases + family, which downstream name resolution
+    (Traction Engine) reads, so they must not wait for the next ingest."""
+    return {"cards": "none touched", "entities": _write_entities(cfg, compare_live=True)}
+
+
 def refresh_cards(cfg: RoboticsConfig, entry_ids: list[str]) -> dict[str, Any]:
     """Rewrite just these card docs (+ the entities collection) after an admin
     edit — seconds, not the full export's minute+. The web app builds its

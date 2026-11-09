@@ -172,12 +172,14 @@ def _vocab() -> set[str]:
 
 
 def _refresh_firestore(cards: list[str]) -> dict[str, Any]:
-    """Touched card docs + entities collection, and the touched cards' embeddings."""
+    """Touched card docs + entities collection, and the touched cards' embeddings.
+    The entities collection is refreshed on EVERY save, even when no card was
+    touched: alias/link edits change entity docs that name resolution reads."""
     out: dict[str, Any] = {}
-    try:   # touched cards only: Hosting gives the request 60s, a full export takes longer
-        from src.firestore_export import refresh_cards  # noqa: PLC0415
+    try:   # touched cards only: a full export takes over a minute
+        from src.firestore_export import refresh_cards, refresh_entities  # noqa: PLC0415
 
-        out["firestore"] = refresh_cards(CFG, cards) if cards else {"cards": "none touched"}
+        out["firestore"] = refresh_cards(CFG, cards) if cards else refresh_entities(CFG)
     except Exception as exc:  # noqa: BLE001
         out["firestore_error"] = f"{type(exc).__name__}: {exc}"
         _log("admin_refresh_failed", error=out["firestore_error"])
