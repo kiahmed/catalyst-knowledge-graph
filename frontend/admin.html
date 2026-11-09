@@ -156,6 +156,20 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
     S.entity = await api('/entity/' + id); S.rel = null; S.checked.clear();
     renderEntities(); renderEntity(); renderRels(); renderRel();
   }
+  // After any save/revert: reload every column (entity list counts included),
+  // keeping the selected entity and relationship when they still exist.
+  async function afterEdit(focusId) {
+    const relId = S.rel && S.rel.rel_id, id = focusId || (S.entity && S.entity.id);
+    await loadEntities();
+    if (!id) return;
+    try { await selectEntity(id); } catch (e) {
+      // 400 "no entity N" = it's gone (merged / reverted create); anything else is a real failure.
+      if (e.status !== 400) { renderRel(); toast('Saved, but reloading failed (' + e.message + ') — reload the page', true); return; }
+      S.entity = null; S.rel = null; S.checked.clear(); renderEntity(); renderRels(); renderRel(); return;
+    }
+    const r = relId && S.entity.relationships.find(x => x.rel_id === relId);
+    if (r) { S.rel = r; renderRels(); renderRel(); }
+  }
   function renderEntity() {
     const e = S.entity, p = $('entityPane'); p.replaceChildren();
     if (!e) return;
@@ -241,7 +255,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
           if (Object.keys(set).length) done.push(await api('/edit', { op: 'repoint_edge', payload: Object.assign({ rel_id: r.rel_id, expect }, set) }));
           if (statSel.value !== r.status) done.push(await api('/edit', { op: 'set_edge_status', payload: { rel_id: r.rel_id, status: statSel.value, expect: { status: r.status } } }));
           toast(done.length ? `Saved (${done.map(d => d.edit_id).join(', ')}) — cards & graph refreshed` : 'Nothing changed');
-          await selectEntity(S.entity.id);
+          await afterEdit();
         } catch (e) { toast(e.message, true); ev.target.disabled = false; }
       } }, 'Save'),
       el('button', { onclick: () => renderRel(false) }, 'Cancel')));
@@ -261,32 +275,32 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
   }
   async function moveAlias(alias) {
     const to = await choose(`Move alias "${alias}" from ${S.entity.name} to:`); if (!to) return;
-    if (await run('move_alias', { alias, from_entity_id: S.entity.id, to_entity_id: to.id }, 'Alias move')) selectEntity(S.entity.id);
+    if (await run('move_alias', { alias, from_entity_id: S.entity.id, to_entity_id: to.id }, 'Alias move')) afterEdit();
   }
   async function dropAlias(alias) {
     if (!confirm(`Remove alias "${alias}" from ${S.entity.name}?`)) return;
-    if (await run('move_alias', { alias, from_entity_id: S.entity.id }, 'Alias drop')) selectEntity(S.entity.id);
+    if (await run('move_alias', { alias, from_entity_id: S.entity.id }, 'Alias drop')) afterEdit();
   }
   async function linkTo(relation) {
     const other = await choose(relation === 'subsidiary_of' ? `Parent of ${S.entity.name}:` : `Sister of ${S.entity.name}:`); if (!other) return;
-    if (await run('link', { child_id: S.entity.id, parent_id: other.id, relation }, 'Link')) selectEntity(S.entity.id);
+    if (await run('link', { child_id: S.entity.id, parent_id: other.id, relation }, 'Link')) afterEdit();
   }
   async function unlink(f) {
     if (!confirm(`Remove ${f.role} link to ${f.name}?`)) return;
     const child = f.role === 'child' ? f.id : S.entity.id, parent = f.role === 'child' ? S.entity.id : f.id;
-    if (await run('unlink', { child_id: child, parent_id: parent, relation: f.relation }, 'Unlink')) selectEntity(S.entity.id);
+    if (await run('unlink', { child_id: child, parent_id: parent, relation: f.relation }, 'Unlink')) afterEdit();
   }
   async function mergeInto() {
     const dst = await choose(`Merge ${S.entity.name} INTO (it disappears; its edges/aliases move):`); if (!dst) return;
     if (!confirm(`Merge "${S.entity.name}" into "${dst.name}"? This one can NOT be reverted from the log.`)) return;
-    if (await run('merge', { src_id: S.entity.id, dst_id: dst.id }, 'Merge')) { await loadEntities(); selectEntity(dst.id); }
+    if (await run('merge', { src_id: S.entity.id, dst_id: dst.id }, 'Merge')) afterEdit(dst.id);
   }
   $('btnNewEntity').addEventListener('click', async () => {
     const name = prompt('New entity name:'); if (!name) return;
     const type = prompt('Type (public_company, private_company, government, organization):', 'public_company'); if (!type) return;
     const ticker = prompt('Ticker (optional):', '') || null;
     const d = await run('create_entity', { name, type, ticker }, 'Entity');
-    if (d) { $('q').value = name; await loadEntities(); selectEntity(d.after.entity_id); }
+    if (d) { $('q').value = name; afterEdit(d.after.entity_id); }
   });
 
   // ── Fix checked (manual or LLM) ───────────────────────────────
@@ -323,7 +337,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
             try { await api('/edit', { op: 'repoint_edge', payload }); n++; } catch (e) { toast(`rel ${x.s.rel_id}: ${e.message}`, true); }
           }
           $('modal').style.display = 'none'; toast(`Applied ${n} change(s) — each is in the Edit log (revertible)`);
-          S.checked.clear(); selectEntity(S.entity.id);
+          S.checked.clear(); afterEdit();
         } }, 'Apply checked'),
         el('button', { onclick: () => { $('modal').style.display = 'none'; } }, 'Close')));
     $('modal').style.display = 'flex';
@@ -354,7 +368,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
           el('td', {}, e.reverted_by ? el('span', { class: 'tag' }, 'reverted') : (e.revertible
             ? el('button', { onclick: async ev => { if (!confirm('Revert ' + e.edit_id + '?')) return; ev.target.disabled = true;
                 try { await api('/revert', { edit_id: e.edit_id }); toast('Reverted ' + e.edit_id); $('modal').style.display = 'none';
-                      if (S.entity) selectEntity(S.entity.id); } catch (x) { toast(x.message, true); ev.target.disabled = false; } } }, 'Revert')
+                      afterEdit(); } catch (x) { toast(x.message, true); ev.target.disabled = false; } } }, 'Revert')
             : el('span', { class: 'tag' }, 'not revertible')))))),
         el('button', { onclick: () => { $('modal').style.display = 'none'; } }, 'Close'));
       $('modal').style.display = 'flex';
