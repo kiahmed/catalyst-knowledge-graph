@@ -203,7 +203,7 @@ def card_entities(con: duckdb.DuckDBPyConnection, entry_id: str) -> dict[str, An
     cid, head, finding = row
     new_names = {n.lower() for (n,) in con.execute(
         "SELECT suggested_name FROM unresolved_entities WHERE catalyst_id = ? AND suggested_name IS NOT NULL "
-        "AND suggested_type IS DISTINCT FROM 'generic_discarded'", [cid]).fetchall()}
+        "AND COALESCE(suggested_type, '') NOT IN ('generic_discarded', 'ungrounded_discarded')", [cid]).fetchall()}
     on_card = [{"id": i, "name": n, "type": t, "new": n.lower() in new_names} for i, n, t in con.execute("""
         SELECT DISTINCT e.entity_id, e.name, e.type FROM relationships r JOIN entities e
           ON e.entity_id IN (r.entity_a_id, r.entity_b_id)

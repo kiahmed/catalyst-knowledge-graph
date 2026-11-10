@@ -121,6 +121,24 @@ written) + `resolved` (the LLM's canonical form). For each name:
   known companies stay, labeled by `evidence_type`, for consumers to filter.
 - Deterministic string match, no extra LLM call.
 
+### 3.8 Relationship evidence bars (2026-11-09)
+- Every vocab type declares `min_evidence` and a `fallback` in `config/relationship_vocab.yaml`. Levels:
+  speculative < inferred (= cited: web_grounded / inferred with source_refs) < direct.
+  - **Fact claims**: acquires, invests_in, supplies, deploys, pilots, displaces, partners_with, integrates_with,
+    built_on, hires_from, spins_out_from, regulates, litigates_against. These need ≥ inferred.
+  - **Soft relations**: competes_with, benchmarks_against. These may be speculative.
+- Fallback below the bar: displaces → competes_with; every other fact claim → drop. One general check
+  (`extract.evidence_bar`) applies it to every type before the direction check. Counts are in
+  `enrichment.evidence_bar`, and a downgraded edge keeps `evidence_fallback_from`.
+- The prompt states each fact type's bar, so the model chooses correctly up front. `displaces` is redefined:
+  a stated or cited replacement at a named customer/market; mere entry/threat → competes_with; insourcing a part
+  is not displaces.
+- Real displacement arrives as direct/cited evidence on a later card (edge lifecycle: threat first as
+  competes_with, the displacement when it happens).
+- Verified on ROB-080126-003: "XPeng displaces NVIDIA" (9/10 runs across 3.6/3.8/Argon before) → "NVIDIA
+  competes_with XPeng" (2/2 runs).
+- Next (not built): Pass 3 also judges "type too strong for the evidence".
+
 ## 4. Cost
 No new LLM calls: unverified-alias names and rewritten mentions ride the existing
 one-call-per-card `decide_entities` request (slightly longer prompts). Name keys and the

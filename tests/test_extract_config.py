@@ -47,3 +47,34 @@ class TestGeminiConfig(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEvidenceBar(unittest.TestCase):
+    """2026-11-09: one vocab-driven rule for every relationship type."""
+
+    def setUp(self):
+        self.vocab = config.load_config().vocab
+
+    def test_every_type_declares_a_bar_and_a_valid_fallback(self):
+        names = {v["name"] for v in self.vocab["vocabulary"]}
+        for v in self.vocab["vocabulary"]:
+            self.assertIn(v.get("min_evidence"), ("speculative", "inferred", "direct"), v["name"])
+            fb = v.get("fallback")
+            self.assertTrue(fb is None or fb == "drop" or fb in names, (v["name"], fb))
+
+    def test_fact_claims_need_more_than_a_speculation(self):
+        bar = lambda t, e: extract.evidence_bar(t, e, self.vocab)  # noqa: E731
+        self.assertEqual(bar("displaces", "speculative"), "competes_with")   # XPeng "displaces" NVIDIA
+        self.assertIsNone(bar("displaces", "web_grounded"))                  # cited replacement: kept
+        self.assertIsNone(bar("displaces", "direct"))
+        self.assertEqual(bar("acquires", "speculative"), "drop")             # a guessed acquisition: gone
+        self.assertIsNone(bar("acquires", "inferred"))
+        self.assertIsNone(bar("competes_with", "speculative"))               # soft relation: fine
+        self.assertIsNone(bar("unknown_type", "speculative"))
+
+    def test_prompt_states_the_bar(self):
+        text = extract._format_vocab(self.vocab)
+        line = next(l for l in text.splitlines() if l.startswith("- **displaces**"))
+        self.assertIn("EVIDENCE BAR", line)
+        self.assertIn("use competes_with instead", line)
+        self.assertNotIn("EVIDENCE BAR", next(l for l in text.splitlines() if l.startswith("- **competes_with**")))

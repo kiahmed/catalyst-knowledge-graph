@@ -9,6 +9,13 @@
 #   description  — what the relationship means in plain English
 #   directional  — true: (a rel b) ≠ (b rel a); false: symmetric
 #   examples     — canonical example sentence fragments for few-shot prompting
+#   min_evidence — the weakest evidence_type this claim may rest on (2026-11-09):
+#                  speculative < inferred (= cited: web_grounded / inferred with refs) < direct.
+#                  Fact claims (acquires, deploys, supplies, displaces, …) need ≥ inferred;
+#                  soft relations (competes_with, benchmarks_against) may be speculative.
+#   fallback     — what an edge below the bar becomes: a weaker type, or `drop`.
+#                  One general check in src/extract.py applies this to every type;
+#                  tune here, not in code.
 #
 # When adding a type: update the schema enum in src/extract.py too.
 
@@ -22,6 +29,8 @@ vocabulary:
       Two entities form a joint venture, strategic partnership, co-development,
       or alliance. Symmetric — no direction implied.
     directional: false
+    min_evidence: inferred
+    fallback: drop
     examples:
       - "Boston Dynamics and Hyundai expand warehouse JV"
       - "NVIDIA announces strategic partnership with Figure"
@@ -31,6 +40,8 @@ vocabulary:
       Entity A acquires (or plans to acquire) Entity B — M&A, takeover,
       majority stake. Direction: A is the acquirer.
     directional: true
+    min_evidence: inferred
+    fallback: drop
     examples:
       - "Amazon to acquire iRobot for $1.7B"
       - "Symbotic completed tender offer for Walmart Advanced Systems"
@@ -41,6 +52,8 @@ vocabulary:
       takes a material equity stake short of acquisition. Direction: A is
       the investor.
     directional: true
+    min_evidence: inferred
+    fallback: drop
     examples:
       - "Microsoft led Series C in Figure"
       - "ARK Invest increased stake in Tesla robotics unit"
@@ -50,6 +63,8 @@ vocabulary:
       Entity A supplies components, hardware, software, or services to
       Entity B. Direction: A → B (supplier → buyer).
     directional: true
+    min_evidence: inferred
+    fallback: drop
     examples:
       - "NVIDIA supplies Jetson Thor to Agility Robotics"
       - "TSMC supplies AI accelerators to Figure's humanoid stack"
@@ -59,6 +74,8 @@ vocabulary:
       Entity A integrates Entity B's product/platform into its own stack,
       or vice versa. Weaker than partners_with — more tactical.
     directional: true
+    min_evidence: inferred
+    fallback: drop
     examples:
       - "Amazon warehouses integrate Symbotic picking arms"
       - "Boston Dynamics Atlas integrates OpenAI foundation models"
@@ -69,15 +86,21 @@ vocabulary:
       Two entities compete for the same market, customer, or technology
       position. Symmetric.
     directional: false
+    min_evidence: speculative
     examples:
       - "Figure and 1X race to ship humanoids to automotive OEMs"
       - "Symbotic vs AutoStore in grocery warehouse automation"
 
   - name: displaces
     description: >
-      Entity A is displacing Entity B as an incumbent, or threatens to.
-      Direction: A is the challenger/new entrant displacing B.
+      Entity A's product or service REPLACES Entity B's at a named customer,
+      deployment or market, stated in the item or cited research. Market
+      entry or a threat alone is competes_with. A building its own part
+      instead of buying B's is not displaces (B lost a customer; there is no
+      A-vs-B market replacement). Direction: A is the one replacing B.
     directional: true
+    min_evidence: inferred
+    fallback: competes_with
     examples:
       - "Humanoid robots displacing AGVs in BMW plant pilots"
       - "Symbotic displacing conventional DC staff at Walmart"
@@ -88,6 +111,8 @@ vocabulary:
       Entity A deploys Entity B's product into production use. Weaker than
       acquires — no equity. Direction: A = customer, B = vendor.
     directional: true
+    min_evidence: inferred
+    fallback: drop
     examples:
       - "Mercedes deploys Apptronik Apollo humanoids in Alabama plant"
       - "Amazon deploys 500 Digit units across US fulfillment centers"
@@ -98,6 +123,8 @@ vocabulary:
       Weaker than deploys — pre-production. Direction: A = pilot customer,
       B = vendor being piloted.
     directional: true
+    min_evidence: inferred
+    fallback: drop
     examples:
       - "BMW pilots Figure 02 in Spartanburg plant"
       - "Hyundai pilots Boston Dynamics Atlas in automotive assembly"
@@ -108,6 +135,8 @@ vocabulary:
       Entity A hires key personnel (executive, research lead, engineering
       team) from Entity B. Direction: A = new employer, B = prior employer.
     directional: true
+    min_evidence: inferred
+    fallback: drop
     examples:
       - "Figure hires former Tesla Optimus lead"
       - "1X recruits senior roboticist from Boston Dynamics"
@@ -117,6 +146,8 @@ vocabulary:
       Entity A is spun out of Entity B (academic lab, corporate parent,
       research institute). Direction: A = spinout, B = parent.
     directional: true
+    min_evidence: inferred
+    fallback: drop
     examples:
       - "Physical Intelligence spun out of Stanford"
       - "Cobalt Robotics spun out of Stanford AI lab"
@@ -127,6 +158,8 @@ vocabulary:
       Entity A's product is built on top of Entity B's platform, model,
       or infrastructure. Direction: A = application layer, B = substrate.
     directional: true
+    min_evidence: inferred
+    fallback: drop
     examples:
       - "Figure 02 built on OpenAI foundation models"
       - "Covariant Brain built on NVIDIA Isaac platform"
@@ -136,6 +169,7 @@ vocabulary:
       Entity A publicly benchmarks, compares, or is measured against
       Entity B on a capability, product, or metric. Symmetric.
     directional: false
+    min_evidence: speculative
     examples:
       - "1X Neo benchmarked against Figure 02 in home tasks"
       - "OpenAI o1 benchmarks against Google DeepMind Gemini"
@@ -147,6 +181,8 @@ vocabulary:
       approves, or blocks Entity B's operations/products. Direction: A
       regulates B.
     directional: true
+    min_evidence: inferred
+    fallback: drop
     examples:
       - "FTC investigates Amazon iRobot deal"
       - "EU AI Act regulates foundation-model providers including OpenAI"
@@ -156,6 +192,8 @@ vocabulary:
       Entity A sues, files a complaint against, or is in active legal
       dispute with Entity B. Direction: A = plaintiff (or initiator).
     directional: true
+    min_evidence: inferred
+    fallback: drop
     examples:
       - "Musk litigates against OpenAI over governance"
       - "Apptronik files patent suit against rival humanoid startup"

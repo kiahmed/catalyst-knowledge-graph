@@ -159,13 +159,33 @@ class ExtractionResult:
 # ── Prompt construction ─────────────────────────────────────────────
 
 
+_EVIDENCE_LEVEL = {"speculative": 1, "inferred": 2, "web_grounded": 2, "direct": 3}
+
+
+def evidence_bar(rel_type: str, evidence_type: str, vocab_yaml: dict[str, Any]) -> str | None:
+    """None = the edge meets its type's bar (relationship_vocab.yaml min_evidence).
+    Else the fallback: a weaker type name, or "drop". One rule for every type."""
+    item = next((v for v in vocab_yaml.get("vocabulary", []) if v["name"] == rel_type), None)
+    if not item or not item.get("min_evidence"):
+        return None
+    if _EVIDENCE_LEVEL.get(evidence_type, 1) >= _EVIDENCE_LEVEL.get(item["min_evidence"], 1):
+        return None
+    return item.get("fallback") or "drop"
+
+
 def _format_vocab(vocab_yaml: dict[str, Any]) -> str:
     lines = []
     for item in vocab_yaml.get("vocabulary", []):
         name = item["name"]
         desc = " ".join(item["description"].split())
         direction = "DIRECTIONAL (a→b)" if item.get("directional") else "symmetric"
-        lines.append(f"- **{name}** [{direction}]: {desc}")
+        bar = ""
+        if _EVIDENCE_LEVEL.get(item.get("min_evidence", ""), 1) >= 2:
+            fb = item.get("fallback") or "drop"
+            bar = (" EVIDENCE BAR: a fact claim — needs direct or cited (inferred with source_refs) evidence; "
+                   + (f"if you only have a speculation, use {fb} instead." if fb != "drop"
+                      else "if you only have a speculation, do not emit it."))
+        lines.append(f"- **{name}** [{direction}]: {desc}{bar}")
         for ex in item.get("examples", [])[:1]:
             lines.append(f"    e.g. {ex!r}")
     return "\n".join(lines)
@@ -667,6 +687,7 @@ def extract(entry: dict[str, Any], cfg: RoboticsConfig,
     kept: list[dict[str, Any]] = []
     dropped: list[dict[str, Any]] = []
     flagged: list[dict[str, Any]] = []
+    bar_stats = {"fallback": 0, "dropped": 0}
 
     for rel in parsed.relationships:
         r = rel.model_dump()
@@ -680,6 +701,18 @@ def extract(entry: dict[str, Any], cfg: RoboticsConfig,
             r["_drop_reason"] = "entity_a or entity_b not in entities[]"
             dropped.append(r)
             continue
+        # Evidence bar (relationship_vocab.yaml): a fact claim resting on a
+        # speculation becomes its fallback type, or is dropped.
+        fb = evidence_bar(rel.rel_type, rel.evidence_type, cfg.vocab)
+        if fb == "drop" or (fb and fb not in valid_rel_types):
+            r["_drop_reason"] = f"{rel.rel_type} needs stronger evidence than {rel.evidence_type}"
+            dropped.append(r)
+            bar_stats["dropped"] += 1
+            continue
+        if fb:
+            r["evidence_fallback_from"] = rel.rel_type
+            r["rel_type"] = fb
+            bar_stats["fallback"] += 1
         # Confidence bands.
         if r["confidence"] < drop_t:
             r["_drop_reason"] = f"derived confidence {r['confidence']:.2f} < drop {drop_t}"
@@ -726,7 +759,7 @@ def extract(entry: dict[str, Any], cfg: RoboticsConfig,
         research_sources=citations,
         dropped_low_confidence=dropped,
         flagged_medium_confidence=flagged,
-        enrichment={**enrich_diag, "direction_check": direction_stats},
+        enrichment={**enrich_diag, "direction_check": direction_stats, "evidence_bar": bar_stats},
         raw_response_json=response.text or "",
         context_text=enrich_text or "",
     )
