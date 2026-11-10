@@ -215,6 +215,27 @@ class TestResolve(unittest.TestCase):
                                                                             reason="same"), context=story).entity_id,
                          self.hmg)
 
+    def test_extraction_descriptor_label_is_never_an_entity(self):
+        figure = db.insert_entity(self.con, "Figure", None, "private_company")
+        n0 = self.con.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+        # a descriptor the word gate would miss: it contains a real name
+        r = resolve.resolve_entity(self.con, resolved_name="Startups backed by SoftBank",
+                                   mention="startups backed by SoftBank", ticker=None, type_="organization",
+                                   catalyst_id=self.cid, cfg=CFG, descriptor=True)
+        self.assertEqual((r.entity_id, r.tier), (None, 0))
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM entities").fetchone()[0], n0)
+        # mislabel backstop: an exact existing name stays that entity
+        self.assertEqual(resolve.classify(self.con, "Figure", "Figure", descriptor=True), ("trusted", figure))
+        # but lowercase never matches a company
+        humanoid = db.insert_entity(self.con, "Humanoid", None, "private_company")
+        self.assertEqual(resolve.classify(self.con, "Humanoid", "humanoid", descriptor=True), ("generic", None))
+        self.assertNotEqual(humanoid, None)
+        # descriptor names are never sent to the LLM
+        client = FakeClient([])
+        resolve.decide_entities(self.con, CFG, client, text="x", entities=[
+            {"resolved": "Startups backed by SoftBank", "mention": "startups backed by SoftBank", "kind": "descriptor"}])
+        self.assertEqual(client.calls, [])
+
     def test_named_company_of_common_words_is_not_generic(self):
         self.assertEqual(resolve.classify(self.con, "China Telecom", "China Telecom")[0], "new")
 

@@ -192,6 +192,7 @@ def write_extraction(
                 cfg=cfg,
                 decision=(decisions or {}).get(resolved_name.strip()),
                 context=context,
+                descriptor=e.get("kind") == "descriptor",   # the extraction's own label (2026-11-10)
             )
             if r.entity_id is not None:   # None: a discarded generic phrase — its edges are skipped below
                 name_to_id[resolved_name] = r.entity_id

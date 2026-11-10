@@ -183,7 +183,8 @@ def _match(con: duckdb.DuckDBPyConnection, name: str) -> tuple[int, str] | None:
     return cands[0][0], "unverified"
 
 
-def classify(con: duckdb.DuckDBPyConnection, resolved_name: str, mention: str) -> tuple[str, int | None]:
+def classify(con: duckdb.DuckDBPyConnection, resolved_name: str, mention: str,
+             descriptor: bool = False) -> tuple[str, int | None]:
     """How ingest should place one extracted name, before any write:
     ('trusted', id)  canonical name / trusted alias — no LLM;
     ('generic', None) a descriptor ("Chinese telecom company") — group entity;
@@ -191,6 +192,15 @@ def classify(con: duckdb.DuckDBPyConnection, resolved_name: str, mention: str) -
                      mention to this entity — the LLM must confirm it;
     ('new', None)    no hit — the existing LLM tier decides."""
     resolved_name, mention = (resolved_name or "").strip(), (mention or resolved_name or "").strip()
+    if descriptor:
+        # The extraction labelled it a descriptor. Only an EXACT, case-sensitive
+        # existing name / verified alias overrides that (a model mislabel of
+        # "Figure"); lowercase "humanoid" never matches "Humanoid".
+        row = con.execute("""SELECT entity_id FROM entities WHERE name = ? AND type <> 'group'
+                             UNION ALL SELECT a.entity_id FROM entity_aliases a JOIN entities e USING (entity_id)
+                             WHERE a.alias = ? AND a.verified AND e.type <> 'group' LIMIT 1""",
+                          [mention, mention]).fetchone()
+        return ("trusted", row[0]) if row else ("generic", None)
     rewritten = mention and names.strict_key(mention) != names.strict_key(resolved_name)
     m = _match(con, mention) if rewritten else None
     if m and m[1] in ("name", "alias"):
@@ -254,7 +264,7 @@ def decide_entities(con: duckdb.DuckDBPyConnection, cfg: RoboticsConfig, client:
         name = (e.get("resolved") or e.get("mention") or "").strip()
         if not name or name in todo:
             continue
-        kind, hit = classify(con, name, e.get("mention") or name)
+        kind, hit = classify(con, name, e.get("mention") or name, descriptor=e.get("kind") == "descriptor")
         if kind in ("trusted", "generic"):
             continue
         cands = _candidates(con, name)
@@ -326,6 +336,7 @@ def resolve_entity(
     cfg: RoboticsConfig,
     decision: Decision | None = None,
     context: str | None = None,
+    descriptor: bool = False,
 ) -> ResolveResult:
     """Return an entity_id for this mention, creating/aliasing as needed.
     context = the card's headline + story + research text: a brand-NEW entity is
@@ -333,7 +344,7 @@ def resolve_entity(
     words); otherwise it is discarded and its edges dropped. Matches to existing
     entities are never affected (those are the cross-company "alpha" edges)."""
     resolved_name, mention = resolved_name.strip(), (mention or "").strip()
-    kind, hit = classify(con, resolved_name, mention or resolved_name)
+    kind, hit = classify(con, resolved_name, mention or resolved_name, descriptor=descriptor)
     if kind == "trusted":
         # No alias write: a format variant already matches by strict_key, and an
         # extractor rewrite is not evidence (that's how "China's leading

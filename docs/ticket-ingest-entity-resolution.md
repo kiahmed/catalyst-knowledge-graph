@@ -139,6 +139,17 @@ written) + `resolved` (the LLM's canonical form). For each name:
   competes_with XPeng" (2/2 runs).
 - Next (not built): Pass 3 also judges "type too strong for the evidence".
 
+### 3.9 The extraction labels every entity (2026-11-10)
+- `EntityOut.kind` (required, response schema): `organization` = one specific named org; `descriptor` = a
+  category described in words ("humanoid robots", "startups backed by SoftBank"). The prompt says to prefer the
+  named org behind a descriptor and to omit products/chips/models.
+- `descriptor` → the generic path: a curated group bucket, else discarded. The only override is an EXACT,
+  case-sensitive existing canonical name / verified alias (a model mislabel of "Figure"). It's never sent to the
+  resolution LLM.
+- The §3.2 word gate stays underneath as the safety net. The model decides; code verifies.
+- Live check on ROB-080126-003, ROB-090826-003 and ROB-032926-001 (data/kind_test_*): only named orgs emitted.
+  The descriptors and products those cards used to produce were gone.
+
 ## 4. Cost
 No new LLM calls: unverified-alias names and rewritten mentions ride the existing
 one-call-per-card `decide_entities` request (slightly longer prompts). Name keys and the

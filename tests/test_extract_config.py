@@ -49,6 +49,14 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class TestEntityKind(unittest.TestCase):
+    def test_kind_is_a_required_schema_field(self):
+        f = extract.EntityOut.model_fields["kind"]
+        self.assertTrue(f.is_required())
+        with self.assertRaises(Exception):
+            extract.EntityOut(mention="x", resolved="x", type="organization", kind="product")
+
+
 class TestEvidenceBar(unittest.TestCase):
     """2026-11-09: one vocab-driven rule for every relationship type."""
 

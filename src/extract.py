@@ -55,6 +55,11 @@ class EntityOut(BaseModel):
     resolved: str = Field(description="Canonical form (strip Inc./Corp., expand abbreviations).")
     ticker: str | None = Field(default=None, description="Ticker if publicly traded, else null.")
     type: EntityType
+    kind: Literal["organization", "descriptor"] = Field(
+        description=("organization: ONE specific, named company / government / institution (Figure, China Telecom, "
+                     "Humanoid the startup). descriptor: a category or group described in words, not a name "
+                     "(\"humanoid robots\", \"Chinese logistics companies\", \"startups backed by SoftBank\", "
+                     "\"traditional automotive OEMs\") — descriptors never become entities."))
 
 
 class RelationshipOut(BaseModel):
@@ -248,6 +253,13 @@ Every `rel_type` MUST be one of these exactly:
   Dynamics; standard English casing).
 - Include only companies / governments / organizations that appear
   in at least one emitted edge. No people. No ETFs.
+- `kind`: label EVERY entity. `organization` = one specific named org;
+  `descriptor` = a category or group described in words ("humanoid
+  robots", "companies deploying humanoids", "startups backed by SoftBank").
+  Prefer the named org behind a descriptor: "startups backed by SoftBank"
+  → an edge to SoftBank only if the item supports it; otherwise omit.
+  Products, chips, models and technologies are not organizations — omit
+  them rather than emitting them as entities.
 - `ticker` only for publicly listed equities.
 
 ## Relationship rules
