@@ -35,8 +35,8 @@ _FAMILY = 10          # cap on corporate-family members added as extra candidate
 
 @dataclass
 class ResolveResult:
-    entity_id: int
-    tier: int           # 1 = exact, 2 = LLM same-as, 3 = new/unresolved
+    entity_id: int | None   # None = discarded generic phrase: no entity, its edges are dropped
+    tier: int           # 0 = discarded, 1 = exact, 2 = LLM same-as, 3 = new/unresolved
     matched_name: str   # canonical name the mention resolved to
 
 
@@ -207,32 +207,26 @@ def classify(con: duckdb.DuckDBPyConnection, resolved_name: str, mention: str) -
     return "new", None
 
 
-def group_entity(con: duckdb.DuckDBPyConnection, display: str, mention: str) -> tuple[int, bool]:
-    """One entity per generic phrase (names.loose_key): "leading logistics
-    companies in China" and "Chinese leading logistic company" land on the same
-    one. Reuses a type='group' entity, or a generic-named legacy entity, with
-    the same key; else creates type 'group'. Returns (entity_id, created)."""
+def find_group(con: duckdb.DuckDBPyConnection, display: str, mention: str) -> int | None:
+    """The curated descriptor entity for a generic phrase, if one exists:
+    same names.loose_key as a type='group' entity (or one of its aliases), or a
+    generic-named legacy entity ("leading logistics companies in China" ≈
+    "Chinese leading logistic company"). Never a real company — a lowercase
+    "humanoid" does not match Humanoid. None = no curated bucket → discard."""
     key = names.loose_key(mention or display)
-    rows = con.execute("SELECT entity_id, name, type FROM entities").fetchall()
-    for want_group in (True, False):   # an explicit group wins over a generic-named legacy entity
-        for eid, n, typ in rows:
-            if (typ == "group") == want_group and (want_group or names.is_generic(n)) and names.loose_key(n) == key:
-                return eid, False
+    # 1) curated buckets first — a group's own name, then its aliases
+    for (eid, n) in con.execute("SELECT entity_id, name FROM entities WHERE type = 'group' ORDER BY entity_id").fetchall():
+        if names.loose_key(n) == key:
+            return eid
     for eid, alias in con.execute("""SELECT a.entity_id, a.alias FROM entity_aliases a JOIN entities e USING (entity_id)
-                                     WHERE e.type = 'group'""").fetchall():
+                                     WHERE e.type = 'group' ORDER BY a.entity_id, a.alias_id""").fetchall():
         if names.loose_key(alias) == key:
-            return eid, False
-    # Named after the phrase AS WRITTEN — never the extractor's rewrite target:
-    # "Chinese telecom companies" rewritten to "China Telecom" must not create a
-    # group called "China Telecom" that would then capture the real company.
-    name = (mention or "").strip() if names.is_generic(mention or "") else ""
-    if not name:
-        name = display.strip() if names.is_generic(display) else (mention or display).strip()
-    name = name[:1].upper() + name[1:]
-    if con.execute("SELECT 1 FROM entities WHERE lower(name) = lower(?)", [name]).fetchone():
-        name = f"{name} (group)"
-    eid = db.insert_entity(con, name=name, ticker=None, type_="group")
-    return eid, True
+            return eid
+    # 2) only then a generic-NAMED legacy entity (deterministic: lowest id)
+    for eid, n in con.execute("SELECT entity_id, name FROM entities WHERE type <> 'group' ORDER BY entity_id").fetchall():
+        if names.is_generic(n) and names.loose_key(n) == key:
+            return eid
+    return None
 
 
 def _describe(con: duckdb.DuckDBPyConnection, eid: int) -> str:
@@ -342,14 +336,19 @@ def resolve_entity(
         name, = con.execute("SELECT name FROM entities WHERE entity_id = ?", [hit]).fetchone()
         return ResolveResult(entity_id=hit, tier=1, matched_name=name)
     if kind == "generic":
-        gid, created = group_entity(con, resolved_name, mention or resolved_name)
+        # A descriptor is not an entity. It is tagged only to a descriptor bucket an
+        # admin curated (type 'group'); otherwise discarded — no entity, its edges
+        # dropped — and logged for review. Never matched to a real company.
+        gid = find_group(con, resolved_name, mention or resolved_name)
+        if gid is None:
+            db.insert_unresolved(con, mention=mention or resolved_name, catalyst_id=catalyst_id,
+                                 suggested_name=resolved_name, suggested_type="generic_discarded")
+            log.info("generic_discarded mention=%r resolved=%r", mention, resolved_name)
+            return ResolveResult(entity_id=None, tier=0, matched_name="")
         if mention:
             db.insert_alias(con, gid, mention, verified=True, source="generic")
-        if created:
-            db.insert_unresolved(con, mention=mention or resolved_name, catalyst_id=catalyst_id,
-                                 suggested_name=resolved_name, suggested_type="group")
         name, = con.execute("SELECT name FROM entities WHERE entity_id = ?", [gid]).fetchone()
-        return ResolveResult(entity_id=gid, tier=1 if not created else 3, matched_name=name)
+        return ResolveResult(entity_id=gid, tier=1, matched_name=name)
     if kind == "check" and (decision is None or (decision.same_as is None and not decision.links
                                                  and decision.confidence < cfg.resolution.min_confidence)):
         # LLM failed / unsure / absent: keep today's behavior (the alias match),

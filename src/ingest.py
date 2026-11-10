@@ -173,11 +173,12 @@ def write_extraction(
 
         # Resolve all entities first; build a canonical→id map.
         name_to_id: dict[str, int] = {}
+        discarded: set[str] = set()   # generic phrases already discarded on this card (log them once)
         for e in result.entities:
             resolved_name = e.get("resolved") or e.get("mention") or ""
             if not resolved_name:
                 continue
-            if resolved_name in name_to_id:
+            if resolved_name in name_to_id or resolved_name in discarded:
                 continue
             r = resolve_entity(
                 con,
@@ -189,7 +190,10 @@ def write_extraction(
                 cfg=cfg,
                 decision=(decisions or {}).get(resolved_name.strip()),
             )
-            name_to_id[resolved_name] = r.entity_id
+            if r.entity_id is not None:   # None: a discarded generic phrase — its edges are skipped below
+                name_to_id[resolved_name] = r.entity_id
+            else:
+                discarded.add(resolved_name)
 
         # Insert relationships whose endpoints were resolvable.
         symmetric = direction.symmetric_types()

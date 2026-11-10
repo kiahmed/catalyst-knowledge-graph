@@ -156,29 +156,41 @@ class TestResolve(unittest.TestCase):
         self.assertEqual(r.entity_id, self.hmg)
         self.assertIsNone(self.con.execute("SELECT 1 FROM entity_aliases WHERE alias = 'Hyundai'").fetchone())
 
-    def test_generic_phrases_land_on_one_group_entity_never_on_the_real_one(self):
-        china = db.insert_entity(self.con, "China", None, "government")
-        r1 = self._resolve("China", mention="leading logistics companies in China")
-        r2 = self._resolve("China", mention="Chinese leading logistic company")
-        self.assertEqual(r1.entity_id, r2.entity_id)
-        self.assertNotEqual(r1.entity_id, china)
-        self.assertEqual(self.con.execute("SELECT type FROM entities WHERE entity_id = ?", [r1.entity_id]).fetchone(),
-                         ("group",))
-        self.assertIsNone(self.con.execute("SELECT 1 FROM entity_aliases WHERE entity_id = ?", [china]).fetchone())
+    def test_generic_phrase_without_a_curated_bucket_is_discarded_never_matched(self):
+        humanoid = db.insert_entity(self.con, "Humanoid", None, "private_company")
+        n0 = self.con.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+        r = self._resolve("Humanoid", mention="humanoid")                 # lowercase = the robot category
+        self.assertEqual((r.entity_id, r.tier), (None, 0))
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM entities").fetchone()[0], n0)   # no entity created
+        self.assertIsNone(self.con.execute("SELECT 1 FROM entity_aliases WHERE entity_id = ?", [humanoid]).fetchone())
+        self.assertEqual(self.con.execute("SELECT suggested_type FROM unresolved_entities WHERE mention = 'humanoid'")
+                         .fetchone(), ("generic_discarded",))
+        self.assertEqual(self._resolve("Humanoid").entity_id, humanoid)  # the company itself still resolves
+        # extractor rewrite onto a real company: discarded, the company is never captured
+        r = self._resolve("China Telecom", mention="Chinese telecom companies")
+        self.assertIsNone(r.entity_id)
+        self.assertEqual(resolve.classify(self.con, "China Telecom", "China Telecom")[0], "new")
         client = FakeClient([])
         resolve.decide_entities(self.con, CFG, client, text="x", entities=[
             {"resolved": "China", "mention": "Chinese telecom companies"}])
-        self.assertEqual(client.calls, [])                               # generic: no LLM
+        self.assertEqual(client.calls, [])                               # generic: never sent to the LLM
 
-    def test_group_is_named_after_the_phrase_not_the_rewrite_target(self):
-        # reviewer repro: resolved "China Telecom" / mention "Chinese telecom companies" on a fresh DB
-        r = self._resolve("China Telecom", mention="Chinese telecom companies")
-        name, typ = self.con.execute("SELECT name, type FROM entities WHERE entity_id = ?", [r.entity_id]).fetchone()
-        self.assertEqual((name, typ), ("Chinese telecom companies", "group"))
-        self.assertEqual(resolve.classify(self.con, "China Telecom", "China Telecom")[0], "new")   # not captured
-        r = self._resolve("Venture Capital", mention="venture capital firms")
-        self.assertEqual(self.con.execute("SELECT name FROM entities WHERE entity_id = ?", [r.entity_id]).fetchone(),
-                         ("Venture capital firms",))
+    def test_generic_phrases_tag_to_a_curated_group_bucket(self):
+        china = db.insert_entity(self.con, "China", None, "government")
+        bucket = db.insert_entity(self.con, "Leading logistics companies in China", None, "group")
+        r1 = self._resolve("China", mention="leading logistics companies in China")
+        r2 = self._resolve("China", mention="Chinese leading logistic company")
+        self.assertEqual((r1.entity_id, r2.entity_id), (bucket, bucket))
+        self.assertIsNone(self.con.execute("SELECT 1 FROM entity_aliases WHERE entity_id = ?", [china]).fetchone())
+        self.assertIn(("Chinese leading logistic company", True, "generic"), self.con.execute(
+            "SELECT alias, verified, source FROM entity_aliases WHERE entity_id = ?", [bucket]).fetchall())
+
+    def test_curated_group_alias_beats_a_generic_named_legacy_entity(self):
+        bucket = db.insert_entity(self.con, "Logistics operators", None, "group")
+        db.insert_alias(self.con, bucket, "Chinese logistics companies", verified=True, source="admin")
+        legacy = db.insert_entity(self.con, "Chinese logistics company", None, "organization")
+        self.assertNotEqual(legacy, bucket)
+        self.assertEqual(self._resolve("China", mention="China's logistics companies").entity_id, bucket)
 
     def test_contradicted_legacy_alias_is_flagged_for_review(self):
         self._serve_with_legacy_seer_alias()

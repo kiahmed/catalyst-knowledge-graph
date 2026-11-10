@@ -1,8 +1,7 @@
 # Ticket: ingest-time entity resolution — stop mislabeling at the source
 
 **Owner:** catalyst-knowledge-graph. **Date:** 2026-11-09. **Status:** built 2026-11-09 (§3.1–3.6), pending review;
-migration (§5) not built yet. Defaults taken for §8: (1) generic → one `group` entity per loose key, **no** place
-parent link (parent = ownership); (2) generic/place word lists cover the names in today's data; (3) legacy aliases
+migration (§5) not built yet. Defaults taken for §8: (1) generic → tag to a curated `group` bucket or discard (no new entities; see §3.2); (2) generic/place word lists cover the names in today's data; (3) legacy aliases
 are unverified unless a safe rule passes (format variant, ticker, initials). Rollout (§6) uses
 `make reextract-prod IDS=…` dry runs on known-bad cards instead of 3 log-only days (ingest paused).
 **Severity:** high. It writes wrong entity endpoints into prod every day.
@@ -61,7 +60,12 @@ written) + `resolved` (the LLM's canonical form). For each name:
   logistics, shipping, telecom, automotive, robotics, humanoid, robot, ai, …) or is a place
   token. No proper-noun token remains.
 - Generic names never become aliases of a real entity, and are never sent as `same_as` candidates.
-- **Group entities (recommended; matches the 2026-11-09 decision):** each distinct generic
+- **Product decision (2026-11-09, supersedes the group-entity default below):** a generic phrase is NOT an entity.
+  It is tagged only to a descriptor bucket an admin curated: a type `group` entity, one of its aliases, or a
+  generic-named legacy entity with the same `loose_key`. Otherwise it is **discarded**: no entity is created, its
+  edges are dropped, and it is logged in `unresolved_entities` with `suggested_type='generic_discarded'` for review.
+  It is never matched to a real company: lowercase "humanoid" ≠ Humanoid.
+- **Superseded (not built), kept for the record — auto-created group entities:** each distinct generic
   `loose_key` maps to ONE group entity (type `group`), whose display name is the first
   phrasing seen. When a place token is present, it is auto-linked `subsidiary_of` that
   place's government entity. So "leading logistics companies in China" and "Chinese leading
@@ -137,6 +141,7 @@ generic gate are pure Python.
 - Symmetric write order + order-free dedupe; directional pairs kept.
 
 ## 8. Open decisions (product owner)
-1. Generic descriptors: **group entities, child of the place** (recommended) vs drop the edge.
+1. ~~Generic descriptors: group entities vs drop the edge.~~ **Decided 2026-11-09:** tag to a curated `group`
+   bucket if one matches, else discard (see §3.2).
 2. Demonym/place table scope: start with the countries/regions present in the data.
 3. Legacy alias trust: unverified until checked (recommended) vs verified unless flagged.
