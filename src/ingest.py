@@ -173,7 +173,9 @@ def write_extraction(
 
         # Resolve all entities first; build a canonical→id map.
         name_to_id: dict[str, int] = {}
-        discarded: set[str] = set()   # generic phrases already discarded on this card (log them once)
+        discarded: set[str] = set()   # generic / ungrounded names already discarded on this card (log once)
+        context = " ".join(x for x in (result.headline, entry.get("finding") or "",
+                                       getattr(result, "context_text", "") or "") if x)
         for e in result.entities:
             resolved_name = e.get("resolved") or e.get("mention") or ""
             if not resolved_name:
@@ -189,6 +191,7 @@ def write_extraction(
                 catalyst_id=catalyst_id,
                 cfg=cfg,
                 decision=(decisions or {}).get(resolved_name.strip()),
+                context=context,
             )
             if r.entity_id is not None:   # None: a discarded generic phrase — its edges are skipped below
                 name_to_id[resolved_name] = r.entity_id

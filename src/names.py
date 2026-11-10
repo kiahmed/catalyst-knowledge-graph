@@ -69,6 +69,13 @@ def _words(s: str) -> list[str]:
     return _WORD.findall(s)
 
 
+def mentioned_in(text: str, name: str) -> bool:
+    """Case-insensitive, whole words: does `name` (or its form without a legal
+    suffix, "Tesla Inc." → "Tesla") appear in `text`?"""
+    t = " " + case_key(text) + " "
+    return any(k and f" {k} " in t for k in {case_key(name), strict_key(name)})
+
+
 def case_key(s: str) -> str:
     """Same text ignoring only case, punctuation and spacing (legal suffix kept)."""
     return " ".join(_words(s))

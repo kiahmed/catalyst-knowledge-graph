@@ -150,6 +150,7 @@ class ExtractionResult:
     flagged_medium_confidence: list[dict[str, Any]]
     enrichment: dict[str, Any] = field(default_factory=dict)  # diagnostic: which path, text len, errs
     raw_response_json: str = ""
+    context_text: str = ""   # the article / grounding text the extraction saw (grounding check for new entities)
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
@@ -727,6 +728,7 @@ def extract(entry: dict[str, Any], cfg: RoboticsConfig,
         flagged_medium_confidence=flagged,
         enrichment={**enrich_diag, "direction_check": direction_stats},
         raw_response_json=response.text or "",
+        context_text=enrich_text or "",
     )
 
 

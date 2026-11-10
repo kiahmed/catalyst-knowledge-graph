@@ -111,6 +111,16 @@ written) + `resolved` (the LLM's canonical form). For each name:
   keys symmetric types order-free, per card only. Directional types and cross-card
   edges are untouched.
 
+### 3.7 New entities must be named in the card's own text (2026-11-09)
+- A brand-NEW entity (tier 3, including a contradicted legacy alias) is created only if its resolved name or
+  mention appears, case-insensitive and as whole words (also without a legal suffix: "Tesla Inc." → "Tesla"), in
+  the card's headline + story + the research text the extraction saw (`ExtractionResult.context_text`).
+- Otherwise there's no entity and its edges are dropped. It's logged as `suggested_type='ungrounded_discarded'`.
+  This stops speculation-only names ("Traditional Automotive OEMs") from becoming entities.
+- Matches to EXISTING entities (names, aliases, LLM same_as) are never affected. Inferred/speculative edges between
+  known companies stay, labeled by `evidence_type`, for consumers to filter.
+- Deterministic string match, no extra LLM call.
+
 ## 4. Cost
 No new LLM calls: unverified-alias names and rewritten mentions ride the existing
 one-call-per-card `decide_entities` request (slightly longer prompts). Name keys and the

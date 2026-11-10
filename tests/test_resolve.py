@@ -49,9 +49,10 @@ class TestResolve(unittest.TestCase):
     def tearDown(self):
         self.con.close()
 
-    def _resolve(self, name, decision=None, mention=None):
+    def _resolve(self, name, decision=None, mention=None, context=None):
         return resolve.resolve_entity(self.con, resolved_name=name, mention=mention or name, ticker=None,
-                                      type_="public_company", catalyst_id=self.cid, cfg=CFG, decision=decision)
+                                      type_="public_company", catalyst_id=self.cid, cfg=CFG, decision=decision,
+                                      context=context)
 
     def test_lookalike_without_llm_verdict_is_new_not_merged(self):
         # The real bug: the old fuzzy tier scored "NIO" vs "European Union" above
@@ -198,6 +199,21 @@ class TestResolve(unittest.TestCase):
         out = resolve.decide_entities(self.con, CFG, client, text="SEER Robotics demo",
                                       entities=[{"resolved": "SEER Robotics", "mention": "SEER Robotics"}])
         self.assertTrue(any("Serve Robotics" in r for r in out["SEER Robotics"].review))
+
+    def test_new_entity_only_when_named_in_the_cards_text(self):
+        story = "XPeng pivots to a Physical AI company with its own chips."
+        r = self._resolve("Traditional Automotive OEMs", context=story)       # only a speculation names it
+        self.assertEqual((r.entity_id, r.tier), (None, 0))
+        self.assertIsNone(self.con.execute("SELECT 1 FROM entities WHERE name = 'Traditional Automotive OEMs'").fetchone())
+        self.assertEqual(self.con.execute("SELECT suggested_type FROM unresolved_entities").fetchone(),
+                         ("ungrounded_discarded",))
+        r = self._resolve("XPeng Inc.", mention="Xpeng", context=story)        # case-insensitive, legal suffix ok
+        self.assertEqual(r.tier, 3)
+        # an EXISTING entity is kept even when the story never names it (the cross-company edges)
+        self.assertEqual(self._resolve("Boston Dynamics", context=story).entity_id, self.bd)
+        self.assertEqual(self._resolve("Hyundai Motor Co", resolve.Decision(same_as=self.hmg, confidence=0.95,
+                                                                            reason="same"), context=story).entity_id,
+                         self.hmg)
 
     def test_named_company_of_common_words_is_not_generic(self):
         self.assertEqual(resolve.classify(self.con, "China Telecom", "China Telecom")[0], "new")

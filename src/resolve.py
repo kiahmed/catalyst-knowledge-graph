@@ -325,8 +325,13 @@ def resolve_entity(
     catalyst_id: int,
     cfg: RoboticsConfig,
     decision: Decision | None = None,
+    context: str | None = None,
 ) -> ResolveResult:
-    """Return an entity_id for this mention, creating/aliasing as needed."""
+    """Return an entity_id for this mention, creating/aliasing as needed.
+    context = the card's headline + story + research text: a brand-NEW entity is
+    created only if its name or mention appears there (case-insensitive, whole
+    words); otherwise it is discarded and its edges dropped. Matches to existing
+    entities are never affected (those are the cross-company "alpha" edges)."""
     resolved_name, mention = resolved_name.strip(), (mention or "").strip()
     kind, hit = classify(con, resolved_name, mention or resolved_name)
     if kind == "trusted":
@@ -368,6 +373,12 @@ def resolve_entity(
     # record any corporate links the LLM was sure of.
     if kind == "check":   # the LLM said this is NOT the legacy alias's entity
         log.info("unverified_alias_contradicted name=%r was_entity_id=%s", resolved_name, hit)
+    if context is not None and not any(names.mentioned_in(context, n) for n in {resolved_name, mention} if n):
+        # Only an inference/speculation names it (e.g. "Traditional Automotive OEMs"): no new entity.
+        db.insert_unresolved(con, mention=mention or resolved_name, catalyst_id=catalyst_id,
+                             suggested_name=resolved_name, suggested_type="ungrounded_discarded")
+        log.info("ungrounded_discarded mention=%r resolved=%r", mention, resolved_name)
+        return ResolveResult(entity_id=None, tier=0, matched_name="")
     if con.execute("SELECT 1 FROM entities WHERE lower(name) = lower(?)", [resolved_name]).fetchone():
         resolved_name = mention or resolved_name   # canonical form taken by the entity it is NOT
     new_id = db.insert_entity(con, name=resolved_name, ticker=ticker, type_=type_)

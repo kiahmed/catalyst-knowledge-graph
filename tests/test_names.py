@@ -44,6 +44,14 @@ class TestGeneric(unittest.TestCase):
         wrong = {n: e for n, e in self.CASES.items() if names.is_generic(n) != e}
         self.assertEqual(wrong, {})
 
+    def test_mentioned_in_is_case_insensitive_whole_words(self):
+        t = "XPeng unveils Turing chips; tesla shares fell."
+        self.assertTrue(names.mentioned_in(t, "Tesla"))
+        self.assertTrue(names.mentioned_in(t, "Tesla, Inc."))
+        self.assertTrue(names.mentioned_in(t, "xpeng"))
+        self.assertFalse(names.mentioned_in(t, "NVIDIA"))
+        self.assertFalse(names.mentioned_in("Physical Intelligence raises", "Intel"))
+
     def test_place_of(self):
         self.assertEqual(names.place_of("Chinese telecom company"), "china")
         self.assertIsNone(names.place_of("Customers"))
