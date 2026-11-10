@@ -32,6 +32,10 @@ class TestGeneric(unittest.TestCase):
         "Chinese telecom company": True, "leading logistics companies in China": True, "Customers": True,
         "Humanoid robots": True, "humanoid robot makers": True, "Gulf investors": True, "Physical AI Sector": True,
         "Robotics Manufacturers": True, "European robotics companies": True, "Embodied AI Companies": True,
+        "Companies deploying humanoid robots": True, "Companies Deploying Humanoid Robots": True,
+        "companies deploying humanoid robot": True, "Startups building humanoid robots": True,
+        "VC-backed robotics startups": True, "Applied Intuition": False, "Advanced Robotics": False,
+        "Kindred Ventures": False, "Traditional Staffing Agencies": True,
         # named organizations made of common words — casing / singular keeps them names
         "China Telecom": False, "Humanoid": False, "Bank of China": False, "Venture Capital": False,
         "Field AI": False, "Space AI": False, "US Venture Partners": False, "Physical Intelligence": False,

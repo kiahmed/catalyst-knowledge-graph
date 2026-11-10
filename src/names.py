@@ -126,7 +126,16 @@ def is_generic(s: str) -> bool:
         return False
     norm = [(w, _PLACE.get(lw, _singular(lw)) if lw in _PLACE else _singular(lw), lw) for w, lw in words]
     norm = [(w, n, lw) for w, n, lw in norm if n]       # "south", "united" fold into their place word
-    if not norm or not all(n in _GENERIC or n in PLACES for _w, n, _lw in norm):
+    # -ing / -ed verbs ("deploying", "using", "backed") are filler inside a
+    # descriptor; they make a phrase generic only together with a real generic
+    # noun that is lowercase or plural (checked below) — "Applied Intuition" and
+    # "Advanced Robotics" stay names.
+    # It must be written lowercase or not lead the phrase: a Title-Case first
+    # word is likely a name ("Kindred Ventures", "Sterling Robotics").
+    def participle(i: int, w: str, lw: str) -> bool:
+        return len(lw) > 4 and lw.endswith(("ing", "ed")) and (w == lw or i > 0)
+
+    if not norm or not all(n in _GENERIC or n in PLACES or participle(i, w, lw) for i, (w, n, lw) in enumerate(norm)):
         return False
     if any(lw in _GOVERNMENT or n in _GOVERNMENT for _w, n, lw in norm):   # "Local Governments" too
         return False
