@@ -32,7 +32,7 @@ from typing import Any
 import duckdb
 from flask import Flask, jsonify, request
 
-from src import admin_ops, duckdb_sync, firestore_export
+from src import admin_ops, duckdb_sync, firestore_export, review
 from src.config import load_config
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -346,7 +346,97 @@ def me(who):
 @app.get("/admin/api/status")
 @_guard
 def status(_who):
-    return jsonify({"ok": True, **_backend_status()})
+    try:
+        n = review.count_open(_firestore())
+    except Exception as exc:  # noqa: BLE001
+        n, _ = None, _log("review_count_failed", error=str(exc))
+    return jsonify({"ok": True, **_backend_status(), "review_open": n})
+
+
+@app.get("/admin/api/review")
+@_guard
+def review_list(_who):
+    items = review.list_open(_firestore())
+    rels = [int(i["rel_id"]) for i in items if i.get("rel_id") is not None]
+    if rels:   # relationship items: name the edge and the entity to open
+        con = _read_con()
+        try:
+            rows = {r[0]: r[1:] for r in con.execute(f"""SELECT r.rel_id, ea.name, r.rel_type, eb.name FROM relationships r
+                JOIN entities ea ON ea.entity_id = r.entity_a_id JOIN entities eb ON eb.entity_id = r.entity_b_id
+                WHERE r.rel_id IN ({','.join('?' * len(rels))})""", rels).fetchall()}
+        finally:
+            con.close()
+        for i in items:
+            r = rows.get(int(i["rel_id"])) if i.get("rel_id") is not None else None
+            if r:
+                i["open_entity"], i["edge"] = r[0], f"{r[0]} —{r[1]}→ {r[2]}"
+    for i in items:
+        if "open_entity" not in i and str(i.get("kind", "")).startswith("entity_"):
+            i["open_entity"] = i.get("entity") or str(i.get("doc_id") or "").split("~", 1)[0]
+    return jsonify({"ok": True, "items": items, "count": len(items)})
+
+
+@app.post("/admin/api/review/resolve")
+@_guard
+def review_resolve(who):
+    body = request.get_json(silent=True) or {}
+    ids = body.get("ids") or []
+    if not isinstance(ids, list) or not ids:
+        return jsonify({"ok": False, "error": "ids must be a non-empty list"}), 400
+    n = review.resolve(_firestore(), ids, by=who[0], resolution=str(body.get("resolution") or "reviewed"))
+    _log("review_resolved", n=n, by=who[0])
+    return jsonify({"ok": True, "resolved": n})
+
+
+_JOINS = {"merge": [("src_id", "dst_id")], "spin_in_many": [], "link": [("child_id", "parent_id")]}   # ops that JOIN two entities
+
+
+def _auto_resolve(op: str, payload: dict, result: dict, who) -> int:
+    """An admin save on an item settles its open review entries (best effort)."""
+    try:
+        con = _read_con()
+        try:
+            ids = [payload.get(k) for k in ("entity_id", "from_entity_id", "to_entity_id", "src_id", "dst_id",
+                                            "child_id", "parent_id", "into_entity_id")]
+            ids += list(payload.get("child_ids") or [])
+            ids = [i for i in ids if isinstance(i, int)]
+            names = [n for (n,) in con.execute(
+                f"SELECT name FROM entities WHERE entity_id IN ({','.join('?' * len(ids))})", ids).fetchall()] if ids else []
+        finally:
+            con.close()
+        before = result.get("before") or {}
+        for key in ("name", "src"):            # renamed / merged-away entities: match their old name too
+            if isinstance(before.get(key), str):
+                names.append(before[key])
+        rel_ids = [payload.get("rel_id")] + list(payload.get("rel_ids") or [])
+        nm = {}
+        con2 = _read_con()
+        try:
+            for i in ids:
+                row = con2.execute("SELECT name FROM entities WHERE entity_id = ?", [i]).fetchone()
+                if row:
+                    nm[i] = row[0]
+        finally:
+            con2.close()
+        if isinstance(before.get("src"), str) and isinstance(payload.get("src_id"), int):
+            nm[payload["src_id"]] = before["src"]          # merged away: only its old name is left
+        # Only ops that join two entities settle an audit merge / link item (never unlink, never repoint).
+        joins = [(nm.get(payload.get(x)), nm.get(payload.get(y))) for x, y in _JOINS.get(op, [])]
+        if op == "spin_in_many" and isinstance(payload.get("into_entity_id"), int):
+            joins += [(nm.get(c), nm.get(payload["into_entity_id"])) for c in payload.get("child_ids") or []]
+        alias = payload.get("alias")
+        aliases = [(n, alias) for n in names] if alias else []
+        for a in payload.get("aliases") or []:
+            aliases += [(n, a) for n in names]
+        fs = _firestore()
+        hit = review.matching(review.list_open(fs), rel_ids=[r for r in rel_ids if r is not None],
+                              entity_names=names, aliases=aliases, entity_pairs=[j for j in joins if all(j)])
+        edit_ids = result.get("edit_ids") or [e for e in str(result.get("edit_id") or "").split(",") if e]
+        return review.resolve(fs, hit, by=who[0], resolution=f"{review.SETTLED_BY}{result.get('edit_id')}",
+                              edit_ids=edit_ids) if hit else 0
+    except Exception as exc:  # noqa: BLE001 — never fail a saved edit over the inbox
+        _log("review_auto_resolve_failed", error=str(exc))
+        return 0
 
 
 @app.get("/admin/api/entities")
@@ -375,9 +465,31 @@ def card(_who, entry_id):
 def entity(_who, eid):
     con = _read_con()
     try:
-        return jsonify({"ok": True, **admin_ops.entity_detail(con, eid)})
+        d = admin_ops.entity_detail(con, eid)
     finally:
         con.close()
+    # open review items about this entity, its aliases and its relationships
+    try:
+        items = review.list_open(_firestore())
+    except Exception as exc:  # noqa: BLE001 — the editor still works without the inbox
+        items, _ = [], _log("review_list_failed", error=str(exc))
+    name = d["name"].lower()
+    by_rel = {int(i["rel_id"]): i for i in items if i.get("rel_id") is not None}
+    for r in d["relationships"]:
+        it = by_rel.get(r["rel_id"])
+        r["review"] = {"id": it["id"], "reason": it.get("reason"), "path": it.get("path") or []} if it else None
+    for a in d["aliases"]:
+        it = next((i for i in items if str(i.get("entity") or "").lower() == name
+                   and str(i.get("other") or "").lower() == a["alias"].lower()), None)
+        a["review"] = {"id": it["id"], "reason": it.get("reason"), "path": it.get("path") or []} if it else None
+    # entity-level items (alias items are on their alias row): ingest-unsure about this entity, and audit
+    # merge / link claims that involve it on either side
+    d["review"] = [{"id": i["id"], "kind": i.get("kind"), "reason": i.get("reason"), "path": i.get("path") or []}
+                   for i in items
+                   if str(i.get("kind", "")).startswith("entity_") and i.get("kind") != "entity_wrong_alias"
+                   and name in {(str(i.get("entity") or "") or str(i.get("doc_id") or "").split("~", 1)[0]).lower(),
+                                str(i.get("other") or "").lower()}]
+    return jsonify({"ok": True, **d})
 
 
 @app.get("/admin/api/scan")
@@ -429,6 +541,8 @@ def edit(who):
     if busy["running"]:
         body_out["warning"] = ("Saved while " + ", ".join(r["what"] for r in busy["running"]) + " was running — "
                                "recheck this record after it finishes.")
+    if code == 200:
+        body_out["review_resolved"] = _auto_resolve(op, payload, body_out, who)
     return jsonify(body_out), code
 
 
@@ -438,6 +552,11 @@ def revert(who):
     edit_id = (request.get_json(silent=True) or {}).get("edit_id")
     body_out, status = _write(lambda con: admin_ops.revert_edit(con, edit_id, email=who[0], ip=who[1],
                                                                 vocab=_vocab()))
+    if status == 200:
+        try:
+            body_out["review_reopened"] = review.reopen_for_edits(_firestore(), [edit_id])
+        except Exception as exc:  # noqa: BLE001
+            _log("review_reopen_failed", error=str(exc))
     return jsonify(body_out), status
 
 

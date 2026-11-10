@@ -125,7 +125,11 @@ def process_feed(cfg: RoboticsConfig, fs_client: Any) -> dict[str, Any]:
                                    f"Arboryx deleted {target} as a duplicate of {matched}, but CKG has no "
                                    f"card for {matched}. Our {target} card was kept; decide whether to remove it.",
                                    matched_id=matched, run_id=run_id, category=cfg.sector,
-                                   dedup_reason=r.get("reason"))
+                                   dedup_reason=r.get("reason"),
+                                   path=[f"1. Arboryx dedup run {run_id} deleted {target} as a duplicate of {matched}",
+                                         f"2. Arboryx reason: {r.get('reason') or '—'}",
+                                         f"3. CKG has a card for {target} but none for {matched} → can't merge into it",
+                                         f"4. Kept {target} → needs a human"])
                     summary["attention"].append(target)
                 con.execute("INSERT INTO upstream_merges (target_id, matched_id, run_id, action) VALUES (?, ?, ?, ?)",
                             [target, matched, run_id, action])
@@ -159,5 +163,8 @@ def flag_unexpected(fs_client: Any, upstream_deleted: list[str], cfg: RoboticsCo
         con.close()
     return sum(flag_attention(fs_client, eid, "upstream_deleted_unexpected",
                               f"Arboryx findings/{eid} no longer exists and no dedup_runs row explains it. "
-                              f"CKG kept its card; decide whether it should be removed.", category=cfg.sector)
+                              f"CKG kept its card; decide whether it should be removed.", category=cfg.sector,
+                              path=[f"1. Integrity check: Arboryx findings/{eid} is gone upstream",
+                                    "2. No dedup_runs row explains the deletion",
+                                    f"3. CKG kept its card {eid} → needs a human"])
                for eid in upstream_deleted if eid not in known)

@@ -152,11 +152,13 @@ def apply_to_extraction(kept: list[dict[str, Any]], verdicts: dict[int, Directio
             continue
         r = kept[kept_i]
         r["direction_statement"] = v.statement
+        r["direction_reason"] = v.reason
         if v.verdict == "flip":
             r["entity_a"], r["entity_b"] = r["entity_b"], r["entity_a"]
             stats["flipped"] += 1
         elif v.verdict == "unclear":
             stats["unclear"] += 1
+            r["direction_unclear"] = True       # → review queue once written (ingest.flag_unclear_directions)
     stats["deduped"] = dedupe_kept(kept)
     return stats
 

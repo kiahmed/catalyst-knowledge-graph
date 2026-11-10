@@ -63,6 +63,9 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
 .modal table { width: 100%; border-collapse: collapse; margin: 10px 0; }
 .modal td, .modal th { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
 .gate { padding: 40px; text-align: center; color: var(--text-secondary); }
+.pill { border-radius: 999px; }
+.pill.has { background: #b45309; color: #fff; border-color: #b45309; }
+.tag.rev { background: #b45309; color: #fff; }
 </style>
 </head>
 <body>
@@ -70,6 +73,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
   <h1>Robotics data admin</h1>
   <button id="btnScan" title="Rule-based scan, no LLM, free">Scan suspects</button>
   <button id="btnLog">Edit log</button>
+  <button id="btnReview" class="pill" title="Items the system couldn't decide — a human (or an LLM pass) must">Review …</button>
   <span class="who" id="who">Signing in…</span>
 </header>
 <div id="banner"></div>
@@ -177,6 +181,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
     try { await reloadAll(focusId); } finally { busy(false); }
   }
   async function reloadAll(focusId) {
+    refreshStatus();   // review count may have changed (an edit settles its review items)
     const relId = S.rel && S.rel.rel_id, id = focusId || (S.entity && S.entity.id);
     await loadEntities();
     if (!id) return;
@@ -193,6 +198,9 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
     if (!e) return;
     S.selA = S.selA || new Set(); S.selC = S.selC || new Set();
     p.append(el('p', {}, el('b', {}, e.name), ' ', el('span', { class: 'kv' }, `${e.type}${e.ticker ? ' · ' + e.ticker : ''} · id ${e.id}`)));
+    (e.review || []).forEach(rv => { const [why, whyBox] = whyToggle(rv); p.append(el('div', { class: 'item' },
+      el('span', { class: 'tag rev' }, 'review'), el('span', { class: 'kv', style: 'flex:1' }, rv.reason || rv.kind),
+      why, el('button', { onclick: () => markReviewed([rv.id]) }, 'reviewed')), whyBox); });
     const bulk = el('div', { class: 'tools', style: 'padding:4px 0 8px' },
       el('button', { id: 'btnSpinOutMany', onclick: spinOutMany,
                      title: 'Each ticked alias becomes its own entity, taking the relationships that reached ' + e.name + ' only through it' }, 'Spin out aliases'),
@@ -212,6 +220,8 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
         `only via: ${a.via_rel_ids.length}`) : '',
       a.bare_brand ? el('span', { class: 'tag warn', title: 'One brand word for a longer name — may mean the parent/sister' }, 'brand') : '',
       a.also_on.length ? el('span', { class: 'tag bad', title: 'Also an alias of: ' + a.also_on.join(', ') }, 'shared') : '',
+      a.review ? el('span', { class: 'tag rev', title: a.review.reason || 'needs review' }, 'review') : '',
+      a.review ? el('button', { title: 'Mark this alias reviewed', onclick: ev => { ev.stopPropagation(); markReviewed([a.review.id]); } }, 'reviewed') : '',
       el('span', { class: 'meta' },
         el('button', { title: 'Make this alias its own entity, taking the checked relationships with it', onclick: () => spinOut(a.alias) }, 'spin out'), ' ',
         el('button', { title: 'Move to another entity', onclick: () => moveAlias(a.alias) }, 'move'), ' ',
@@ -296,6 +306,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
         el('span', {}, `${r.a.name} —${r.rel_type}→ ${r.b.name}`),
         r.status !== 'active' ? el('span', { class: 'tag bad' }, r.status) : '',
         r.named_in_card ? '' : el('span', { class: 'tag warn', title: `"${S.entity.name}" not named in this card (only via an alias / inference)` }, 'not named'),
+        r.review ? el('span', { class: 'tag rev', title: r.review.reason || 'needs review' }, 'review') : '',
         el('span', { class: 'meta' }, `${r.evidence} · ${r.date || ''}`)));
     });
     syncChecked();
@@ -341,6 +352,8 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
     p.append(el('p', {}, el('b', {}, `${r.a.name} —${r.rel_type}→ ${r.b.name}`)),
       el('p', { class: 'kv' }, `rel ${r.rel_id} · ${r.evidence} · confidence ${Number(r.confidence).toFixed(2)} · ${r.status} · card `,
         el('a', { href: '/#card-' + r.entry_id, target: '_blank' }, r.entry_id), ` · ${r.date || ''}`),
+      r.review ? el('div', { style: 'border:1px solid #b45309;border-radius:6px;padding:6px 8px;margin:6px 0' },
+        el('b', {}, 'Why it needs review'), trail(r.review)) : '',
       el('h3', {}, 'Story'), el('p', {}, el('b', {}, r.headline)), el('p', {}, r.finding || ''),
       el('h3', {}, 'Mechanism'), el('p', {}, r.mechanism || '—'),
       el('h3', {}, 'Entities in this card'), el('div', { id: 'cardChips', class: 'kv', 'data-mode': editing ? 'edit' : 'view' }, 'loading…'));
@@ -348,6 +361,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
     if (!editing) {
       p.append(el('div', { class: 'tools', style: 'padding:0' },
         el('button', { class: 'primary', onclick: () => renderRel(true) }, 'Edit'),
+        r.review ? el('button', { title: r.review.reason || '', onclick: () => markReviewed([r.review.id]) }, 'Reviewed') : '',
         r.status !== 'rejected' ? el('button', { class: 'danger', title: 'Hide this relationship everywhere (status rejected; revertible)',
           onclick: async () => {
             if (!confirm(`Reject ${r.a.name} —${r.rel_type}→ ${r.b.name}?`)) return;
@@ -521,6 +535,71 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
       $('modal').style.display = 'flex'; renderEntities();
     } catch (e) { toast(e.message, true); }
   });
+  // ── Review queue ──────────────────────────────────────────────
+  const REVIEW_KIND = {
+    entity_ingest_unsure: 'Entity matching (ingest was unsure)', direction_unclear: 'Relationship direction unclear',
+    entity_merge: 'Entity audit: merge', entity_subsidiary_of: 'Entity audit: parent link', entity_sister_of: 'Entity audit: sister link',
+    entity_wrong_alias: 'Entity audit: alias',
+    dedup_matched_missing: 'Arboryx dedup', upstream_deleted_unexpected: 'Arboryx: finding deleted unexpectedly',
+  };
+  // The decision trail recorded when the item was flagged (older items: the reason only).
+  function trail(item) {
+    const steps = (item.path && item.path.length) ? item.path : [item.reason || 'No trail recorded (flagged before 2026-11-10).'];
+    return el('ol', { class: 'kv', style: 'margin:4px 0 6px 18px;padding:0' }, ...steps.map(s => el('li', {}, String(s).replace(/^\d+\.\s*/, ''))));
+  }
+  function whyToggle(item) {
+    const box = el('div', { style: 'display:none' }, trail(item));
+    const btn = el('button', { title: 'How it got here', onclick: ev => { ev.stopPropagation();
+      box.style.display = box.style.display === 'none' ? 'block' : 'none'; } }, 'why?');
+    return [btn, box];
+  }
+  function setReviewCount(n) {
+    const b = $('btnReview'); if (n === null || n === undefined) { b.textContent = 'Review ?'; return; }
+    b.textContent = `Review ${n}`; b.classList.toggle('has', n > 0);
+  }
+  async function markReviewed(ids, resolution) {
+    if (!ids.length) return;
+    try {
+      const d = await api('/review/resolve', { ids, resolution: resolution || 'reviewed in admin' });
+      toast(`Marked ${d.resolved} reviewed`); refreshStatus(); afterEdit();
+    } catch (e) { toast(e.message, true); }
+  }
+  $('btnReview').addEventListener('click', async () => {
+    let d; try { d = await api('/review'); } catch (e) { return toast(e.message, true); }
+    setReviewCount(d.count);
+    const box = $('modalBox'); box.replaceChildren(el('h3', {}, `Needs review (${d.count})`));
+    if (!d.items.length) box.append(el('p', { class: 'kv' }, 'Nothing to review.'));
+    const groups = {};
+    d.items.forEach(i => (groups[i.kind] = groups[i.kind] || []).push(i));
+    Object.entries(groups).forEach(([kind, items]) => {
+      const picked = new Set();
+      const btn = el('button', { class: 'primary', disabled: true }, 'Mark reviewed');
+      const sync = () => { btn.disabled = !picked.size; btn.textContent = picked.size ? `Mark ${picked.size} reviewed` : 'Mark reviewed'; };
+      const all = el('input', { type: 'checkbox', title: 'Select all in this category', onclick: ev => {
+        items.forEach(i => ev.target.checked ? picked.add(i.id) : picked.delete(i.id));
+        box.querySelectorAll(`input[data-kind="${kind}"]`).forEach(c => { c.checked = ev.target.checked; }); sync(); } });
+      btn.addEventListener('click', async () => { $('modal').style.display = 'none'; await markReviewed([...picked]); });
+      box.append(el('h3', {}, all, ' ', `${REVIEW_KIND[kind] || kind} (${items.length})`, ' ', btn));
+      items.forEach(i => {
+        const subject = i.edge || i.entity || String(i.doc_id || '').split('~')[0];
+        const openName = i.open_entity;
+        const [why, whyBox] = whyToggle(i);
+        box.append(el('div', { class: 'item' },
+          el('input', { type: 'checkbox', 'data-kind': kind, onclick: ev => { ev.target.checked ? picked.add(i.id) : picked.delete(i.id); sync(); } }),
+          el('span', { style: 'flex:1' }, el('b', {}, subject + (i.other ? ' · ' + i.other : '')), ' ',
+             el('span', { class: 'kv' }, (i.reason || '').slice(0, 220))),
+          i.entry_id ? el('a', { href: '/#card-' + i.entry_id, target: '_blank', class: 'kv' }, i.entry_id) : '',
+          openName ? el('button', { title: 'Open in the editor', onclick: async () => {
+            $('modal').style.display = 'none';
+            const r = await api('/entities?limit=200&q=' + encodeURIComponent(openName));
+            const hit = r.entities.find(x => x.name.toLowerCase() === openName.toLowerCase());
+            if (hit) { $('q').value = hit.name; await loadEntities(); selectEntity(hit.id); } else toast(`Entity "${openName}" not found`, true);
+          } }, 'open') : '', why), whyBox);
+      });
+    });
+    $('modal').style.display = 'flex';
+  });
+
   $('btnLog').addEventListener('click', async () => {
     try {
       const d = await api('/edits');
@@ -545,6 +624,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
   S.status = { running: [], soon: [] };
   async function refreshStatus() {
     try { S.status = await api('/status'); } catch (e) { S.status = { running: [], soon: [], errors: [e.message] }; }
+    setReviewCount(S.status.review_open);
     const b = $('banner'), r = S.status.running || [], soon = S.status.soon || [];
     if (r.length) {
       b.className = 'bad';

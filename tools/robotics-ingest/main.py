@@ -256,6 +256,11 @@ def run_ingest(request: Request):
             _log("duckdb_push_failed", error=str(exc), error_type=type(exc).__name__)
             duckdb_push_summary = {"error": str(exc)}
 
+        # Review flags that point at new rel_ids only once those ids are durable.
+        if duckdb_push_summary.get("pushed") or duckdb_push_summary.get("reason") == "local_mode":
+            from src.ingest import flag_pending_reviews  # noqa: PLC0415
+            flag_pending_reviews(cfg, ingest_result.pending_review)
+
         publish_summary = _publish_ingest_done(cfg.sector, ingest_result.entries_written)
 
     payload = {

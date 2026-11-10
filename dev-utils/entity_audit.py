@@ -275,7 +275,13 @@ def main() -> int:
                            f"Entity audit is unsure: {r['entity']} {r['claim'].replace('_', ' ')} {r['other']} "
                            f"(confidence {r['confidence']:.2f}). {r['reason']} "
                            f"If correct, apply with make entity-merge / entity-link.",
-                           entity=r["entity"], other=r["other"], confidence=r["confidence"], category=cfg.sector)
+                           entity=r["entity"], other=r["other"], confidence=r["confidence"], category=cfg.sector,
+                           path=[f"1. Entity audit (LLM judge over name groups / aliases) claimed: {r['entity']} "
+                                 f"{r['claim'].replace('_', ' ')} {r['other']}",
+                                 f"2. Confidence {r['confidence']:.2f} — below the apply bar "
+                                 f"(merge ≥ {args.min_merge}, link / alias drop ≥ {args.min_link})",
+                                 f"3. Judge reason: {r['reason']}",
+                                 "4. Not applied → needs a human"])
     con.execute("CHECKPOINT")
     con.close()
     print(json.dumps({"merges": len(final), "links": len(p["links"]), "alias_drops": len(p["alias_drops"]),

@@ -54,7 +54,8 @@ class TestApply(unittest.TestCase):
         self.assertEqual(stats["deduped"], 1)
         self.assertEqual(kept, [{"entity_a": "Hyundai Motor Group", "rel_type": "deploys",
                                  "entity_b": "Boston Dynamics", "confidence": 0.8,
-                                 "direction_statement": "Hyundai deploys Atlas"}])
+                                 "direction_statement": "Hyundai deploys Atlas",
+                                 "direction_reason": "per the item text"}])     # kept for the review trail
 
     def test_only_directional_types_are_rules(self):
         vocab = {"vocabulary": [{"name": "deploys", "description": "A = customer", "directional": True},

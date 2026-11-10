@@ -48,6 +48,7 @@ class Decision:
     confidence: float = 0.0
     reason: str = ""
     review: list[str] = field(default_factory=list)              # unsure claims → admin entry
+    path: list[str] = field(default_factory=list)                # decision trail shown with a review item
 
 
 class NameDecision(BaseModel):
@@ -260,11 +261,16 @@ def decide_entities(con: duckdb.DuckDBPyConnection, cfg: RoboticsConfig, client:
 
     todo: dict[str, list[tuple[int, str]]] = {}
     checks: dict[str, int] = {}          # name → entity its legacy alias / rewrite pointed at
+    looked: dict[str, str] = {}          # name → what the deterministic lookup found (decision trail)
     for e in entities:
         name = (e.get("resolved") or e.get("mention") or "").strip()
         if not name or name in todo:
             continue
         kind, hit = classify(con, name, e.get("mention") or name, descriptor=e.get("kind") == "descriptor")
+        hit_name = con.execute("SELECT name FROM entities WHERE entity_id = ?", [hit]).fetchone()[0] if hit else None
+        looked[name] = ({"check": f"matched only via an unverified alias / the extractor's rewrite → {hit_name!r}",
+                         "new": "no exact name or trusted alias match"}.get(kind, kind)
+                        + (f" (mention {e.get('mention')!r})" if e.get("mention") and e.get("mention") != name else ""))
         if kind in ("trusted", "generic"):
             continue
         cands = _candidates(con, name)
@@ -316,6 +322,12 @@ def decide_entities(con: duckdb.DuckDBPyConnection, cfg: RoboticsConfig, client:
                 dec.links.append((cands[other], kind))
         if dec.same_as is not None:
             dec.links = []          # a same-as name gets no structure of its own
+        dec.path = [f"1. Name lookup (exact / name key / aliases): {looked.get(d.name, '?')}",
+                    f"2. Candidates shown to the LLM: {', '.join(cands) or 'none'}",
+                    f"3. LLM ({model}, thinking {cfg.extraction.direction_thinking_level}): same_as={d.same_as!r}, "
+                    f"parent={d.parent!r}, sister_of={d.sister_of!r}, confidence {d.confidence:.2f} "
+                    f"(applied only at ≥ {bar})",
+                    f"4. LLM reason: {d.reason}"]
         hit = checks.get(d.name)
         if hit is not None and d.confidence >= bar and dec.same_as != hit:
             was, = con.execute("SELECT name FROM entities WHERE entity_id = ?", [hit]).fetchone()

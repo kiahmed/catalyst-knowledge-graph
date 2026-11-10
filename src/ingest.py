@@ -21,7 +21,7 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any
 
@@ -47,6 +47,10 @@ class IngestResult:
     entries_failed: int
     last_processed_date: str | None
     last_processed_entry_id: str
+    # (entry, ExtractionResult) pairs whose review flags carry sequence-assigned
+    # rel_ids: flagged by the caller only AFTER the DuckDB push succeeds
+    # (a rejected push rewinds the ids; see flag_pending_reviews).
+    pending_review: list = field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -242,6 +246,28 @@ def write_extraction(
                 source_refs=source_refs_json,
             )
 
+        # Pass-3 "unclear" edges → their rel_ids, for the review queue (flagged
+        # by the caller only after the write succeeds).
+        unclear = []
+        for rel in result.relationships:
+            if rel.get("direction_unclear"):
+                a_id, b_id = name_to_id.get(rel.get("entity_a")), name_to_id.get(rel.get("entity_b"))
+                row = con.execute("""SELECT rel_id FROM relationships WHERE catalyst_id = ? AND entity_a_id = ?
+                                     AND rel_type = ? AND entity_b_id = ? ORDER BY rel_id DESC LIMIT 1""",
+                                  [catalyst_id, a_id, rel["rel_type"], b_id]).fetchone() if a_id and b_id else None
+                if row:
+                    unclear.append({"rel_id": row[0], "edge": f"{rel['entity_a']} --{rel['rel_type']}--> {rel['entity_b']}",
+                                    "statement": rel.get("direction_statement"),
+                                    "path": [f"1. Extracted: {rel['entity_a']} --{rel['rel_type']}--> {rel['entity_b']} "
+                                             f"[{rel.get('evidence_type')}, confidence {float(rel.get('confidence') or 0):.2f}]",
+                                             f"2. Mechanism: {rel.get('mechanism') or '—'}",
+                                             f"3. Direction verifier ({cfg.extraction.model}, thinking "
+                                             f"{cfg.extraction.direction_thinking_level}): unclear — "
+                                             f"\"{rel.get('direction_statement') or ''}\"",
+                                             f"4. Verifier reason: {rel.get('direction_reason') or '—'}",
+                                             "5. Kept as extracted (fail-open) → needs a human"]})
+        result.enrichment["direction_unclear"] = unclear
+
         # Tags are derived from the rows just written, so compute them inside
         # the same transaction — a catalyst is never visible without them.
         hashtags.store_for_catalyst(con, catalyst_id)
@@ -285,6 +311,32 @@ def _decide_entities(con: duckdb.DuckDBPyConnection, cfg: RoboticsConfig, entry:
     return decisions
 
 
+def flag_unclear_directions(cfg: RoboticsConfig, entry: dict[str, Any], result: ExtractionResult) -> int:
+    """Review queue: edges the Pass-3 direction verifier (high thinking) could
+    not settle — kept as extracted, a human decides. One entry per rel_id."""
+    items = (result.enrichment or {}).get("direction_unclear") or []
+    if not items:
+        return 0
+    try:
+        from .upstream_dedup import flag_attention  # noqa: PLC0415
+
+        fs = _firestore_client(cfg)
+        return sum(flag_attention(fs, f"rel{it['rel_id']}", "direction_unclear",
+                                  f"Direction verifier couldn't tell which way {it['edge']} goes "
+                                  f"(kept as extracted). {it.get('statement') or ''}".strip(),
+                                  rel_id=it["rel_id"], entry_id=entry.get("entry_id"), category=cfg.sector,
+                                  path=it.get("path") or [])
+                   for it in items)
+    except Exception as exc:  # noqa: BLE001 — review flags never fail an ingest
+        log.warning("flag_unclear_failed entry_id=%s err=%s", entry.get("entry_id"), exc)
+        return 0
+
+
+def flag_pending_reviews(cfg: RoboticsConfig, pending: list) -> int:
+    """Call after the DuckDB push succeeded (or when there is no push)."""
+    return sum(flag_unclear_directions(cfg, entry, result) for entry, result in pending or [])
+
+
 def flag_unsure(cfg: RoboticsConfig, entry: dict[str, Any], decisions: dict[str, Decision]) -> None:
     unsure = {n: d for n, d in decisions.items() if d.review}
     if unsure:
@@ -297,7 +349,8 @@ def flag_unsure(cfg: RoboticsConfig, entry: dict[str, Any], decisions: dict[str,
                                f"Ingest kept {name!r} as a new entity: the LLM was unsure "
                                f"({'; '.join(d.review)}, confidence {d.confidence:.2f}). {d.reason} "
                                f"Fix with make entity-merge / entity-link if needed.",
-                               entry_id=entry.get("entry_id"), category=cfg.sector)
+                               entry_id=entry.get("entry_id"), category=cfg.sector,
+                               path=d.path + [f"5. Not applied (below the bar) → kept as a new entity: {'; '.join(d.review)}"])
         except Exception as exc:  # noqa: BLE001
             log.warning("entity_review_flag_failed entry_id=%s err=%s", entry.get("entry_id"), exc)
 
@@ -311,6 +364,7 @@ def run_ingest(
     dry_run: bool = False,
     limit: int | None = None,
 ) -> IngestResult:
+    pending_review: list = []
     con = db.connect(cfg.duckdb_path)
     try:
         db.init_schema(con)
@@ -387,6 +441,7 @@ def run_ingest(
                 result = extract(e, cfg, on_record=record_lookup)
                 decisions = _decide_entities(con, cfg, e, result)
                 write_extraction(con, e, result, cfg, decisions)
+                pending_review.append((e, result))
                 # Advance watermark AFTER successful write, so mid-batch crash is safe.
                 db.set_watermark(
                     con,
@@ -441,6 +496,7 @@ def run_ingest(
             entries_failed=failed,
             last_processed_date=last_date.isoformat() if last_date else None,
             last_processed_entry_id=last_id,
+            pending_review=pending_review,
         )
     finally:
         con.close()

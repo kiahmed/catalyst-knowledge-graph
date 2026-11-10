@@ -248,6 +248,15 @@ class TestResolve(unittest.TestCase):
         self.assertEqual(sorted(a for (a,) in self.con.execute("SELECT alias FROM entity_aliases WHERE entity_id = ?",
                                                                [self.hmg]).fetchall()), ["Hyundai Motor", "Hyundai Motor Co"])
 
+    def test_unsure_decision_carries_its_trail(self):
+        client = FakeClient([{"name": "Hyundai WIA", "parent": "Hyundai Motor Group", "confidence": 0.6, "reason": "maybe owned"}])
+        out = resolve.decide_entities(self.con, CFG, client, text="news", entities=[{"resolved": "Hyundai WIA"}])
+        path = out["Hyundai WIA"].path
+        self.assertTrue(path[0].startswith("1. Name lookup"))
+        self.assertIn("Hyundai Motor Group", path[1])                      # candidates shown
+        self.assertIn("confidence 0.60", path[2]); self.assertIn("0.8", path[2])
+        self.assertIn("maybe owned", path[3])
+
     def test_llm_cannot_pick_a_non_candidate(self):
         # European Union exists in the DB but is not among this name's candidates.
         client = FakeClient([{"name": "Hyundai Motor Co", "same_as": "European Union", "confidence": 1,

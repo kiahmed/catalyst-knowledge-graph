@@ -32,7 +32,7 @@ import duckdb  # noqa: E402
 from src import db, direction, duckdb_sync  # noqa: E402
 from src.config import load_config  # noqa: E402
 from src.extract import extract  # noqa: E402
-from src.ingest import _decide_entities, _firestore_client, flag_unsure, write_extraction  # noqa: E402
+from src.ingest import _decide_entities, _firestore_client, flag_unclear_directions, flag_unsure, write_extraction  # noqa: E402
 
 
 def _edges(con, entry_id: str) -> list[str]:
@@ -80,7 +80,7 @@ def main() -> int:
         db.delete_by_entry_id(con, eid)
         write_extraction(con, entry, result, cfg, decisions)
         done += 1
-        pending_flags.append((entry, decisions))
+        pending_flags.append((entry, decisions, result))
         print(json.dumps({"entry_id": eid, "before": before, "after": _edges(con, eid)}, ensure_ascii=False),
               file=sys.stderr)
     con.execute("CHECKPOINT")
@@ -93,8 +93,9 @@ def main() -> int:
     if not out.get("pushed"):
         print(f"NOT APPLIED ({out.get('reason')}): nothing was overwritten — re-run the same command.", file=sys.stderr)
         return 2
-    for entry, decisions in pending_flags:
+    for entry, decisions, result in pending_flags:
         flag_unsure(cfg, entry, decisions)
+        flag_unclear_directions(cfg, entry, result)
     print(f"re-extracted {done} card(s); pushed {out['object']}. Run `make ingest-prod` to refresh Firestore.",
           file=sys.stderr)
     return 0
