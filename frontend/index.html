@@ -577,6 +577,15 @@ input[type="date"]:focus { border-color: var(--border-focus); }
   position: absolute; top: 12px; left: 284px; z-index: 420;
   width: 230px;
 }
+/* Relationship-type filter (top right of the map; the node panel overlays it while open) */
+.graph-reltype { position: absolute; top: 12px; right: 12px; z-index: 420; width: 230px; }
+.graph-reltype select {
+  width: 100%; font: inherit; font-size: 12px; color: var(--text);
+  padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: rgba(253,252,250,0.92); box-shadow: var(--shadow); cursor: pointer;
+}
+.graph-reltype select:focus { outline: none; border-color: #06b6d4; }
+@media (max-width: 760px) { .graph-reltype { top: auto; bottom: 12px; right: 12px; width: 180px; } }
 .graph-load-chip { position: fixed; left: 16px; bottom: 48px; z-index: 60; display: flex; align-items: center; gap: 10px;
   background: var(--bg-card); border: 1px solid var(--border); border-radius: 999px; box-shadow: var(--shadow);
   padding: 6px 8px 6px 14px; font-size: 12px; color: var(--text-secondary); }
@@ -1153,6 +1162,12 @@ input[type="date"]:focus { border-color: var(--border-focus); }
     </div>
   </div>
 
+  <!-- Relationship-type filter: one parent type, or one subtype (rolls up to its parent) -->
+  <div class="graph-reltype" id="graphRelType">
+    <div class="gs-label">Filter by relationship</div>
+    <select id="gfRelType" aria-label="Filter by relationship type"><option value="">All relationships</option></select>
+  </div>
+
   <!-- 1.13c filter panel -->
   <div class="gfilter-panel" id="gfilterPanel">
     <div class="gf-section">
@@ -1525,6 +1540,8 @@ function currentGraphFilters() {
     minConfidence: h.minc != null ? parseFloat(h.minc) : (gcfg.min_edge_confidence ?? 0.0),
     showInvalidated: h.inv != null ? h.inv === "1" : !!gcfg.show_invalidated,
     evidenceTypes: ev,
+    // rt=<rel_type> or rt=<rel_type>/<rel_subtype>; "" = all
+    relType: h.rt || "",
     // Link-only options for shared/curated views (Traction Engine DA-005):
     // noflag=1 hides edges flagged for review; xcard=ID,ID drops edges from those cards.
     hideFlagged: h.noflag === "1",
@@ -1549,6 +1566,7 @@ function graphEdgeCountFor(f) {
     if (excluded.has(e.catalyst_id)) continue;
     if ((e.confidence || 0) < f.minConfidence) continue;
     if (!ev.has(e.evidence_type)) continue;
+    if (!RoboticsGraph.relTypeMatches(e, f.relType)) continue;
     if (cutoff) {
       const d = new Date(e.catalyst_date);
       if (!isNaN(d) && d < cutoff) continue;
@@ -2465,6 +2483,7 @@ function hydrateFilterPanel() {
   // Invalidated toggle
   const inv = document.getElementById("gfInvToggle");
   if (inv) inv.checked = !!f.showInvalidated;
+  hydrateRelTypeSelect(f.relType || "");
   // Evidence chips
   const active = new Set(f.evidenceTypes || EVIDENCE_TYPES_ALL);
   document.querySelectorAll("#gfEvidenceChips .gf-chip").forEach(chip => {
@@ -2548,6 +2567,42 @@ document.querySelectorAll("#gfEvidenceChips .gf-chip").forEach(chip => {
   });
 });
 
+// Relationship-type dropdown: the parent types present in the graph (edge counts), each followed by
+// its subtypes (src/subtypes.py) when any edge carries one. A subtype choice keeps only those edges;
+// a parent choice keeps all of its edges, subtyped or not.
+function hydrateRelTypeSelect(current) {
+  const sel = document.getElementById("gfRelType");
+  if (!sel) return;
+  const edges = (PAYLOAD && PAYLOAD.graph && PAYLOAD.graph.edges) || [];
+  const parents = {}, subs = {};
+  for (const e of edges) {
+    if (!e.rel) continue;
+    parents[e.rel] = (parents[e.rel] || 0) + 1;
+    if (e.rel_subtype) {
+      const k = e.rel + "/" + e.rel_subtype;
+      subs[k] = (subs[k] || 0) + 1;
+    }
+  }
+  const label = t => t.replace(/_/g, " ");
+  let html = `<option value="">All relationships</option>`;
+  for (const p of Object.keys(parents).sort()) {
+    html += `<option value="${esc(p)}">${esc(label(p))} (${parents[p]})</option>`;
+    for (const k of Object.keys(subs).filter(k => k.startsWith(p + "/")).sort()) {
+      html += `<option value="${esc(k)}">\u00a0\u00a0↳ ${esc(label(k.slice(p.length + 1)))} (${subs[k]})</option>`;
+    }
+  }
+  // keep a linked choice selectable even if this window has none of it
+  if (current && !parents[current] && !subs[current]) {
+    html += `<option value="${esc(current)}">${esc(label(current.replace("/", " ↳ ")))} (0)</option>`;
+  }
+  if (sel.dataset.sig !== html) { sel.innerHTML = html; sel.dataset.sig = html; }
+  sel.value = current;
+}
+document.getElementById("gfRelType").addEventListener("change", e => {
+  writeHash({ rt: e.target.value });
+  onFilterChange();
+});
+
 // ══ Ticket 1.13d — Node & edge detail panels ══
 function formatDateShort(iso) {
   if (!iso) return "";
@@ -2580,6 +2635,7 @@ function edgesTouching(entityId, filters) {
     if (!showInv && e.status === "invalidated") return false;
     if ((e.confidence || 0) < minc) return false;
     if (!ev.has(e.evidence_type)) return false;
+    if (!RoboticsGraph.relTypeMatches(e, f.relType)) return false;
     return true;
   });
 }
@@ -2633,6 +2689,18 @@ function openNodePanel(entityId) {
       }).join("")
     : `<div class="np-caption" style="text-transform:none;letter-spacing:0">no matching edges in current filter</div>`;
 
+  // Internal events: live self-loops (e.g. "Tesla deploys Optimus" after Optimus folded into Tesla) ride
+  // on each card doc as `internal_events`, never as edges — so no edge count above changes.
+  const ieCards = internalEventCards(node.name);
+  const ieHTML = ieCards.length
+    ? `<div class="np-section">
+        <div class="np-related-row" data-internal-events>
+          <span class="np-related-headline">Internal events (${ieCards.length})</span>
+          <span class="np-related-date">show cards →</span>
+        </div>
+      </div>`
+    : "";
+
   const relatedHTML = related.length
     ? related.map(c => {
         const head = (c.headline || "").length > 80 ? c.headline.slice(0, 79) + '…' : (c.headline || "");
@@ -2653,6 +2721,7 @@ function openNodePanel(entityId) {
       <div class="np-section-label">Top ${Math.min(5, edges.length)} edges</div>
       ${edgesHTML}
     </div>
+    ${ieHTML}
     <div class="np-section">
       <div class="np-section-label">Related catalysts</div>
       ${relatedHTML}
@@ -2661,6 +2730,12 @@ function openNodePanel(entityId) {
 
   panel.classList.add("open");
   panel.setAttribute("aria-hidden", "false");
+
+  const ieRow = panel.querySelector("[data-internal-events]");
+  if (ieRow) ieRow.addEventListener("click", () => {
+    closeNodePanel();
+    showCardsFor(ieCards, `${node.name} internal events`);
+  });
 
   // Wire up open-card buttons
   panel.querySelectorAll("[data-open-card]").forEach(el => {
@@ -2671,6 +2746,13 @@ function openNodePanel(entityId) {
       if (card) expandCard(card);
     });
   });
+}
+
+// Card ids whose doc lists an internal event (self-loop) on this entity.
+function internalEventCards(name) {
+  return ((PAYLOAD && PAYLOAD.cards) || [])
+    .filter(c => (c.internal_events || []).some(ev => ev.entity === name))
+    .map(c => c.card_id);
 }
 
 function closeNodePanel() {

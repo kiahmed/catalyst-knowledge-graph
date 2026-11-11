@@ -209,6 +209,20 @@ def _load_cards(
             for (a, rt, b, c, et, mech, ms, im, fl, sr, st, sub) in rel_rows
         ]
 
+        # Internal events (status 'internal' self-loops, docs/ticket-internal-events.md): their own list,
+        # never in `relationships`, so no edge view or count sees them. One per (entity, type).
+        internal_events = []
+        for (ent, rt, sub, mech, c, et) in con.execute(
+                f"""SELECT e.name, r.rel_type, {sub_col}, r.mechanism, r.confidence, r.evidence_type
+                   FROM relationships r JOIN entities e ON e.entity_id = r.entity_a_id
+                   WHERE r.catalyst_id = ? AND r.status = 'internal' AND r.entity_a_id = r.entity_b_id
+                     AND r.confidence >= ?
+                   ORDER BY r.confidence DESC, r.rel_id""",
+                [catalyst_id, min_edge_confidence]).fetchall():
+            if not any(x["entity"] == ent and x["rel"] == rt for x in internal_events):
+                internal_events.append({"entity": ent, "rel": rt, "rel_subtype": sub, "mechanism": mech,
+                                        "confidence": float(c), "evidence_type": et})
+
         subtitle = _short_subtitle(sent_takeaways)
         top_conf = rels[0]["confidence"] if rels else 0.0
 
@@ -220,6 +234,7 @@ def _load_cards(
             "subtitle": subtitle,
             "entities": entities,
             "relationships": rels,
+            "internal_events": internal_events,
             # False = market/sector news naming no company: every link on the
             # card is background research (UI shows a hint instead of a story).
             "story_names_entities": bool(in_story),
@@ -267,7 +282,7 @@ def _compute_stats(
         FROM relationships r
         JOIN catalysts c ON c.catalyst_id = r.catalyst_id
         JOIN entities e ON e.entity_id IN (r.entity_a_id, r.entity_b_id)
-        WHERE c.sector = ? AND r.status <> 'rejected'
+        WHERE c.sector = ? AND r.status NOT IN ('rejected', 'internal')
         GROUP BY e.name
         ORDER BY cnt DESC
         LIMIT 1
@@ -282,7 +297,7 @@ def _compute_stats(
         FROM relationships r
         JOIN catalysts c ON c.catalyst_id = r.catalyst_id
         WHERE c.sector = ? AND c.timestamp >= (CURRENT_DATE - INTERVAL 14 DAY)
-          AND r.status <> 'rejected'
+          AND r.status NOT IN ('rejected', 'internal')
         GROUP BY r.rel_type
         ORDER BY cnt DESC
         LIMIT 1

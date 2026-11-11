@@ -21,7 +21,8 @@ import duckdb
 from . import direction, entities, hashtags, subtypes
 
 LIVE = ("active", "materialized")
-EDGE_STATUSES = ("active", "materialized", "invalidated", "rejected")   # every status a relationship can hold
+EDGE_STATUSES = ("active", "materialized", "invalidated", "rejected", "internal")   # every status a relationship can hold
+# 'internal' = an internal event: a self-loop kept outside every live view (docs/ticket-internal-events.md)
 LINK_RELATIONS = ("subsidiary_of", "sister_of")
 # "group" = a generic bucket ("Venture Capital", "European robotics companies"):
 # kept as an entity so later mentions match it for free, but not a company.
@@ -398,6 +399,16 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
             raise EditError(f"status must be one of {EDGE_STATUSES}")
         cur = _edge(con, rel_id)
         _check_expect(cur, p.get("expect"), ["status"])
+        loop = cur["entity_a_id"] == cur["entity_b_id"]
+        if status == "internal" and not loop:
+            raise EditError("only a self-loop (same entity both ends) can be an internal event")
+        if status in LIVE and loop:
+            raise EditError("a self-loop can't be a live edge — use status 'internal' (internal event)")
+        if status == "internal" and cur["status"] != "internal" and con.execute(
+                """SELECT 1 FROM relationships WHERE catalyst_id = ? AND rel_id <> ? AND entity_a_id = ?
+                   AND rel_type = ? AND entity_b_id = ? AND status = 'internal'""",
+                [cur["catalyst_id"], rel_id, cur["entity_a_id"], cur["rel_type"], cur["entity_b_id"]]).fetchone():
+            raise EditError("this internal event is already on the card")
         # Reviving a dead edge must not make it a live twin of another edge on the card.
         if status in LIVE and cur["status"] not in LIVE and con.execute(
                 """SELECT 1 FROM relationships WHERE catalyst_id = ? AND rel_id <> ? AND entity_a_id = ?

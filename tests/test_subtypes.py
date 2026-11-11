@@ -112,6 +112,18 @@ class TestRules(unittest.TestCase):
         self.assertIsNone(C("supplies", "General purpose robots: a contract manufacturer will build for Figure.",
                             "direct", a_name="General Robotics", b_name="Figure"))
 
+    def test_review_findings_09ae11a(self):
+        self.assertEqual(C("supplies", "Foxconn is Agility Robotics' contract manufacturer for Digit.", "direct",
+                           a_name="Foxconn", b_name="Agility Robotics"), "manufactures_for")
+        self.assertEqual(C("supplies", "Jabil becomes Apptronik's manufacturing partner.", "direct",
+                           a_name="Jabil", b_name="Apptronik"), "manufactures_for")
+        self.assertIsNone(C("invests_in", "Microsoft invested in Cruise, a wholly-owned subsidiary of GM.", "direct",
+                            a_name="Microsoft", b_name="Cruise"))
+        self.assertIsNone(C("invests_in", "The deal will grant SoftBank a board seat.", "direct",
+                            a_name="SoftBank", b_name="Skild AI", a_type="public_company"))
+        self.assertEqual(C("invests_in", "Skild received a grant to build robot hands.", "direct",
+                           a_name="NSF", b_name="Skild AI", a_type="organization"), "funds")
+
     def test_licenses_and_sells_through(self):
         self.assertEqual(C("supplies", "Ceva licenses its NeuPro NPU IP to Mobilint.", "direct",
                            a_name="Ceva", b_name="Mobilint"), "licenses_to")

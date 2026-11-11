@@ -18,7 +18,7 @@ _I = re.I
 # Public money: the source is a government body, or the text names a grant / subsidy / public funding.
 # ("subsidiary" is NOT a subsidy; "a government-backed company" describes the target, not this edge.)
 # "grant" the noun only: the verb ("the round grants SoftBank a board seat") is not money.
-_FUNDS = re.compile(r"\b(grant|grant[- ]funded|(?:provided|awarded|received|government|research|federal|public|state) "
+_FUNDS = re.compile(r"\b((?<!will )(?<!would )(?<!to )(?<!may )(?<!can )(?<!could )(?<!shall )grant(?! \w+ an? )|grant[- ]funded|(?:provided|awarded|received|government|research|federal|public|state) "
                     r"grants|grants (?:from|for|of|to fund|through|totall?ing|programme|program)|"
                     r"subsid(?:y|ies|i[sz]e[sd]?|i[sz]ing)|public funding)\b", _I)
 # parent ↔ subsidiary (a invests_in b where b is a's subsidiary / wholly owned). "owned by X" /
@@ -85,8 +85,11 @@ def _manufactures_for(text: str, a_name: str | None, b_name: str | None) -> bool
         return False
     b = _name_re(b_name)
     role = _MFG_ROLE.search(text)
-    if role and re.search(r"(?<![\w-])" + b, text[a_at:role.start()], _I):
+    window = text[a_at:role.start()] if role else ""
+    if role and any(window[m.end():m.end() + 1] not in ("'", "’")
+                    for m in re.finditer(r"(?<![\w-])" + b, window, _I)):
         role = None                      # "A supplies … to B, its contract manufacturer": the role is B's
+                                         # (but "A is B's contract manufacturer" keeps it: possessive)
     for m in (role,
               re.search(r"\b" + _MFG_VERB + r" (?:[\w'’-]+ ){0,6}?for (?:the |its )?" + b, text, _I),
               re.search(r"\b" + _MFG_VERB + r" (?:of )?(?:the )?" + b + r"['’]s?\b", text, _I)):
@@ -96,13 +99,12 @@ def _manufactures_for(text: str, a_name: str | None, b_name: str | None) -> bool
 
 
 def _owns(text: str, a_name: str | None) -> bool:
-    for m in _OWNS.finditer(text):
-        if m.group("of"):                # "… owned by X" / "subsidiary of X": X must be the source
-            if a_name is None or re.match(r"\s+(?:the |its )?" + _name_re(a_name), text[m.end():], _I):
-                return True
-        elif a_name is None or _first(text, a_name) >= 0:
-            return True
-    return False
+    ms = list(_OWNS.finditer(text))
+    of = [m for m in ms if m.group("of")]
+    if of:                               # "… owned by X" / "subsidiary of X" decides: X must be the source
+        return any(a_name is None or re.match(r"\s+(?:the |its )?" + _name_re(a_name), text[m.end():], _I)
+                   for m in of)
+    return bool(ms) and (a_name is None or _first(text, a_name) >= 0)
 
 
 def classify(rel_type: str, mechanism: str | None, evidence_type: str | None = None, *,

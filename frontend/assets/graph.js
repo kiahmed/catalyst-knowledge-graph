@@ -138,6 +138,14 @@
     };
   }
 
+  // rt filter: "" = all; "supplies" = every supplies edge (any subtype); "supplies/licenses_to" = only that subtype.
+  function relTypeMatches(e, rt) {
+    if (!rt) return true;
+    const i = rt.indexOf('/');
+    if (i < 0) return e.rel === rt;
+    return e.rel === rt.slice(0, i) && e.rel_subtype === rt.slice(i + 1);
+  }
+
   function filterPayload(payload, filters) {
     const f = filters || {};
     const timeWindowDays = f.timeWindowDays == null ? 30 : f.timeWindowDays;
@@ -151,6 +159,7 @@
     const rawEdges = (payload.graph && payload.graph.edges) || [];
     const excluded = new Set(f.excludeCards || []);
     let edges = rawEdges.filter(e => {
+      if (!relTypeMatches(e, f.relType)) return false;            // ?rt=type or type/subtype
       if (!showInvalidated && e.status === 'invalidated') return false;
       if (f.hideFlagged && e.flagged) return false;               // ?noflag=1
       if (excluded.size && excluded.has(e.catalyst_id)) return false;   // ?xcard=ID,ID
@@ -634,6 +643,7 @@
       f.minConfidence,
       !!f.showInvalidated,
       (f.evidenceTypes || []).slice().sort(),
+      f.relType || '',
       f.egoEntity || '',
       f.egoMaxEdges || 0,
       !!f.hideFlagged,
@@ -1162,5 +1172,6 @@
   // Exposed so the page can report exactly what the ego view keeps vs drops
   // (same filters as render — no second, drifting implementation).
   RoboticsGraph.filterPayload = filterPayload;
+  RoboticsGraph.relTypeMatches = relTypeMatches;
   window.RoboticsGraph = RoboticsGraph;
 })();

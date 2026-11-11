@@ -745,19 +745,20 @@ def insert_relationship(
     impact_magnitude: float | None = None,
     first_flagged_at: date | None = None,
     source_refs: str | None = None,
+    status: str = "active",
 ) -> None:
     con.execute(
         """
         INSERT INTO relationships (catalyst_id, entity_a_id, rel_type, entity_b_id,
                                    confidence, evidence_type, mechanism,
                                    mechanism_strength, impact_magnitude, flagged,
-                                   source_refs, first_flagged_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                   source_refs, first_flagged_at, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             catalyst_id, entity_a_id, rel_type, entity_b_id,
             confidence, evidence_type, mechanism,
             mechanism_strength, impact_magnitude, flagged,
-            source_refs, first_flagged_at,
+            source_refs, first_flagged_at, status,
         ],
     )

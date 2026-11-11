@@ -332,10 +332,15 @@ def merge(con: duckdb.DuckDBPyConnection, src_id: int, dst_id: int, *, confidenc
                    WHERE entity_handles.handle IS NULL""",
                 [dst_name, src_name])
     con.execute("DELETE FROM entities WHERE entity_id = ?", [src_id])
-    # "Hyundai Motors --x--> Hyundai Motor Group" became a self-loop: hide it.
+    # An edge between the two became a self-loop. A directional one is an internal event ("Tesla deploys
+    # Optimus" after Optimus → Tesla): kept as status 'internal', outside every live count, graph and card
+    # edge list (docs/ticket-internal-events.md). A two-party type ("X partners_with X") is noise: rejected.
     if cards:
-        con.execute(f"""UPDATE relationships SET status = 'rejected' WHERE entity_a_id = ? AND entity_b_id = ?
-                        AND catalyst_id IN ({','.join('?' * len(cards))})""", [dst_id, dst_id, *cards])
+        sym = sorted(direction.symmetric_types()) or [""]
+        con.execute(f"""UPDATE relationships SET status = CASE WHEN rel_type IN (SELECT UNNEST(?::VARCHAR[]))
+                            THEN 'rejected' ELSE 'internal' END
+                        WHERE entity_a_id = ? AND entity_b_id = ? AND status IN ('active', 'materialized')
+                        AND catalyst_id IN ({','.join('?' * len(cards))})""", [sym, dst_id, dst_id, *cards])
     deduped = direction.dedupe_rows(con, cards)
     for cid in cards:
         hashtags.store_for_catalyst(con, cid)
