@@ -24,6 +24,23 @@ import duckdb
 
 from .config import RoboticsConfig
 
+
+def _tombstone(fs_client: Any, cfg: RoboticsConfig, entry_id: str) -> None:
+    """Tell open web pages a card doc was removed (they fetch only changed docs, so a delete is otherwise
+    invisible until a reload): append "<entry_id>@<stamp>" to the catalysts parent doc's `deleted_ids` and
+    move `version`. The stamp makes every entry unique, so ArrayUnion always appends (a card deleted, re-made
+    and deleted again is announced both times) and pages can read new entries by position."""
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    from google.cloud import firestore  # noqa: PLC0415
+
+    stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    try:   # best-effort: the card is already gone; a missed tombstone only means a stale page keeps it till reload
+        (fs_client.collection(cfg.firestore_export.collection).document(cfg.firestore_export.catalysts_subpath)
+         .set({"deleted_ids": firestore.ArrayUnion([f"{entry_id}@{stamp}"]), "version": stamp}, merge=True))
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("robotics.upstream_dedup").warning("tombstone_failed entry_id=%s err=%s", entry_id, exc)
+
 log = logging.getLogger("robotics.upstream_dedup")
 
 FEED_COLLECTION = "dedup_runs"
@@ -113,6 +130,7 @@ def process_feed(cfg: RoboticsConfig, fs_client: Any) -> dict[str, Any]:
                     # Firestore first: if it fails nothing local changed yet, so the next run redoes all of it.
                     if cfg.firestore_export.enabled:
                         items.document(target).delete()
+                        _tombstone(fs_client, cfg, target)
                     rels = _remove_card(con, target, cid[target], cid[matched], run_id, matched)
                     summary["merged"].append({"target": target, "kept": matched, "relationships_removed": rels})
                     continue

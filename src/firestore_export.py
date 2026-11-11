@@ -171,7 +171,8 @@ def _write_entities(cfg: RoboticsConfig, *, compare_live: bool = False) -> dict[
     return {"written": len(changed), "deleted": len(gone), "total": len(docs)}
 
 
-def _write_catalysts(cfg: RoboticsConfig, cards: list[dict[str, Any]], *, force: bool = False) -> dict[str, int]:
+def _write_catalysts(cfg: RoboticsConfig, cards: list[dict[str, Any]], *, force: bool = False,
+                     partial: bool = False) -> dict[str, int]:
     """Write only new/changed cards to {collection}/catalysts/items/{card_id}
     (force=True: write every given card regardless of export_state).
 
@@ -198,11 +199,16 @@ def _write_catalysts(cfg: RoboticsConfig, cards: list[dict[str, Any]], *, force:
         # parent doc holds count + updated_at for cheap "any cards yet?" reads.
         items = base.collection("items")
         written = 0
+        # Silent refresh in the web app (docs/ticket-frontend-silent-refresh.md): every written card carries
+        # `synced_at`, and the parent doc's `version` moves only when something was written — the page
+        # checks `version` on each lookup and then fetches just the cards with a newer `synced_at`.
+        # Outside the hash (computed above from the card itself), so it never makes a card look changed.
+        stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
         for i in range(0, len(changed), _BATCH):
             chunk = changed[i:i + _BATCH]
             batch = client.batch()
             for cid, card, _h in chunk:
-                batch.set(items.document(cid), card, merge=True)
+                batch.set(items.document(cid), {**card, "synced_at": stamp}, merge=True)
             batch.commit()
             con.executemany(
                 "INSERT OR REPLACE INTO export_state (doc_key, content_hash, exported_at) "
@@ -211,14 +217,15 @@ def _write_catalysts(cfg: RoboticsConfig, cards: list[dict[str, Any]], *, force:
             )
             written += len(chunk)
 
-        base.set(
-            {
-                "count": len(keyed),       # cards in the export, not this run's writes
-                "sector": cfg.sector,
-                "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
-            },
-            merge=True,
-        )
+        parent: dict[str, Any] = {
+            "sector": cfg.sector,
+            "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        }
+        if not partial:                    # an admin refresh writes a few cards: it must not shrink the count
+            parent["count"] = len(keyed)   # cards in the export, not this run's writes
+        if written:
+            parent["version"] = stamp
+        base.set(parent, merge=True)
     finally:
         con.close()
     return {"written": written, "unchanged": len(keyed) - written, "total": len(keyed)}
@@ -438,7 +445,7 @@ def refresh_cards(cfg: RoboticsConfig, entry_ids: list[str]) -> dict[str, Any]:
     # on a copy it doesn't push — so after an edit + revert the reverted card's
     # hash matches the stale stored one and a delta write would skip it,
     # leaving the edited version live (found in the 2026-11-08 prod test).
-    out: dict[str, Any] = {"cards": _write_catalysts(cfg, cards, force=True)}
+    out: dict[str, Any] = {"cards": _write_catalysts(cfg, cards, force=True, partial=True)}
     try:
         out["entities"] = _write_entities(cfg, compare_live=True)
     except Exception as exc:  # noqa: BLE001

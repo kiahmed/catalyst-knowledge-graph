@@ -26,6 +26,13 @@ class _Doc:
         d = self.store.get(self.path)
         return N(exists=d is not None, to_dict=lambda: d, id=self.id)
 
+    def set(self, data, merge=False):
+        cur = dict(self.store.get(self.path) or {}) if merge else {}
+        for k, v in data.items():
+            vals = getattr(v, "values", None)          # firestore.ArrayUnion
+            cur[k] = (cur.get(k) or []) + [x for x in vals if x not in (cur.get(k) or [])] if vals is not None else v
+        self.store[self.path] = cur
+
     def create(self, data):
         from google.api_core.exceptions import AlreadyExists
         if self.path in self.store:
@@ -110,6 +117,9 @@ class TestUpstreamDedup(unittest.TestCase):
         self.assertEqual(s["runs"], 1)
         self.assertEqual([m["target"] for m in s["merged"]], ["ROB-B"])
         self.assertNotIn(self.items + ("ROB-B",), self.fs.store)               # Firestore card gone
+        base = self.fs.store[self.items[:-1]]                                   # open pages learn of the delete
+        self.assertEqual([e.split("@")[0] for e in base["deleted_ids"]], ["ROB-B"])   # "<id>@<stamp>"
+        self.assertTrue(base["version"])
         con = duckdb.connect(self.path)
         self.assertIsNone(con.execute("SELECT 1 FROM catalysts WHERE entry_id='ROB-B'").fetchone())
         self.assertEqual(con.execute("SELECT invalidated_by_catalyst_id FROM relationships WHERE catalyst_id=?",

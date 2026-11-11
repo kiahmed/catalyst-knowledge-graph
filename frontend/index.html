@@ -1897,7 +1897,53 @@ function showGraphContextMenu(target, nativeEvent) {
   }, 0);
 }
 
+// ══ Silent refresh (docs/ticket-frontend-silent-refresh.md) ══
+// A research session can stay open for hours while ingest or admin edits change the data. Every lookup
+// (view switch, filter, search, node / card open) calls maybeSync(): at most one tiny version read per
+// SYNC_EVERY_MS; only when the backend wrote something are the changed cards fetched and merged in place.
+// No reload, no spinner; the current view, filters and open panel stay as they are.
+const SYNC_EVERY_MS = 15000;
+// `ready` is set ONLY by loadCards() after the signed-in Firestore load (payload._sync) — never on the
+// pre-sign-in teaser (preview.json), where Firebase may not even be loaded and reads are denied.
+let SYNC = { ready: false, version: null, synced: null, deleted: 0, busy: false, last: 0 };
+let KEEP_PAGE = false;
+function maybeSync() {
+  if (!SYNC.ready || !firestoreConfigured() || !PAYLOAD || !window.RoboticsFirestore || !RoboticsFirestore.checkUpdates) return;
+  if (SYNC.busy || Date.now() - SYNC.last < SYNC_EVERY_MS) return;
+  SYNC.busy = true; SYNC.last = Date.now();
+  // Promise.resolve().then: a synchronous throw inside checkUpdates becomes a rejection, so busy always clears.
+  Promise.resolve()
+    .then(() => RoboticsFirestore.checkUpdates(window.FIREBASE_CONFIG, SYNC))
+    .then(applySync)
+    .catch(err => console.warn("silent refresh skipped:", err))
+    .finally(() => { SYNC.busy = false; });
+}
+function applySync(u) {
+  if (!u) return;
+  const byId = new Map((PAYLOAD.cards || []).map(c => [c.card_id, c]));
+  if (u.full) byId.clear();                                  // no synced_at baseline: the fetch IS the full set
+  u.changed.forEach(c => { if (c.card_id) byId.set(c.card_id, c); });
+  u.deleted.forEach(e => byId.delete(String(e).split("@")[0]));   // tombstones are "<entry_id>@<stamp>"
+  PAYLOAD.cards = [...byId.values()];
+  SYNC.version = u.version;
+  SYNC.synced = RoboticsFirestore.maxSynced(PAYLOAD.cards) || SYNC.synced;
+  SYNC.deleted = u.deletedTotal;
+  if (!u.changed.length && !u.deleted.length) return;
+  PAYLOAD.graph = buildFullGraph(PAYLOAD);
+  const sector = PAYLOAD.sector || "Robotics";
+  CARDS = PAYLOAD.cards.map((c, i) => transformCard(c, i, sector));
+  renderTypePills();
+  KEEP_PAGE = true;                                        // stay on the Cards page the user is reading
+  try { applyAllFilters(); } finally { KEEP_PAGE = false; }
+  // Graph: re-render only if it is on screen; switching to it later renders from the merged data anyway.
+  if (GRAPH_INITIALIZED && document.getElementById("graphView").style.display !== "none") onFilterChange();
+  const h = parseHash();
+  if (h.node && document.getElementById("nodePanel").classList.contains("open")) openNodePanel(h.node);
+  console.info(`silent refresh: ${u.changed.length} card(s) updated, ${u.deleted.length} removed`);
+}
+
 function setView(view, opts = {}) {
+  maybeSync();
   if (view === "recap" && !PREMIUM_OK) view = "cards";   // gated: fall back
   const cardsEl = document.getElementById("cardsView");
   const graphEl = document.getElementById("graphView");
@@ -2122,6 +2168,7 @@ async function loadCards() {
     STATS = payload.stats || null;
     const sector = payload.sector || "Robotics";
     CARDS = (payload.cards || []).map((c, i) => transformCard(c, i, sector));
+    if (payload._sync) Object.assign(SYNC, payload._sync, { ready: true, busy: false });
     renderTypePills();
     const emp = RoboticsGuards.isEmpty(payload);
     if (emp.cards) RoboticsGuards.showEmptyState(document.getElementById("gridStage"), "no-cards");
@@ -2260,6 +2307,7 @@ function goRight() { if (page < totalPages() - 1) { page++; renderPage(); } }
 // ══ Expand / close ══
 let _currentCard = null;
 function expandCard(card) {
+  maybeSync();
   _currentCard = card;
   if (window.RoboticsAuth?.noteCardOpen) RoboticsAuth.noteCardOpen();
   const ec = document.getElementById('expandedCard');
@@ -2374,6 +2422,7 @@ function clearCardIdFilter() {
 document.getElementById("cardIdFilterClear").addEventListener("click", clearCardIdFilter);
 
 function applyAllFilters() {
+  maybeSync();
   const activeType = document.querySelector('.filter-pill.active')?.dataset.filter || 'all';
   const activeDate = document.querySelector('.date-controls .ctrl-btn.active')?.dataset.date || 'all';
   const fromDate = document.getElementById('dateFrom').value;
@@ -2396,7 +2445,8 @@ function applyAllFilters() {
   });
 
   filtered.sort((a, b) => b.sortDate - a.sortDate);
-  page = 0;
+  if (KEEP_PAGE) page = Math.max(0, Math.min(page, Math.ceil(filtered.length / PAGE_SIZE) - 1));
+  else page = 0;
   renderPage();
 }
 
@@ -2503,6 +2553,7 @@ function evidenceHashFromChips() {
 }
 
 function onFilterChange() {
+  maybeSync();
   if (!GRAPH_INITIALIZED) return;
   requestAnimationFrame(() => {
     renderGraphFromPayload();
@@ -2662,6 +2713,7 @@ function cardsMentioning(entityName) {
 
 function openNodePanel(entityId) {
   if (!PAYLOAD) return;
+  maybeSync();
   const node = findNodeById(entityId);
   const panel = document.getElementById("nodePanel");
   if (!node) { closeNodePanel(); return; }

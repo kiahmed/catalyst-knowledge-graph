@@ -29,7 +29,7 @@ class _FakeDoc:
 
     def set(self, data, merge=False):
         self.store.writes.append(self.path)
-        self.store.docs[self.path] = data
+        self.store.docs[self.path] = {**(self.store.docs.get(self.path) or {}), **data} if merge else data
 
 
 class _FakeCol:
@@ -117,6 +117,22 @@ class TestDeltaExport(unittest.TestCase):
         self.assertEqual(self._item_writes(), [])
         # summary doc reports the export size, not this run's writes
         self.assertEqual(self.client.docs["CKG-Robotics/catalysts"]["count"], 5)
+
+    def test_silent_refresh_markers(self):
+        # docs/ticket-frontend-silent-refresh.md: written cards carry synced_at (outside the hash), the
+        # parent's version moves only when something was written, and an admin refresh keeps the count.
+        fx._write_catalysts(self.cfg, _cards(5))
+        base = self.client.docs["CKG-Robotics/catalysts"]
+        v1 = base["version"]
+        self.assertTrue(all(self.client.docs[f"CKG-Robotics/catalysts/items/ROB-T{i:03d}"]["synced_at"] == v1
+                            for i in range(5)))
+        fx._write_catalysts(self.cfg, _cards(5))                                  # nothing changed
+        self.assertEqual(self.client.docs["CKG-Robotics/catalysts"]["version"], v1)
+        fx._write_catalysts(self.cfg, _cards(1, **{"ROB-T000": {"headline": "new"}}), force=True, partial=True)
+        base = self.client.docs["CKG-Robotics/catalysts"]
+        self.assertEqual(base["count"], 5)                                        # partial: count untouched
+        self.assertGreaterEqual(base["version"], v1)
+        self.assertEqual(self.client.docs["CKG-Robotics/catalysts/items/ROB-T000"]["synced_at"], base["version"])
 
     def test_only_changed_and_new_cards_written(self):
         fx._write_catalysts(self.cfg, _cards(5))
