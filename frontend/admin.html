@@ -387,6 +387,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
     if (!editing) {
       p.append(el('div', { class: 'tools', style: 'padding:0' },
         el('button', { class: 'primary', onclick: () => renderRel(true) }, 'Edit'),
+        el('button', { title: 'Add a relationship the extractor missed, on this same card', onclick: () => renderAdd(r) }, 'Add edge on this card'),
         r.review ? el('button', { title: r.review.reason || '', onclick: () => markReviewed([r.review.id]) }, 'Reviewed') : '',
         el('button', { class: 'danger', title: 'Remove this relationship permanently (hard delete; revertible from the Edit log)',
           onclick: async () => {
@@ -402,17 +403,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
           } }, 'Reject edge') : ''));
       return;
     }
-    const pick = (label, ent) => {
-      const inp = el('input', { list: 'dl_' + label, value: ent.name, 'data-id': ent.id, style: 'width:100%' });
-      const dl = el('datalist', { id: 'dl_' + label });
-      let t; inp.addEventListener('input', () => { clearTimeout(t); t = setTimeout(async () => {
-        const d = await api('/entities?limit=25&q=' + encodeURIComponent(inp.value.trim()));
-        dl.replaceChildren(...d.entities.map(e => el('option', { value: e.name, 'data-id': e.id }, `${e.cards} cards`)));
-        const hit = d.entities.find(e => e.name === inp.value); inp.dataset.id = hit ? hit.id : '';
-      }, 200); });
-      return [inp, dl];
-    };
-    const [aIn, aDl] = pick('a', r.a), [bIn, bDl] = pick('b', r.b);
+    const [aIn, aDl] = entityPick('a', r.a), [bIn, bDl] = entityPick('b', r.b);
     const typeSel = el('select', {}, S.me.rel_types.map(t => el('option', { value: t, selected: t === r.rel_type }, t)));
     const statSel = el('select', {}, S.me.statuses.map(t => el('option', { value: t, selected: t === r.status }, t)));
     p.append(el('div', { class: 'form' }, 'Source', el('div', {}, aIn, aDl), 'Type', typeSel, 'Target', el('div', {}, bIn, bDl), 'Status', statSel));
@@ -433,6 +424,47 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
           await afterEdit();
         } catch (e) { toast(e.message, true); ev.target.disabled = false; }
       } }, 'Save'),
+      el('button', { onclick: () => renderRel(false) }, 'Cancel')));
+  }
+
+  // Entity input with live suggestions; data-id holds the picked entity's id ('' until one matches exactly).
+  function entityPick(label, ent) {
+    const inp = el('input', { list: 'dl_' + label, value: ent ? ent.name : '', 'data-id': ent ? ent.id : '', style: 'width:100%' });
+    const dl = el('datalist', { id: 'dl_' + label });
+    let t; inp.addEventListener('input', () => { clearTimeout(t); t = setTimeout(async () => {
+      const d = await api('/entities?limit=25&q=' + encodeURIComponent(inp.value.trim()));
+      dl.replaceChildren(...d.entities.map(e => el('option', { value: e.name, 'data-id': e.id }, `${e.cards} cards`)));
+      const hit = d.entities.find(e => e.name === inp.value); inp.dataset.id = hit ? hit.id : '';
+    }, 200); });
+    return [inp, dl];
+  }
+
+  // Add edge (docs/ticket-admin-add-edge.md): a relationship the extractor missed, on THIS card. Saved as
+  // direct evidence with the admin's mechanism; same guards as every edit; revertible from the Edit log.
+  function renderAdd(r) {
+    const p = $('relPane'); p.replaceChildren();
+    document.body.classList.add('frozen'); $('colEdit').classList.add('editing');
+    p.append(el('p', {}, el('b', {}, 'Add a relationship on card '), el('a', { href: '/#card-' + r.entry_id, target: '_blank' }, r.entry_id)),
+      el('p', {}, el('b', {}, r.headline)), el('p', { class: 'kv' }, r.finding || ''),
+      el('h3', {}, 'Entities in this card'), el('div', { id: 'cardChips', class: 'kv', 'data-mode': 'edit' }, 'loading…'));
+    loadChips(r, true);
+    const [aIn, aDl] = entityPick('a', S.entity ? { id: S.entity.id, name: S.entity.name } : null), [bIn, bDl] = entityPick('b', null);
+    const typeSel = el('select', {}, S.me.rel_types.map(t => el('option', { value: t }, t)));
+    const mech = el('textarea', { rows: 3, style: 'width:100%', placeholder: 'What the card shows, in one sentence (required)' });
+    p.append(el('div', { class: 'form' }, 'Source', el('div', {}, aIn, aDl), 'Type', typeSel, 'Target', el('div', {}, bIn, bDl),
+      'Mechanism', mech));
+    p.append(el('div', { class: 'tools', style: 'padding:0' },
+      el('button', { class: 'primary', onclick: async ev => {
+        const a = Number(aIn.dataset.id), b = Number(bIn.dataset.id);
+        if (!a || !b) return toast('Pick source and target from the suggestions or the card chips', true);
+        if (a === b) return toast('Source and target are the same entity', true);
+        if (mech.value.trim().length < 10) return toast('Write the mechanism: what the card shows (10+ characters)', true);
+        if (!confirm(`Add ${aIn.value} —${typeSel.value}→ ${bIn.value} on ${r.entry_id}?\n(direct evidence; revertible from the Edit log)`)) return;
+        ev.target.disabled = true;
+        const d = await run('add_edge', { entry_id: r.entry_id, entity_a_id: a, rel_type: typeSel.value, entity_b_id: b,
+                                          mechanism: mech.value.trim() }, 'Edge added');
+        if (d) afterEdit(); else ev.target.disabled = false;
+      } }, 'Add edge'),
       el('button', { onclick: () => renderRel(false) }, 'Cancel')));
   }
 
@@ -663,6 +695,9 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
       box.querySelectorAll('input[data-rej]').forEach(c => { c.checked = ev.target.checked; }); sync(); } });
     const save = async (op, what) => {
       const ids = [...picked];
+      const stuck = d.edges.filter(r => picked.has(r.rel_id) && r.self_loop && !r.restorable);
+      if (op === 'restore_many' && stuck.length)
+        return toast(`${stuck.length} selected row(s) are two-party self-loops (e.g. "X partners_with X"): they can't be restored — untick them or delete them`, true);
       const loops = d.edges.filter(r => picked.has(r.rel_id) && r.self_loop).length;
       const note = op === 'restore_many' && loops ? `\n${loops} of them are self-loops: they come back as internal events (not graph edges).` : '';
       if (!confirm(`${what} ${ids.length} rejected relationship(s)?${note}\nEach is one Edit-log row (revertible).`)) return;
@@ -677,7 +712,9 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
       el('input', { type: 'checkbox', 'data-rej': '1', onclick: ev => { ev.target.checked ? picked.add(r.rel_id) : picked.delete(r.rel_id); sync(); } }),
       el('span', { style: 'flex:1' },
          el('b', {}, `${r.a} —${r.rel_type}→ ${r.b}`), ' ',
-         r.self_loop ? el('span', { class: 'tag', title: 'Same entity both ends: restores as an internal event' }, 'internal event') : '',
+         r.self_loop ? (r.restorable
+           ? el('span', { class: 'tag', title: 'Same entity both ends: restores as an internal event' }, 'internal event')
+           : el('span', { class: 'tag warn', title: 'A two-party type on one entity: noise — delete only' }, 'self-loop · delete only')) : '',
          ' ', el('span', { class: 'kv' }, `rel ${r.rel_id} · ${r.date || ''} · ${(r.headline || '').slice(0, 90)}`),
          r.mechanism ? el('div', { class: 'kv' }, r.mechanism.slice(0, 220)) : ''),
       el('a', { href: '/#card-' + r.entry_id, target: '_blank', class: 'kv' }, r.entry_id))));

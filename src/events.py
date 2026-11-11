@@ -32,17 +32,17 @@ _CUES: dict[str, re.Pattern] = {
     "product_launch": re.compile(r"\b(launch(?:es|ed|ing)?|unveil(?:s|ed|ing)?|debut(?:s|ed)?|introduc(?:e|es|ed|ing)|"
                                  r"releas(?:e|es|ed)|rolls? out|rolled out|reveal(?:s|ed)?|showcas(?:e|es|ed)|"
                                  r"open[- ]sourc(?:e|es|ed)|(?:exits?|emerges?) (?:from )?stealth)\b", _I),
-    "production_facility": re.compile(r"\b(factory|factories|plant|gigafactory|production line|manufacturing (?:hub|base|site)|"
+    "production_facility": re.compile(r"\b(factory|factories|(?<!to )plants?(?! (?:a |its |the )?flags?)|gigafactory|production line|manufacturing (?:hub|base|site)|"
                                       r"mass[- ]produc\w+|(?:begin|start|ramp|initiat|scal|expand|boost)\w* (?:\S+ ){0,4}production|"
                                       r"production (?:ramps?|capacity|starts?|begins?)|commission(?:s|ed))\b", _I),
-    "deployment": re.compile(r"\b(deploy(?:s|ed|ing|ment|ments)?|deliver(?:s|ed)? (?:\S+ ){0,4}to|(?<!contract )contracts?(?! manufactur)|orders?|"
+    "deployment": re.compile(r"\b(deploy(?:s|ed|ing|ment|ments)?|deliver(?:s|ed)? (?:\S+ ){0,4}to|(?<!contract )contracts?(?! manufactur)|(?<!executive )(?<!in )orders?(?! to\b)|"
                              r"pre-?orders?|pilot(?:s|ed|ing)?|commerciali[sz](?:e|es|ed|ing|ation)|"
                              r"selects?|selected)\b", _I),
     "partnership": re.compile(r"\b(partner(?:s|ed|ing|ship|ships)?|collaborat\w+|teams? up|alliance|"
                               r"joint ventures?|(?-i:JVs?)|MoU|memorandum|tie-up|join(?:s|ed)? forces)\b", _I),
-    "regulation": re.compile(r"\b(bans?|banned|blocks?|blocked|regulat\w+|law|laws|bill|legislation|FCC|tariffs?|export controls?|"
+    "regulation": re.compile(r"\b(bans?|banned|blocks?|blocked|regulat\w+|law|laws|(?:passes|signs|proposes|introduces|new) bill|bill (?:to|that|would)|executive orders?|legislation|FCC|tariffs?|export controls?|"
                              r"sanctions?|polic(?:y|ies)|AI Act|designat(?:es|ed) (?:\S+ ){0,3}(?:top |national |strategic )?priority|standards|standardi[sz]\w+|probes?|scrutiny)\b", _I),
-    "research": re.compile(r"\b(research(?:ers)?|study|paper|arXiv|breakthrough|university|scientists?)\b", _I),
+    "research": re.compile(r"\b(research(?:ers)?(?! (?:Institute|Inc|division|unit|arm)\b)|study|paper|arXiv|breakthrough|university|scientists?)\b", _I),
     "leadership": re.compile(r"\b(appoint(?:s|ed|ment)?|names? (?:new )?(?:CEO|CTO|CFO|COO|chief|president|chair)|"
                              r"steps? down|resign(?:s|ed|ation)?|hires? (?:former )?(?:\w+ ){0,3}(?:CEO|CTO|chief|head|lead|executive|veteran))\b", _I),
 }

@@ -73,9 +73,35 @@ class TestIngestRule(_Fixture):
         self.assertFalse(ok("", "Optimus", "deploys", self.tesla))
 
 
+class TestIngestEndToEnd(_Fixture):
+    def test_write_extraction_keeps_alias_self_loop_as_internal(self):
+        from src.config import load_config
+        from src.extract import ExtractionResult
+        self.con.execute("INSERT INTO entity_aliases (entity_id, alias, verified, source) VALUES (?, 'Optimus Gen 3', true, 'admin')",
+                         [self.tesla])
+        ents = [{"resolved": "Tesla", "mention": "Tesla", "type": "public_company", "kind": "organization"},
+                {"resolved": "Optimus Gen 3", "mention": "Optimus Gen 3", "type": "public_company", "kind": "organization"}]
+        rels = [{"entity_a": "Tesla", "rel_type": "deploys", "entity_b": "Optimus Gen 3", "confidence": 0.9,
+                 "evidence_type": "direct", "mechanism": "Tesla deploys Optimus Gen 3 in its factories."},
+                {"entity_a": "Tesla", "rel_type": "partners_with", "entity_b": "Optimus Gen 3", "confidence": 0.9,
+                 "evidence_type": "direct", "mechanism": "noise"}]
+        res = ExtractionResult(entry_id="ROB-2", prompt_version="t", model="t", reasoning="", significance_score=0.5,
+                               entities=ents, relationships=rels, sentiment_label="bullish",
+                               headline="Tesla deploys Optimus Gen 3", research_sources=[], dropped_low_confidence=[],
+                               flagged_medium_confidence=[], context_text="Tesla deploys Optimus Gen 3 in its factories.")
+        entry = {"entry_id": "ROB-2", "timestamp": "2026-11-10T00:00:00Z", "category": "Robotics",
+                 "headline": "Tesla deploys Optimus Gen 3", "raw_finding": "Tesla deploys Optimus Gen 3 in its factories."}
+        cid = ingest.write_extraction(self.con, entry, res, load_config())
+        rows = self.con.execute("SELECT entity_a_id, rel_type, entity_b_id, status FROM relationships WHERE catalyst_id = ?",
+                                [cid]).fetchall()
+        self.assertEqual(rows, [(self.tesla, "deploys", self.tesla, "internal")])   # two-party type dropped
+
+
 class TestExportAndCounts(_Fixture):
     def test_card_lists_internal_events_and_counts_are_unchanged(self):
         self._rel(self.figure, "competes_with", self.tesla)
+        self._rel(self.optimus, "competes_with", self.tesla)
+        self._rel(self.optimus, "supplies", self.tesla)   # no LIMIT 1 ties: Tesla 3 > Optimus 2; competes 2 > supplies 1
 
         def snapshot():
             cards = export._load_cards(self.con, "Robotics", 100, time_window_days=0, min_edge_confidence=0.0,

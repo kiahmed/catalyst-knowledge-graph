@@ -563,6 +563,36 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
                  "unresolved": unresolved, "edges": edges}, {"deleted": eid, "edges_deleted": len(edges)}, True,
                 {e["catalyst_id"] for e in edges})
 
+    if op == "add_edge":   # a relationship the extractor missed, asserted by the admin on one card
+        entry, a, rt, b, mech = _need(p, "entry_id", "entity_a_id", "rel_type", "entity_b_id", "mechanism")
+        card = con.execute("SELECT catalyst_id, timestamp FROM catalysts WHERE entry_id = ?", [entry]).fetchone()
+        if not card:
+            raise EditError(f"no card {entry!r}")
+        _entity_exists(con, a)
+        _entity_exists(con, b)
+        if a == b:
+            raise EditError("source and target are the same entity — an edge needs two")
+        if rt not in vocab:
+            raise EditError(f"unknown rel_type {rt!r}")
+        mech = str(mech).strip()
+        if len(mech) < 10:
+            raise EditError("mechanism: say in a sentence what the card shows (10+ characters)")
+        sym = rt in direction.symmetric_types()
+        if sym and a > b:
+            a, b = b, a                  # one stored direction for two-party types, like ingest
+        if con.execute("""SELECT 1 FROM relationships WHERE catalyst_id = ? AND rel_type = ?
+                          AND status IN ('active', 'materialized')
+                          AND ((entity_a_id = ? AND entity_b_id = ?) OR (? AND entity_a_id = ? AND entity_b_id = ?))""",
+                       [card[0], rt, a, b, sym, b, a]).fetchone():
+            raise EditError("this relationship is already live on the card")
+        day = card[1].date() if hasattr(card[1], "date") else card[1]
+        rel_id = con.execute("""INSERT INTO relationships (catalyst_id, entity_a_id, rel_type, entity_b_id, confidence,
+                                    evidence_type, mechanism, flagged, first_flagged_at)
+                                VALUES (?, ?, ?, ?, 1.0, 'direct', ?, false, ?) RETURNING rel_id""",
+                             [card[0], a, rt, b, mech, day]).fetchone()[0]
+        return ({"rel_id": None}, {"rel_id": rel_id, "entry_id": entry, "entity_a_id": a, "rel_type": rt,
+                                   "entity_b_id": b}, True, {card[0]})
+
     if op == "delete_edge":   # hard delete of one relationship row (reject = soft); row kept for the revert
         (rel_id,) = _need(p, "rel_id")
         cur = _edge(con, rel_id)
@@ -684,7 +714,9 @@ def repoint_many(con: duckdb.DuckDBPyConnection, *, from_entity_id: int, to_enti
 
 def rejected_edges(con: duckdb.DuckDBPyConnection, limit: int = 2000) -> list[dict[str, Any]]:
     """Every rejected relationship, newest card first (the admin Rejected list)."""
+    sym = direction.symmetric_types()
     return [{"rel_id": rid, "a": an, "rel_type": rt, "b": bn, "self_loop": a == b, "mechanism": mech,
+             "restorable": a != b or rt not in sym,     # "X partners_with X" can never come back
              "entry_id": entry, "date": ts.isoformat()[:10] if ts else None, "headline": head}
             for rid, a, an, rt, b, bn, mech, entry, ts, head in con.execute("""
                 SELECT r.rel_id, r.entity_a_id, ea.name, r.rel_type, r.entity_b_id, eb.name, r.mechanism,
@@ -930,6 +962,8 @@ def revert_edit(con: duckdb.DuckDBPyConnection, edit_id: str, *, email: str, ip:
             raise EditConflict(f"alias {after['alias']!r} is no longer on that entity")
         con.execute("DELETE FROM entity_aliases WHERE entity_id = ? AND alias = ?", [after["entity_id"], after["alias"]])
         return _record_manual_revert(con, edit_id, email, ip, before, after)
+    elif op == "add_edge":   # undo = hard delete of the added row (itself revertible), only while still live
+        inverse = ("delete_edge", {"rel_id": after["rel_id"], "expect": {"status": "active"}})
     elif op in ("link", "unlink"):
         key = {k: before[k] for k in ("child_id", "parent_id", "relation")}
         inverse = ("unlink" if op == "link" else "link", key)

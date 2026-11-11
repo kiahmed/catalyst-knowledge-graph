@@ -43,6 +43,14 @@ class TestRules(unittest.TestCase):
         for head, want in cases.items():
             self.assertEqual(C(head), want, head)
 
+    def test_review_findings_b8046e9(self):
+        self.assertEqual(C("Bill Gates-backed Figure rival raises $100M"), "funding")
+        self.assertIsNone(C("Agility redesigns Digit in order to cut costs"))
+        self.assertEqual(C("Executive order targets Chinese robots"), "regulation")
+        self.assertEqual(C("Toyota Research Institute unveils new humanoid"), "product_launch")
+        self.assertIsNone(C("Tesla to plant flag in humanoid market with Optimus V3"))
+        self.assertEqual(C("Senate passes bill to restrict Chinese humanoids"), "regulation")
+
     def test_false_positives_from_the_eval(self):
         self.assertEqual(C("Standard Bots Secures $200M to Scale AI-Native Industrial Robots"), "funding")
         self.assertEqual(C("Vention Launches AI for Unstructured Manufacturing, Intensifying Competition"), "product_launch")
