@@ -132,14 +132,18 @@ def entity_detail(con: duckdb.DuckDBPyConnection, eid: int) -> dict[str, Any]:
         ORDER BY 2, 4""", [eid, eid, eid, eid, eid]).fetchall()]
     names = _distinctive_names(con, eid, name)
     rels = []
-    for (rel_id, a_id, a_name, rt, b_id, b_name, ev, conf, status, mech, entry_id, date, headline, finding) in con.execute("""
+    # rel_subtype arrives with the first save / ingest after deploy; a read-only DB not yet migrated shows none
+    sub_col = "r.rel_subtype" if con.execute("SELECT 1 FROM duckdb_columns() WHERE table_name = 'relationships' "
+                                             "AND column_name = 'rel_subtype'").fetchone() else "NULL"
+    for (rel_id, a_id, a_name, rt, b_id, b_name, ev, conf, status, mech, entry_id, date, headline, finding, sub) in con.execute(f"""
             SELECT r.rel_id, r.entity_a_id, ea.name, r.rel_type, r.entity_b_id, eb.name, r.evidence_type, r.confidence,
-                   r.status, r.mechanism, c.entry_id, c.timestamp, c.headline, c.raw_finding
+                   r.status, r.mechanism, c.entry_id, c.timestamp, c.headline, c.raw_finding, {sub_col}
             FROM relationships r JOIN catalysts c USING (catalyst_id)
             JOIN entities ea ON ea.entity_id = r.entity_a_id JOIN entities eb ON eb.entity_id = r.entity_b_id
             WHERE ? IN (r.entity_a_id, r.entity_b_id) AND r.entity_a_id <> r.entity_b_id
             ORDER BY c.timestamp DESC, r.rel_id""", [eid]).fetchall():
-        rels.append({"rel_id": rel_id, "a": {"id": a_id, "name": a_name}, "rel_type": rt, "b": {"id": b_id, "name": b_name},
+        rels.append({"rel_id": rel_id, "a": {"id": a_id, "name": a_name}, "rel_type": rt, "rel_subtype": sub,
+                     "b": {"id": b_id, "name": b_name},
                      "evidence": ev, "confidence": conf, "status": status, "mechanism": mech, "entry_id": entry_id,
                      "date": date.isoformat() if date else None, "headline": headline, "finding": finding,
                      "named_in_card": _mentions(f"{headline} {finding}", names)})

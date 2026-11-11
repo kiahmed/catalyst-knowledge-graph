@@ -578,14 +578,17 @@ input[type="date"]:focus { border-color: var(--border-focus); }
   width: 230px;
 }
 /* Relationship-type filter (top right of the map; the node panel overlays it while open) */
-.graph-reltype { position: absolute; top: 12px; right: 12px; z-index: 420; width: 230px; }
+/* Ends just left of the graph legend (top right: 12px inset + its 222px width) with an 8px gap. */
+.graph-reltype { position: absolute; top: 12px; right: 242px; z-index: 420; width: 230px; }
 .graph-reltype select {
   width: 100%; font: inherit; font-size: 12px; color: var(--text);
   padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px;
   background: rgba(253,252,250,0.92); box-shadow: var(--shadow); cursor: pointer;
 }
 .graph-reltype select:focus { outline: none; border-color: #06b6d4; }
-@media (max-width: 760px) { .graph-reltype { top: auto; bottom: 12px; right: 12px; width: 180px; } }
+/* Too narrow for search + dropdown + legend in one row: sit under the company search instead. */
+@media (max-width: 1040px) { .graph-reltype { top: 70px; left: 284px; right: auto; } }
+@media (max-width: 760px) { .graph-reltype { top: auto; bottom: 12px; left: auto; right: 12px; width: 180px; } }
 .graph-load-chip { position: fixed; left: 16px; bottom: 48px; z-index: 60; display: flex; align-items: center; gap: 10px;
   background: var(--bg-card); border: 1px solid var(--border); border-radius: 999px; box-shadow: var(--shadow);
   padding: 6px 8px 6px 14px; font-size: 12px; color: var(--text-secondary); }

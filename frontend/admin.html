@@ -348,6 +348,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
         el('input', { type: 'checkbox', checked: S.checked.has(r.rel_id), onclick: ev => { ev.stopPropagation();
           ev.target.checked ? S.checked.add(r.rel_id) : S.checked.delete(r.rel_id); syncChecked(); } }),
         el('span', {}, `${r.a.name} —${r.rel_type}→ ${r.b.name}`),
+        r.rel_subtype ? el('span', { class: 'tag', title: 'Subtype — computed from the mechanism text, not editable' }, r.rel_subtype) : '',
         r.status !== 'active' ? el('span', { class: 'tag bad' }, r.status) : '',
         r.named_in_card ? '' : el('span', { class: 'tag warn', title: `"${S.entity.name}" not named in this card (only via an alias / inference)` }, 'not named'),
         r.review ? el('span', { class: 'tag rev', title: r.review.reason || 'needs review' }, 'review') : '',
@@ -393,7 +394,9 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
     document.body.classList.toggle('frozen', !!editing);
     $('colEdit').classList.toggle('editing', !!editing);
     if (!r) { p.append(el('p', { class: 'kv' }, 'Pick a relationship.')); return; }
-    p.append(el('p', {}, el('b', {}, `${r.a.name} —${r.rel_type}→ ${r.b.name}`)),
+    p.append(el('p', {}, el('b', {}, `${r.a.name} —${r.rel_type}→ ${r.b.name}`),
+        r.rel_subtype ? el('span', { class: 'tag', title: 'Subtype (src/subtypes.py): computed from the mechanism text on every save — not editable' },
+          '↳ ' + r.rel_subtype.replace(/_/g, ' ')) : ''),
       el('p', { class: 'kv' }, `rel ${r.rel_id} · ${r.evidence} · confidence ${Number(r.confidence).toFixed(2)} · ${r.status} · card `,
         el('a', { href: '/#card-' + r.entry_id, target: '_blank' }, r.entry_id), ` · ${r.date || ''}`),
       r.review ? el('div', { style: 'border:1px solid #b45309;border-radius:6px;padding:6px 8px;margin:6px 0' },
