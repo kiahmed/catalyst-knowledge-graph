@@ -88,6 +88,30 @@ class TestRules(unittest.TestCase):
         # direction can't be checked without names → no subtype
         self.assertIsNone(C("supplies", "X manufactures chips for Y.", "direct"))
 
+    def test_review_findings_d08d856(self):
+        # W1: the role belongs to the target
+        self.assertIsNone(C("supplies", "NVIDIA supplies Jetson modules to Foxconn, its contract manufacturer.",
+                            "direct", a_name="NVIDIA", b_name="Foxconn"))
+        # W2: warehouse "distribution"
+        self.assertIsNone(C("supplies", "Symbotic supplies automation systems to Walmart distribution centers.",
+                            "direct", a_name="Symbotic", b_name="Walmart"))
+        # W3: the verb "grants"; "owned by" someone else
+        self.assertIsNone(C("invests_in", "The round grants SoftBank a board seat at Skild.", "direct",
+                            a_name="SoftBank", b_name="Skild AI", a_type="public_company"))
+        self.assertIsNone(C("invests_in", "Microsoft invested in Cruise, which is majority owned by GM.", "direct",
+                            a_name="Microsoft", b_name="Cruise"))
+        self.assertEqual(C("invests_in", "AiMOGA Robotics is a subsidiary of the Chery Group.", "direct",
+                           a_name="Chery", b_name="AiMOGA"), "owns")
+        self.assertEqual(C("invests_in", "Bleu Robotics received an i-Lab grant from BPI France.", "direct",
+                           a_name="BPI France", b_name="Leju Robotics", a_type="organization"), "funds")
+        # N1: JV phrase in any case
+        self.assertEqual(C("partners_with", "Joint venture between SKF and Leaderdrive.", "direct"), "joint_venture")
+        # N2: a blank name never raises
+        self.assertIsNone(C("supplies", "X manufactures chips for Y.", "direct", a_name="  ", b_name="Y"))
+        # N3: a generic first word doesn't stand for the company
+        self.assertIsNone(C("supplies", "General purpose robots: a contract manufacturer will build for Figure.",
+                            "direct", a_name="General Robotics", b_name="Figure"))
+
     def test_licenses_and_sells_through(self):
         self.assertEqual(C("supplies", "Ceva licenses its NeuPro NPU IP to Mobilint.", "direct",
                            a_name="Ceva", b_name="Mobilint"), "licenses_to")

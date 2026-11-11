@@ -48,7 +48,8 @@ Other 11 parents: no subtypes.
 - Graph payload edges: new key `rel_subtype`.
 - `export._load_cards` tolerates a DB not yet migrated (exports null).
 - Not in embeddings (embed text unchanged → no re-embed), not on card PNGs (no re-render), not in the UI yet.
-- Effect of the first prod run: card docs whose edges gained a subtype get one Firestore rewrite (delta export).
+- Effect of the first prod run: every card doc with at least one relationship gets one Firestore rewrite
+  (the new `rel_subtype` key, null included, changes each card's hash) — one-time, then delta as usual.
 
 ## 6. Validation (data/subtype_rules_eval_20261111.txt)
 All 8,567 live edges classified. Hand-read ~140 random samples over four tuning rounds; final precision
@@ -62,6 +63,12 @@ edges, where certainty is already carried by `evidence_type`.
 "Innovation Fund", "government-backed company", "manufacturers"/catalogue supplier, target-is-maker,
 "distributed computing", "distributing … across its group", logistics, "parent company of <other>"),
 roll-up, refresh idempotence, rel_type/status untouched, bulk path, per-card hook, admin repoint + revert.
+
+## 7a. Review follow-up (d08d856 review)
+Role attribution ("A supplies B, its contract manufacturer" → none), warehouse "distribution centers",
+the verb "grants", "owned by / subsidiary of" must name the source, case-insensitive "joint venture",
+blank names, generic first words ("General", "Advanced"…) never stand for a company; edit_entity (+ revert)
+refreshes subtypes on all of the entity's rows, not only live ones.
 
 ## 8. Not in scope
 UI display/filter of subtypes; subtypes for the other 11 parents; any LLM involvement.

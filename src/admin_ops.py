@@ -18,7 +18,7 @@ from typing import Any
 
 import duckdb
 
-from . import direction, entities, hashtags
+from . import direction, entities, hashtags, subtypes
 
 LIVE = ("active", "materialized")
 EDGE_STATUSES = ("active", "materialized", "invalidated", "rejected")   # every status a relationship can hold
@@ -218,6 +218,11 @@ def _live_catalysts(con: duckdb.DuckDBPyConnection, eid: int) -> set[int]:
     return {r[0] for r in con.execute("SELECT DISTINCT catalyst_id FROM relationships WHERE ? IN "
                                       "(entity_a_id, entity_b_id) AND status IN ('active', 'materialized')",
                                       [eid]).fetchall()}
+
+
+def _any_catalysts(con: duckdb.DuckDBPyConnection, eid: int) -> set[int]:
+    return {r[0] for r in con.execute("SELECT DISTINCT catalyst_id FROM relationships WHERE ? IN "
+                                      "(entity_a_id, entity_b_id)", [eid]).fetchall()}
 
 
 def _via(rels: list[dict[str, Any]], name: str, alias: str) -> list[int]:
@@ -499,6 +504,9 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
         # Card docs carry entity name + type and hashtags are derived from both
         # (hashtags.py tags by type): any change re-tags + refreshes its cards.
         touched = _live_catalysts(con, eid)
+        # rel_subtype reads names + source type: refresh EVERY row of the entity (rejected / invalidated
+        # rows too — they can be restored); live cards also refresh via store_for_catalyst.
+        subtypes.refresh(con, _any_catalysts(con, eid))
         return ({"entity_id": eid, "name": name0, "type": typ0},
                 {"entity_id": eid, "name": name, "type": typ, "alias_added": alias_added}, True, touched)
 
@@ -812,6 +820,7 @@ def revert_edit(con: duckdb.DuckDBPyConnection, edit_id: str, *, email: str, ip:
         if before["type"] != cur_type:
             con.execute("UPDATE entities SET type = ? WHERE entity_id = ?", [before["type"], eid])
         touched = _live_catalysts(con, eid)
+        subtypes.refresh(con, _any_catalysts(con, eid))
         for cid in touched:
             hashtags.store_for_catalyst(con, cid)
         return _record_manual_revert(con, edit_id, email, ip, before, after, cards=_card_ids(con, touched))
