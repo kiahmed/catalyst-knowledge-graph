@@ -711,9 +711,35 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
       restore.textContent = picked.size ? `Restore ${picked.size}` : 'Restore';
       purge.textContent = picked.size ? `Delete ${picked.size} permanently` : 'Delete permanently';
     };
-    const all = el('input', { type: 'checkbox', title: 'Select all', onclick: ev => {
-      d.edges.forEach(r => ev.target.checked ? picked.add(r.rel_id) : picked.delete(r.rel_id));
-      box.querySelectorAll('input[data-rej]').forEach(c => { c.checked = ev.target.checked; }); sync(); } });
+    // Entity filter + select-all over the SHOWN rows only; narrowing the filter drops hidden rows from the
+    // selection, so Restore / Delete only ever act on what is on screen.
+    const q = el('input', { placeholder: 'Filter by entity (either end)…', style: 'width:260px' });
+    const all = el('input', { type: 'checkbox' });
+    const counter = el('span', { class: 'kv' });
+    const shown = () => {
+      const t = q.value.trim().toLowerCase();
+      return t ? d.edges.filter(r => r.a.toLowerCase().includes(t) || r.b.toLowerCase().includes(t)) : d.edges;
+    };
+    const rows = el('div', {});
+    const draw = () => {
+      const vis = shown(), visIds = new Set(vis.map(r => r.rel_id));
+      [...picked].forEach(id => { if (!visIds.has(id)) picked.delete(id); });
+      all.checked = vis.length > 0 && vis.every(r => picked.has(r.rel_id));
+      counter.textContent = `${vis.length} shown · ${picked.size} selected`;
+      rows.replaceChildren(...vis.map(r => el('div', { class: 'item' },
+        el('input', { type: 'checkbox', 'data-rej': '1', checked: picked.has(r.rel_id), onclick: ev => {
+          ev.target.checked ? picked.add(r.rel_id) : picked.delete(r.rel_id); draw(); sync(); } }),
+        el('span', { style: 'flex:1' },
+           el('b', {}, `${r.a} —${r.rel_type}→ ${r.b}`), ' ',
+           r.self_loop ? (r.restorable
+             ? el('span', { class: 'tag', title: 'Same entity both ends: restores as an internal event' }, 'internal event')
+             : el('span', { class: 'tag warn', title: 'A two-party type on one entity: noise — delete only' }, 'self-loop · delete only')) : '',
+           ' ', el('span', { class: 'kv' }, `rel ${r.rel_id} · ${r.date || ''} · ${(r.headline || '').slice(0, 90)}`),
+           r.mechanism ? el('div', { class: 'kv' }, r.mechanism.slice(0, 220)) : ''),
+        el('a', { href: '/#card-' + r.entry_id, target: '_blank', class: 'kv' }, r.entry_id))));
+    };
+    all.addEventListener('click', () => { shown().forEach(r => all.checked ? picked.add(r.rel_id) : picked.delete(r.rel_id)); draw(); sync(); });
+    q.addEventListener('input', () => { draw(); sync(); });
     const save = async (op, what) => {
       const ids = [...picked];
       const stuck = d.edges.filter(r => picked.has(r.rel_id) && r.self_loop && !r.restorable);
@@ -727,19 +753,14 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
     };
     restore.addEventListener('click', () => save('restore_many', 'Restore'));
     purge.addEventListener('click', () => save('delete_edge_many', 'Delete permanently'));
-    box.replaceChildren(el('h3', {}, all, ' ', `Rejected relationships (${d.total ?? d.edges.length})`, ' ', restore, ' ', purge));
+    box.replaceChildren(el('h3', {}, `Rejected relationships (${d.total ?? d.edges.length})`, ' ', restore, ' ', purge),
+      el('p', { class: 'kv' }, 'Restore = the edge comes back exactly as it is now (same two entities; a merge or repoint is not undone). ' +
+        'A self-loop comes back as an internal event, never as a graph edge.'),
+      el('div', { class: 'tools', style: 'padding:0 0 6px' }, q, el('label', {}, all, ' select all shown'), counter));
     if (d.total > d.edges.length) box.append(el('p', { class: 'kv' }, `Showing the newest ${d.edges.length} of ${d.total}.`));
     if (!d.edges.length) box.append(el('p', { class: 'kv' }, 'No rejected relationships.'));
-    d.edges.forEach(r => box.append(el('div', { class: 'item' },
-      el('input', { type: 'checkbox', 'data-rej': '1', onclick: ev => { ev.target.checked ? picked.add(r.rel_id) : picked.delete(r.rel_id); sync(); } }),
-      el('span', { style: 'flex:1' },
-         el('b', {}, `${r.a} —${r.rel_type}→ ${r.b}`), ' ',
-         r.self_loop ? (r.restorable
-           ? el('span', { class: 'tag', title: 'Same entity both ends: restores as an internal event' }, 'internal event')
-           : el('span', { class: 'tag warn', title: 'A two-party type on one entity: noise — delete only' }, 'self-loop · delete only')) : '',
-         ' ', el('span', { class: 'kv' }, `rel ${r.rel_id} · ${r.date || ''} · ${(r.headline || '').slice(0, 90)}`),
-         r.mechanism ? el('div', { class: 'kv' }, r.mechanism.slice(0, 220)) : ''),
-      el('a', { href: '/#card-' + r.entry_id, target: '_blank', class: 'kv' }, r.entry_id))));
+    box.append(rows);
+    draw();
     box.append(el('button', { onclick: () => { $('modal').style.display = 'none'; } }, 'Close'));
     $('modal').style.display = 'flex';
   }
