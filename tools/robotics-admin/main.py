@@ -493,6 +493,16 @@ def entity(_who, eid):
     return jsonify({"ok": True, **d})
 
 
+@app.get("/admin/api/rejected")
+@_guard
+def rejected(_who):
+    con = _read_con()
+    try:
+        return jsonify({"ok": True, "edges": admin_ops.rejected_edges(con)})
+    finally:
+        con.close()
+
+
 @app.get("/admin/api/scan")
 @_guard
 def scan(_who):
@@ -536,6 +546,10 @@ def edit(who):
         body_out, code = _write(lambda con: admin_ops.spin_in_many(
             con, into_entity_id=payload.get("into_entity_id"), child_ids=payload.get("child_ids"), email=who[0],
             ip=who[1], vocab=_vocab(), extra=extra))
+    elif op in ("restore_many", "delete_edge_many"):   # Rejected list: bulk restore / permanent delete
+        fn = admin_ops.restore_many if op == "restore_many" else admin_ops.delete_edge_many
+        body_out, code = _write(lambda con: fn(con, rel_ids=payload.get("rel_ids"), email=who[0], ip=who[1],
+                                               vocab=_vocab(), extra=extra))
     else:
         body_out, code = _write(lambda con: admin_ops.apply_edit(con, op, payload, email=who[0], ip=who[1],
                                                                  vocab=_vocab()))

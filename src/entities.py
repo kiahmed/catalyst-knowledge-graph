@@ -341,6 +341,15 @@ def merge(con: duckdb.DuckDBPyConnection, src_id: int, dst_id: int, *, confidenc
                             THEN 'rejected' ELSE 'internal' END
                         WHERE entity_a_id = ? AND entity_b_id = ? AND status IN ('active', 'materialized')
                         AND catalyst_id IN ({','.join('?' * len(cards))})""", [sym, dst_id, dst_id, *cards])
+        # Two products merged into one company ("Tesla deploys Optimus", "Tesla deploys AI5") → one internal
+        # event per (card, type): keep the most confident, drop the restatements (like dedupe_rows does).
+        con.execute(f"""DELETE FROM relationships WHERE rel_id IN (
+                          SELECT rel_id FROM (SELECT rel_id, ROW_NUMBER() OVER (PARTITION BY catalyst_id, rel_type
+                                              ORDER BY confidence DESC, rel_id) AS rn
+                                              FROM relationships WHERE entity_a_id = ? AND entity_b_id = ?
+                                              AND status = 'internal'
+                                              AND catalyst_id IN ({','.join('?' * len(cards))}))
+                          WHERE rn > 1)""", [dst_id, dst_id, *cards])
     deduped = direction.dedupe_rows(con, cards)
     for cid in cards:
         hashtags.store_for_catalyst(con, cid)

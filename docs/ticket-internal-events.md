@@ -32,6 +32,15 @@ exclude `internal`. Only symmetric (two-party) types are never internal: "X part
   (active/materialized); no duplicate internal event per card. Editor lists unchanged (self-loops hidden;
   delete-entity-with-edges removes them, revertibly).
 
+## 3a. Review follow-up (4ae9b6e review)
+- An `internal` row can't be repointed (it would leave a non-loop `internal` row no view shows).
+- A symmetric type can't be set `internal` by admin (matches §2).
+- Merge keeps ONE internal event per (card, type): two products folded into one company on one card
+  ("deploys Optimus", "deploys AI5") keep the most confident row; restatements are deleted, like dedupe_rows.
+- Export: `internal_events: []` is on every card, so the first export after deploy rewrites every card doc
+  once (together with `rel_subtype` and `event_type`); a card whose only row for an entity is internal
+  still lists that entity as a chip (it is on the card).
+
 ## 4. Data step after deploy
 Set Tesla's 10 self-loops that the 2026-11-10 Optimus/AI5 merges set `rejected` (all directional:
 deploys ×5, pilots, integrates_with, built_on, supplies, spins_out_from) to `internal` via the admin

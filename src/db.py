@@ -224,6 +224,8 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
     # Optional finer meaning under rel_type (src/subtypes.py, deterministic).
     # NULL = plain parent type. Never replaces rel_type; always rolls up to it.
     con.execute("ALTER TABLE relationships ADD COLUMN IF NOT EXISTS rel_subtype VARCHAR")
+    # What the card's story reports (src/events.py, deterministic from the headline). NULL = none.
+    con.execute("ALTER TABLE catalysts ADD COLUMN IF NOT EXISTS event_type VARCHAR")
     # Alias trust (docs/ticket-ingest-entity-resolution.md §3.4): only a
     # verified alias is trusted by ingest without an LLM check. NULL = legacy.
     con.execute("ALTER TABLE entity_aliases ADD COLUMN IF NOT EXISTS verified BOOLEAN")

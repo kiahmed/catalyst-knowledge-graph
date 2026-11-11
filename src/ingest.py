@@ -29,7 +29,7 @@ import duckdb
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from . import db, direction, hashtags, subtypes
+from . import db, direction, events, hashtags, subtypes
 from .config import RoboticsConfig
 from .extract import ExtractionResult, extract, research_sources_json
 from .resolve import Decision, decide_entities, resolve_entity
@@ -287,6 +287,7 @@ def write_extraction(
         # Tags are derived from the rows just written, so compute them inside
         # the same transaction — a catalyst is never visible without them.
         hashtags.store_for_catalyst(con, catalyst_id)
+        events.refresh(con, [catalyst_id])
 
         # Record the Pass-3 direction check so the audit tool's MISSING mode
         # skips this card. Absent, failed or partial check (a verdict missing)
@@ -405,6 +406,9 @@ def run_ingest(
         subtyped = subtypes.refresh(con)
         if subtyped:
             log.info("subtypes_refresh changed=%d", subtyped)
+        evented = events.refresh(con)    # card event_type: same pattern (first run = backfill)
+        if evented:
+            log.info("event_type_refresh changed=%d", evented)
 
         last_date, last_id, _last_gen_unused = db.get_watermark(con, cfg.sector)
 

@@ -375,6 +375,8 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
             raise EditError("nothing to change: give entity_a_id, entity_b_id and/or rel_type")
         cur = _edge(con, rel_id)
         _check_expect(cur, p.get("expect"), list(new))
+        if cur["status"] == "internal":
+            raise EditError("an internal event (self-loop) can't be repointed — reject it, or delete it")
         for k in ("entity_a_id", "entity_b_id"):
             if k in new:
                 _entity_exists(con, new[k])
@@ -402,6 +404,8 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
         loop = cur["entity_a_id"] == cur["entity_b_id"]
         if status == "internal" and not loop:
             raise EditError("only a self-loop (same entity both ends) can be an internal event")
+        if status == "internal" and cur["rel_type"] in direction.symmetric_types():
+            raise EditError(f"{cur['rel_type']} needs two parties — it can't be an internal event")
         if status in LIVE and loop:
             raise EditError("a self-loop can't be a live edge — use status 'internal' (internal event)")
         if status == "internal" and cur["status"] != "internal" and con.execute(
@@ -542,6 +546,9 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
             shown = sum(1 for e in edges if e["entity_a_id"] != e["entity_b_id"])   # the editor doesn't list self-loops
             if expect_edges != shown:
                 raise EditConflict(f"{name!r} now has {shown} relationships, not {expect_edges} — reload")
+            live = sum(1 for e in edges if e["status"] in LIVE)
+            if live and p.get("confirm_name") != name:   # live data on the site: the name must be typed, exactly
+                raise EditError(f"{name!r} has {live} active relationship(s): type its exact name to confirm the delete")
             con.execute("DELETE FROM relationships WHERE ? IN (entity_a_id, entity_b_id)", [eid])
         aliases = [a for (a,) in con.execute("SELECT alias FROM entity_aliases WHERE entity_id = ?", [eid]).fetchall()]
         links = [list(r) for r in con.execute("""SELECT child_id, parent_id, relation, confidence, reason, source
@@ -673,6 +680,55 @@ def repoint_many(con: duckdb.DuckDBPyConnection, *, from_entity_id: int, to_enti
         cards.update(out["cards"])
     return {"edit_id": ",".join(done), "edit_ids": done, "op": "repoint_many", "count": len(done),
             "cards": sorted(cards)}
+
+
+def rejected_edges(con: duckdb.DuckDBPyConnection, limit: int = 2000) -> list[dict[str, Any]]:
+    """Every rejected relationship, newest card first (the admin Rejected list)."""
+    return [{"rel_id": rid, "a": an, "rel_type": rt, "b": bn, "self_loop": a == b, "mechanism": mech,
+             "entry_id": entry, "date": ts.isoformat()[:10] if ts else None, "headline": head}
+            for rid, a, an, rt, b, bn, mech, entry, ts, head in con.execute("""
+                SELECT r.rel_id, r.entity_a_id, ea.name, r.rel_type, r.entity_b_id, eb.name, r.mechanism,
+                       c.entry_id, c.timestamp, c.headline
+                FROM relationships r JOIN catalysts c USING (catalyst_id)
+                JOIN entities ea ON ea.entity_id = r.entity_a_id JOIN entities eb ON eb.entity_id = r.entity_b_id
+                WHERE r.status = 'rejected' ORDER BY c.timestamp DESC, r.rel_id LIMIT ?""", [limit]).fetchall()]
+
+
+def _status_many(con: duckdb.DuckDBPyConnection, op_name: str, rel_ids: Any, one, *, email: str, ip: str | None,
+                 vocab: set[str], extra: dict[str, Any] | None) -> dict[str, Any]:
+    """Bulk over rejected rows: each goes through apply_edit (guards, one audit row each, each revertible).
+    All-or-nothing: any refusal raises and the caller's working copy is discarded, so nothing is pushed."""
+    _rel_id_list(rel_ids, allow_empty=False)
+    done, cards = [], set()
+    for rel_id in rel_ids:
+        cur = _edge(con, rel_id)
+        if cur["status"] != "rejected":
+            raise EditConflict(f"relationship {rel_id} is {cur['status']} now, not rejected — reload; nothing was saved")
+        op, payload = one(rel_id, cur)
+        try:
+            out = apply_edit(con, op, {**payload, **(extra or {})}, email=email, ip=ip, vocab=vocab)
+        except (EditError, EditConflict) as exc:
+            raise type(exc)(f"relationship {rel_id}: {exc} — nothing was saved") from exc
+        done.append(out["edit_id"])
+        cards.update(out["cards"])
+    return {"edit_id": ",".join(done), "edit_ids": done, "op": op_name, "count": len(done), "cards": sorted(cards)}
+
+
+def restore_many(con: duckdb.DuckDBPyConnection, *, rel_ids: list[int], email: str, ip: str | None,
+                 vocab: set[str], extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Rejected list → Restore: a rejected edge comes back active; a rejected self-loop comes back as an
+    internal event (docs/ticket-internal-events.md)."""
+    return _status_many(con, "restore_many", rel_ids, lambda rid, cur: ("set_edge_status", {
+        "rel_id": rid, "status": "internal" if cur["entity_a_id"] == cur["entity_b_id"] else "active",
+        "expect": {"status": "rejected"}}), email=email, ip=ip, vocab=vocab, extra=extra)
+
+
+def delete_edge_many(con: duckdb.DuckDBPyConnection, *, rel_ids: list[int], email: str, ip: str | None,
+                     vocab: set[str], extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Rejected list → Delete permanently: hard delete of rejected rows only (each row kept in its audit row
+    for the revert)."""
+    return _status_many(con, "delete_edge_many", rel_ids, lambda rid, cur: ("delete_edge", {
+        "rel_id": rid, "expect": {"status": "rejected"}}), email=email, ip=ip, vocab=vocab, extra=extra)
 
 
 def spin_out_many(con: duckdb.DuckDBPyConnection, *, from_entity_id: int, aliases: list[str], type_: str,

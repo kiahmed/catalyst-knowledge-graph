@@ -73,6 +73,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
   <h1>Robotics data admin</h1>
   <button id="btnScan" title="Rule-based scan, no LLM, free">Scan suspects</button>
   <button id="btnLog">Edit log</button>
+  <button id="btnRejected" title="Every rejected relationship across all entities — restore or delete permanently">Rejected</button>
   <button id="btnReview" class="pill" title="Items the system couldn't decide — a human (or an LLM pass) must">Review …</button>
   <span class="who" id="who">Signing in…</span>
 </header>
@@ -297,9 +298,18 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
         (edges.length > 15 ? `\n  … and ${edges.length - 15} more` : '') +
         `\n\nUse this only for entities that aren't real organizations.`
       : `Delete "${e.name}"?`;
-    if (!confirm(msg + (goes.length ? '\nAlso removed:\n  ' + goes.join('\n  ') : '') + '\nRevertible from the Edit log.')) return;
+    const full = msg + (goes.length ? '\nAlso removed:\n  ' + goes.join('\n  ') : '') + '\nRevertible from the Edit log.';
     // always the with-edges path: it also removes rows the editor doesn't list (self-loops); the count guards a stale screen
-    const d = await run('delete_entity', { entity_id: e.id, expect_name: e.name, with_edges: true, expect_edges: edges.length }, 'Delete');
+    const payload = { entity_id: e.id, expect_name: e.name, with_edges: true, expect_edges: edges.length };
+    const live = edges.filter(r => r.status === 'active' || r.status === 'materialized').length;
+    if (live) {
+      // Live edges = real data on the site: a click is not enough, type the name (the server checks it too).
+      const typed = prompt(full + `\n\n${live} of these are ACTIVE (on the site now).\nType the entity name exactly to delete it:`);
+      if (typed === null) return;
+      if (typed.trim() !== e.name) { alert(`"${typed.trim()}" doesn't match "${e.name}" — nothing was deleted.`); return; }
+      payload.confirm_name = typed.trim();
+    } else if (!confirm(full)) return;
+    const d = await run('delete_entity', payload, 'Delete');
     if (d) afterEdit();
   }
 
@@ -634,6 +644,46 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
     });
     $('modal').style.display = 'flex';
   });
+
+  // ── Rejected list (docs/ticket-admin-rejected-list-delete-guard.md) ──
+  $('btnRejected').addEventListener('click', openRejected);
+  async function openRejected() {
+    let d; try { d = await api('/rejected'); } catch (e) { return toast(e.message, true); }
+    const picked = new Set();
+    const box = $('modalBox');
+    const restore = el('button', { class: 'primary', disabled: true }, 'Restore');
+    const purge = el('button', { class: 'danger', disabled: true }, 'Delete permanently');
+    const sync = () => {
+      restore.disabled = purge.disabled = !picked.size;
+      restore.textContent = picked.size ? `Restore ${picked.size}` : 'Restore';
+      purge.textContent = picked.size ? `Delete ${picked.size} permanently` : 'Delete permanently';
+    };
+    const all = el('input', { type: 'checkbox', title: 'Select all', onclick: ev => {
+      d.edges.forEach(r => ev.target.checked ? picked.add(r.rel_id) : picked.delete(r.rel_id));
+      box.querySelectorAll('input[data-rej]').forEach(c => { c.checked = ev.target.checked; }); sync(); } });
+    const save = async (op, what) => {
+      const ids = [...picked];
+      const loops = d.edges.filter(r => picked.has(r.rel_id) && r.self_loop).length;
+      const note = op === 'restore_many' && loops ? `\n${loops} of them are self-loops: they come back as internal events (not graph edges).` : '';
+      if (!confirm(`${what} ${ids.length} rejected relationship(s)?${note}\nEach is one Edit-log row (revertible).`)) return;
+      $('modal').style.display = 'none';
+      if (await run(op, { rel_ids: ids }, what)) afterEdit();
+    };
+    restore.addEventListener('click', () => save('restore_many', 'Restore'));
+    purge.addEventListener('click', () => save('delete_edge_many', 'Delete permanently'));
+    box.replaceChildren(el('h3', {}, all, ' ', `Rejected relationships (${d.edges.length})`, ' ', restore, ' ', purge));
+    if (!d.edges.length) box.append(el('p', { class: 'kv' }, 'No rejected relationships.'));
+    d.edges.forEach(r => box.append(el('div', { class: 'item' },
+      el('input', { type: 'checkbox', 'data-rej': '1', onclick: ev => { ev.target.checked ? picked.add(r.rel_id) : picked.delete(r.rel_id); sync(); } }),
+      el('span', { style: 'flex:1' },
+         el('b', {}, `${r.a} —${r.rel_type}→ ${r.b}`), ' ',
+         r.self_loop ? el('span', { class: 'tag', title: 'Same entity both ends: restores as an internal event' }, 'internal event') : '',
+         ' ', el('span', { class: 'kv' }, `rel ${r.rel_id} · ${r.date || ''} · ${(r.headline || '').slice(0, 90)}`),
+         r.mechanism ? el('div', { class: 'kv' }, r.mechanism.slice(0, 220)) : ''),
+      el('a', { href: '/#card-' + r.entry_id, target: '_blank', class: 'kv' }, r.entry_id))));
+    box.append(el('button', { onclick: () => { $('modal').style.display = 'none'; } }, 'Close'));
+    $('modal').style.display = 'flex';
+  }
 
   $('btnLog').addEventListener('click', async () => {
     try {

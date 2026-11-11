@@ -86,8 +86,9 @@ def _manufactures_for(text: str, a_name: str | None, b_name: str | None) -> bool
     b = _name_re(b_name)
     role = _MFG_ROLE.search(text)
     window = text[a_at:role.start()] if role else ""
-    if role and any(window[m.end():m.end() + 1] not in ("'", "’")
-                    for m in re.finditer(r"(?<![\w-])" + b, window, _I)):
+    if role and (any(window[m.end():m.end() + 1] not in ("'", "’")
+                     for m in re.finditer(r"(?<![\w-])" + b, window, _I))
+                 or re.match(r"\s*(?:arm|unit|division|subsidiary|business)\b", text[role.end():], _I)):
         role = None                      # "A supplies … to B, its contract manufacturer": the role is B's
                                          # (but "A is B's contract manufacturer" keeps it: possessive)
     for m in (role,

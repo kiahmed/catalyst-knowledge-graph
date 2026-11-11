@@ -102,6 +102,10 @@ def _load_cards(
     sub_col = ("r.rel_subtype" if con.execute(
         "SELECT 1 FROM duckdb_columns() WHERE table_name = 'relationships' AND column_name = 'rel_subtype'").fetchone()
         else "NULL")
+    # event_type (src/events.py): same — null until the first ingest after deploy migrates the DB.
+    event_col = ("event_type" if con.execute(
+        "SELECT 1 FROM duckdb_columns() WHERE table_name = 'catalysts' AND column_name = 'event_type'").fetchone()
+        else "NULL")
     # Time-window filter (0 = no cap).
     where_clauses = ["sector = ?"]
     params: list[Any] = [sector]
@@ -117,7 +121,7 @@ def _load_cards(
         f"""
         SELECT catalyst_id, entry_id, timestamp, source_url, raw_finding,
                headline, sentiment_label, sentiment_takeaways,
-               significance_score, research_sources, hashtags
+               significance_score, research_sources, hashtags, {event_col}
         FROM catalysts
         WHERE {' AND '.join(where_clauses)}
         ORDER BY timestamp DESC, entry_id DESC
@@ -133,7 +137,7 @@ def _load_cards(
         (
             catalyst_id, entry_id, ts, source_url, raw_finding,
             headline, sentiment, sent_takeaways,
-            significance_score, research_sources, hashtags_json,
+            significance_score, research_sources, hashtags_json, event_type,
         ) = row
 
         # Entities that appear in this catalyst's relationships.
@@ -229,6 +233,9 @@ def _load_cards(
         cards.append({
             "card_id": entry_id,
             "card_type": _card_type_from_rels(rels),
+            # What the story reports (src/events.py): ipo_listing, m_and_a, funding, product_launch,
+            # production_facility, deployment, partnership, regulation, research, leadership — or null.
+            "event_type": event_type,
             "date": ts.isoformat() if ts else None,
             "headline": headline,
             "subtitle": subtitle,

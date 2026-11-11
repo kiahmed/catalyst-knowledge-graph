@@ -382,7 +382,8 @@ class TestAdminOps(_Fixture):
             ops.apply_edit(self.con, "delete_entity", {"entity_id": concept, "expect_name": "Manual Labor",
                                                        "with_edges": True, "expect_edges": 5}, **WHO)
         out = ops.apply_edit(self.con, "delete_entity", {"entity_id": concept, "expect_name": "Manual Labor",
-                                                         "with_edges": True, "expect_edges": 2}, **WHO)
+                                                         "with_edges": True, "expect_edges": 2,
+                                                         "confirm_name": "Manual Labor"}, **WHO)
         self.assertEqual(sorted(out["cards"]), ["ROB-0", "ROB-1"])
         self.assertIsNone(self.con.execute("SELECT 1 FROM entities WHERE entity_id = ?", [concept]).fetchone())
         self.assertEqual(self.con.execute("SELECT COUNT(*) FROM relationships WHERE ? IN (entity_a_id, entity_b_id)",
