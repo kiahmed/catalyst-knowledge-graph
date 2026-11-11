@@ -334,6 +334,76 @@ class TestAdminOps(_Fixture):
         with self.assertRaises(ops.EditError):
             ops.card_entities(self.con, "ROB-nope")
 
+    def test_delete_edge_is_a_hard_delete_and_revert_restores_the_exact_row(self):
+        row = self.con.execute("SELECT * FROM relationships WHERE rel_id = ?", [self.rel]).fetchone()
+        out = ops.apply_edit(self.con, "delete_edge", {"rel_id": self.rel, "expect": {"status": "active"}}, **WHO)
+        self.assertIsNone(self.con.execute("SELECT 1 FROM relationships WHERE rel_id = ?", [self.rel]).fetchone())
+        self.assertEqual(out["cards"], ["ROB-0"])
+        with self.assertRaises(ops.EditConflict):                                  # stale screen
+            ops.apply_edit(self.con, "delete_edge", {"rel_id": self.rel + 1, "expect": {"status": "rejected"}}, **WHO)
+        ops.revert_edit(self.con, out["edit_id"], email=WHO["email"], ip=WHO["ip"], vocab=VOCAB)
+        self.assertEqual(self.con.execute("SELECT * FROM relationships WHERE rel_id = ?", [self.rel]).fetchone(), row)
+
+    def test_delete_edge_revert_refuses_to_recreate_a_live_twin(self):
+        out = ops.apply_edit(self.con, "delete_edge", {"rel_id": self.rel, "expect": {"status": "active"}}, **WHO)
+        cid = self.cids[0]
+        self.con.execute("""INSERT INTO relationships (catalyst_id, entity_a_id, rel_type, entity_b_id, confidence)
+                            VALUES (?, ?, 'competes_with', ?, 0.9)""", [cid, self.dhl, self.aws])   # symmetric reversed twin
+        n = self.con.execute("SELECT COUNT(*) FROM relationships").fetchone()[0]
+        with self.assertRaises(ops.EditConflict):
+            ops.revert_edit(self.con, out["edit_id"], email=WHO["email"], ip=WHO["ip"], vocab=VOCAB)
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM relationships").fetchone()[0], n)   # nothing deleted
+        self.assertIsNone(self.con.execute("SELECT reverted_by FROM admin_edits WHERE edit_id = ?",
+                                           [out["edit_id"]]).fetchone()[0])                         # not marked restored
+
+    def test_delete_entity_with_edges_requires_the_count_seen(self):
+        concept = db.insert_entity(self.con, "Human Labor", None, "organization")
+        self.con.execute("INSERT INTO relationships (catalyst_id, entity_a_id, rel_type, entity_b_id, confidence) "
+                         "VALUES (?, ?, 'competes_with', ?, 0.6)", [self.cids[0], self.dhl, concept])
+        for bad in (None, "x"):
+            with self.assertRaises(ops.EditError):
+                ops.apply_edit(self.con, "delete_entity", {"entity_id": concept, "expect_name": "Human Labor",
+                                                           "with_edges": True, "expect_edges": bad}, **WHO)
+
+    def test_add_alias_cross_entity_check_ignores_punctuation(self):
+        with self.assertRaises(ops.EditError):          # "A.W.S." is "AWS", already an alias of Amazon Web Services
+            ops.apply_edit(self.con, "add_alias", {"entity_id": self.robo, "alias": "A.W.S."}, **WHO)
+
+    def test_delete_entity_with_edges_and_revert_brings_both_back(self):
+        concept = db.insert_entity(self.con, "Manual Labor", None, "organization")
+        db.insert_alias(self.con, concept, "manual work")
+        self.con.execute("""INSERT INTO relationships (catalyst_id, entity_a_id, rel_type, entity_b_id, confidence, status)
+                            VALUES (?, ?, 'competes_with', ?, 0.7, 'rejected'), (?, ?, 'competes_with', ?, 0.6, 'active')""",
+                         [self.cids[0], self.dhl, concept, self.cids[1], self.logi, concept])
+        before = sorted(self.con.execute("SELECT * FROM relationships WHERE ? IN (entity_a_id, entity_b_id)", [concept]).fetchall())
+        with self.assertRaises(ops.EditError):                                     # plain delete still refuses
+            ops.apply_edit(self.con, "delete_entity", {"entity_id": concept, "expect_name": "Manual Labor"}, **WHO)
+        with self.assertRaises(ops.EditConflict):                                  # stale edge count
+            ops.apply_edit(self.con, "delete_entity", {"entity_id": concept, "expect_name": "Manual Labor",
+                                                       "with_edges": True, "expect_edges": 5}, **WHO)
+        out = ops.apply_edit(self.con, "delete_entity", {"entity_id": concept, "expect_name": "Manual Labor",
+                                                         "with_edges": True, "expect_edges": 2}, **WHO)
+        self.assertEqual(sorted(out["cards"]), ["ROB-0", "ROB-1"])
+        self.assertIsNone(self.con.execute("SELECT 1 FROM entities WHERE entity_id = ?", [concept]).fetchone())
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM relationships WHERE ? IN (entity_a_id, entity_b_id)",
+                                          [concept]).fetchone(), (0,))
+        rev = ops.revert_edit(self.con, out["edit_id"], email=WHO["email"], ip=WHO["ip"], vocab=VOCAB)
+        self.assertEqual(sorted(rev["cards"]), ["ROB-0", "ROB-1"])
+        self.assertEqual(sorted(self.con.execute("SELECT * FROM relationships WHERE ? IN (entity_a_id, entity_b_id)",
+                                                 [concept]).fetchall()), before)
+        self.assertEqual(self._aliases(concept), {"manual work"})
+
+    def test_add_alias_guards_and_revert(self):
+        out = ops.apply_edit(self.con, "add_alias", {"entity_id": self.robo, "alias": "Kiva"}, **WHO)
+        self.assertIn("Kiva", self._aliases(self.robo))
+        self.assertEqual(self.con.execute("SELECT verified, source FROM entity_aliases WHERE alias = 'Kiva'").fetchone(),
+                         (True, "admin"))
+        for bad in ("kiva", "Amazon Robotics", "AWS", "DHL", " "):                # dup / own name / other's alias / other's name / empty
+            with self.assertRaises(ops.EditError):
+                ops.apply_edit(self.con, "add_alias", {"entity_id": self.robo, "alias": bad}, **WHO)
+        ops.revert_edit(self.con, out["edit_id"], email=WHO["email"], ip=WHO["ip"], vocab=VOCAB)
+        self.assertNotIn("Kiva", self._aliases(self.robo))
+
     def test_materialized_status_round_trip(self):
         self.con.execute("UPDATE relationships SET status = 'materialized' WHERE rel_id = ?", [self.rel])
         out = ops.apply_edit(self.con, "set_edge_status", {"rel_id": self.rel, "status": "rejected",

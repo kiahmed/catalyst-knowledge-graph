@@ -172,6 +172,47 @@ def _rename_entity(con: duckdb.DuckDBPyConnection, eid: int, new_name: str) -> N
     con.execute("DELETE FROM entities WHERE entity_id = ?", [tmp])
 
 
+def _rel_rows(con: duckdb.DuckDBPyConnection, where: str, params: list) -> list[dict[str, Any]]:
+    """Full relationship rows (every column), JSON-safe — what a hard delete must keep to be undone."""
+    cols = [c for (c,) in con.execute("SELECT column_name FROM information_schema.columns WHERE table_name = "
+                                      "'relationships' ORDER BY ordinal_position").fetchall()]
+    rows = []
+    for r in con.execute(f"SELECT * FROM relationships WHERE {where} ORDER BY rel_id", params).fetchall():
+        rows.append({c: (v.isoformat() if hasattr(v, "isoformat") else v) for c, v in zip(cols, r)})
+    return rows
+
+
+def _restore_rel_rows(con: duckdb.DuckDBPyConnection, rows: list[dict[str, Any]]) -> set[int]:
+    """Re-insert hard-deleted relationship rows exactly (same rel_id). Refuses if any id is reused or an
+    endpoint / card is gone — nothing is written then."""
+    for r in rows:
+        if con.execute("SELECT 1 FROM relationships WHERE rel_id = ?", [r["rel_id"]]).fetchone():
+            raise EditConflict(f"relationship id {r['rel_id']} is in use again — restore by hand")
+        for k in ("entity_a_id", "entity_b_id"):
+            if not con.execute("SELECT 1 FROM entities WHERE entity_id = ?", [r[k]]).fetchone():
+                raise EditConflict(f"relationship {r['rel_id']}: entity {r[k]} no longer exists")
+        if not con.execute("SELECT 1 FROM catalysts WHERE catalyst_id = ?", [r["catalyst_id"]]).fetchone():
+            raise EditConflict(f"relationship {r['rel_id']}: its card no longer exists")
+        # Same rule as repoint_edge / set_edge_status: never re-create a live twin (dedupe would then
+        # silently delete one of the two). Symmetric types: the reversed pair is a twin too.
+        if r.get("status") in LIVE:
+            from .direction import symmetric_types  # noqa: PLC0415
+            pairs = [(r["entity_a_id"], r["entity_b_id"])]
+            if r["rel_type"] in symmetric_types():
+                pairs.append((r["entity_b_id"], r["entity_a_id"]))
+            for a, b in pairs:
+                if con.execute("""SELECT 1 FROM relationships WHERE catalyst_id = ? AND entity_a_id = ? AND rel_type = ?
+                                  AND entity_b_id = ? AND status IN ('active', 'materialized')""",
+                               [r["catalyst_id"], a, r["rel_type"], b]).fetchone():
+                    raise EditConflict(f"relationship {r['rel_id']}: the same edge exists on its card again — "
+                                       "reject or delete that one first")
+    for r in rows:
+        cols = list(r)
+        con.execute(f"INSERT INTO relationships ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+                    [r[c] for c in cols])
+    return {r["catalyst_id"] for r in rows}
+
+
 def _live_catalysts(con: duckdb.DuckDBPyConnection, eid: int) -> set[int]:
     return {r[0] for r in con.execute("SELECT DISTINCT catalyst_id FROM relationships WHERE ? IN "
                                       "(entity_a_id, entity_b_id) AND status IN ('active', 'materialized')",
@@ -467,9 +508,21 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
         if name != expect_name:
             raise EditConflict(f"entity {eid} is now named {name!r}")
         n = con.execute("SELECT COUNT(*) FROM relationships WHERE ? IN (entity_a_id, entity_b_id)", [eid]).fetchone()[0]
-        if n:
+        edges: list[dict[str, Any]] = []
+        if p.get("with_edges"):
+            try:
+                expect_edges = int(p.get("expect_edges"))
+            except (TypeError, ValueError):
+                raise EditError("with_edges needs expect_edges (how many relationships you saw)") from None
+        if n and not p.get("with_edges"):
             raise EditError(f"{name!r} still has {n} relationship row(s) (rejected ones count) — repoint them first, "
-                            "or spin it back in")
+                            "spin it back in, or delete it together with its edges")
+        if n:   # a concept / fake entity: its edges go with it (hard delete, rows kept for the revert)
+            edges = _rel_rows(con, "? IN (entity_a_id, entity_b_id)", [eid])
+            shown = sum(1 for e in edges if e["entity_a_id"] != e["entity_b_id"])   # the editor doesn't list self-loops
+            if expect_edges != shown:
+                raise EditConflict(f"{name!r} now has {shown} relationships, not {expect_edges} — reload")
+            con.execute("DELETE FROM relationships WHERE ? IN (entity_a_id, entity_b_id)", [eid])
         aliases = [a for (a,) in con.execute("SELECT alias FROM entity_aliases WHERE entity_id = ?", [eid]).fetchall()]
         links = [list(r) for r in con.execute("""SELECT child_id, parent_id, relation, confidence, reason, source
                                                  FROM entity_links WHERE ? IN (child_id, parent_id)""", [eid]).fetchall()]
@@ -480,7 +533,42 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
         con.execute("DELETE FROM entity_links WHERE ? IN (child_id, parent_id)", [eid])
         con.execute("DELETE FROM entities WHERE entity_id = ?", [eid])
         return ({"entity_id": eid, "name": name, "ticker": ticker, "type": typ, "aliases": aliases, "links": links,
-                 "unresolved": unresolved}, {"deleted": eid}, True, set())
+                 "unresolved": unresolved, "edges": edges}, {"deleted": eid, "edges_deleted": len(edges)}, True,
+                {e["catalyst_id"] for e in edges})
+
+    if op == "delete_edge":   # hard delete of one relationship row (reject = soft); row kept for the revert
+        (rel_id,) = _need(p, "rel_id")
+        cur = _edge(con, rel_id)
+        _check_expect(cur, p.get("expect"), ["status"])
+        rows = _rel_rows(con, "rel_id = ?", [rel_id])
+        con.execute("DELETE FROM relationships WHERE rel_id = ?", [rel_id])
+        return {"rel_id": rel_id, "row": rows[0]}, {"deleted": rel_id}, True, {cur["catalyst_id"]}
+
+    if op == "add_alias":
+        eid, alias = _need(p, "entity_id", "alias")
+        _entity_exists(con, eid)
+        alias = str(alias).strip()
+        if len(alias) < 2:
+            raise EditError("alias is empty")
+        from .names import case_key as _ck  # noqa: PLC0415
+
+        def case_key(x: str) -> str:      # case, punctuation, spacing AND dots inside a word: "A.W.S." == "AWS"
+            return _ck(x).replace(".", "")
+
+        own = [n for (n,) in con.execute("SELECT name FROM entities WHERE entity_id = ? UNION ALL "
+                                         "SELECT alias FROM entity_aliases WHERE entity_id = ?", [eid, eid]).fetchall()]
+        if any(case_key(n) == case_key(alias) for n in own):
+            raise EditError(f"{alias!r} is already this entity's name or alias")
+        key = case_key(alias)    # same comparison as the own-name check: "A.W.S." is "AWS"
+        other = next((n for i, n, label in con.execute(
+            """SELECT entity_id, name, name FROM entities WHERE entity_id <> ?
+               UNION ALL SELECT a.entity_id, e.name, a.alias FROM entity_aliases a JOIN entities e USING (entity_id)
+               WHERE a.entity_id <> ?""", [eid, eid]).fetchall() if case_key(label) == key), None)
+        if other:
+            raise EditError(f"{alias!r} already names {other!r} — move that alias or merge instead")
+        con.execute("INSERT INTO entity_aliases (entity_id, alias, verified, source) VALUES (?, ?, true, 'admin')",
+                    [eid, alias])
+        return {"entity_id": eid, "alias": None}, {"entity_id": eid, "alias": alias}, True, set()
 
     if op in ("link", "unlink"):
         child, parent, relation = _need(p, "child_id", "parent_id", "relation")
@@ -747,9 +835,24 @@ def revert_edit(con: duckdb.DuckDBPyConnection, edit_id: str, *, email: str, ip:
             con.execute("""UPDATE unresolved_entities SET resolved_to = ? WHERE mention = ? AND catalyst_id = ?
                            AND created_at IS NOT DISTINCT FROM CAST(? AS TIMESTAMP) AND resolved_to IS NULL""",
                         [eid, mention, cid, created])
-        out = _record_manual_revert(con, edit_id, email, ip, before, after)
+        touched = _restore_rel_rows(con, before.get("edges") or [])
+        for cid in touched:
+            hashtags.store_for_catalyst(con, cid)
+        out = _record_manual_revert(con, edit_id, email, ip, before, after, cards=_card_ids(con, touched))
         out["links_skipped"] = skipped   # other end no longer exists
         return out
+    elif op == "delete_edge":
+        touched = _restore_rel_rows(con, [before["row"]])
+        direction.dedupe_rows(con, sorted(touched))
+        for cid in touched:
+            hashtags.store_for_catalyst(con, cid)
+        return _record_manual_revert(con, edit_id, email, ip, before, after, cards=_card_ids(con, touched))
+    elif op == "add_alias":
+        if not con.execute("SELECT 1 FROM entity_aliases WHERE entity_id = ? AND alias = ?",
+                           [after["entity_id"], after["alias"]]).fetchone():
+            raise EditConflict(f"alias {after['alias']!r} is no longer on that entity")
+        con.execute("DELETE FROM entity_aliases WHERE entity_id = ? AND alias = ?", [after["entity_id"], after["alias"]])
+        return _record_manual_revert(con, edit_id, email, ip, before, after)
     elif op in ("link", "unlink"):
         key = {k: before[k] for k in ("child_id", "parent_id", "relation")}
         inverse = ("unlink" if op == "link" else "link", key)

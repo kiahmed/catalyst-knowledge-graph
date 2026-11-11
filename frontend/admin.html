@@ -207,7 +207,8 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
       el('button', { id: 'btnSpinInMany', onclick: spinInMany, class: 'danger',
                      title: 'Each ticked child folds back into ' + e.name + ' as an alias (a merge — one-way)' }, 'Spin in children'),
       el('button', { onclick: editEntity, title: 'Rename or change type (old name stays as an alias)' }, 'Edit entity'),
-      el('button', { class: 'danger', onclick: deleteEntity, title: 'Only possible when no relationship points at it' }, 'Delete entity'));
+      el('button', { onclick: addAlias, title: 'Add another name for this same organization' }, 'Add alias…'),
+      el('button', { class: 'danger', onclick: deleteEntity, title: 'Delete this entity; if relationships point at it, they are deleted too (you confirm the list). Revertible.' }, 'Delete entity'));
     p.append(bulk);
     p.append(el('h3', {}, 'Aliases'));
     e.aliases.forEach(a => p.append(el('div', { class: 'item' },
@@ -278,12 +279,27 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
     const d = await run('edit_entity', { entity_id: e.id, name: name.trim() || e.name, type, expect: { name: e.name, type: e.type } }, 'Entity');
     if (d) afterEdit();
   }
+  async function addAlias() {
+    const e = S.entity;
+    const alias = prompt(`New alias for ${e.name} (another name for the SAME organization, e.g. a product brand):`);
+    if (!alias || !alias.trim()) return;
+    const d = await run('add_alias', { entity_id: e.id, alias: alias.trim() }, 'Alias');
+    if (d) afterEdit();
+  }
   async function deleteEntity() {
     const e = S.entity;
+    const edges = e.relationships || [];
     const goes = [e.aliases.length ? 'aliases: ' + e.aliases.map(a => a.alias).join(', ') : '',
                   e.family.length ? 'family links: ' + e.family.map(f => `${f.role} ${f.name}`).join(', ') : ''].filter(Boolean);
-    if (!confirm(`Delete "${e.name}"? Only allowed when no relationship points at it.${goes.length ? '\nAlso removed:\n  ' + goes.join('\n  ') : ''}\nRevertible from the Edit log.`)) return;
-    const d = await run('delete_entity', { entity_id: e.id, expect_name: e.name }, 'Delete');
+    const list = edges.slice(0, 15).map(r => `  ${r.a.name} —${r.rel_type}→ ${r.b.name} [${r.status}]`).join('\n');
+    const msg = edges.length
+      ? `"${e.name}" still has ${edges.length} relationship(s). Delete it AND all of them?\n${list}` +
+        (edges.length > 15 ? `\n  … and ${edges.length - 15} more` : '') +
+        `\n\nUse this only for entities that aren't real organizations.`
+      : `Delete "${e.name}"?`;
+    if (!confirm(msg + (goes.length ? '\nAlso removed:\n  ' + goes.join('\n  ') : '') + '\nRevertible from the Edit log.')) return;
+    // always the with-edges path: it also removes rows the editor doesn't list (self-loops); the count guards a stale screen
+    const d = await run('delete_entity', { entity_id: e.id, expect_name: e.name, with_edges: true, expect_edges: edges.length }, 'Delete');
     if (d) afterEdit();
   }
 
@@ -362,6 +378,12 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
       p.append(el('div', { class: 'tools', style: 'padding:0' },
         el('button', { class: 'primary', onclick: () => renderRel(true) }, 'Edit'),
         r.review ? el('button', { title: r.review.reason || '', onclick: () => markReviewed([r.review.id]) }, 'Reviewed') : '',
+        el('button', { class: 'danger', title: 'Remove this relationship permanently (hard delete; revertible from the Edit log)',
+          onclick: async () => {
+            if (!confirm(`Permanently delete ${r.a.name} —${r.rel_type}→ ${r.b.name}? (Reject hides it; this removes it.)`)) return;
+            const d = await run('delete_edge', { rel_id: r.rel_id, expect: { status: r.status } }, 'Deleted');
+            if (d) { S.rel = null; afterEdit(); }
+          } }, 'Delete edge'),
         r.status !== 'rejected' ? el('button', { class: 'danger', title: 'Hide this relationship everywhere (status rejected; revertible)',
           onclick: async () => {
             if (!confirm(`Reject ${r.a.name} —${r.rel_type}→ ${r.b.name}?`)) return;
@@ -591,9 +613,22 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
           i.entry_id ? el('a', { href: '/#card-' + i.entry_id, target: '_blank', class: 'kv' }, i.entry_id) : '',
           openName ? el('button', { title: 'Open in the editor', onclick: async () => {
             $('modal').style.display = 'none';
-            const r = await api('/entities?limit=200&q=' + encodeURIComponent(openName));
-            const hit = r.entities.find(x => x.name.toLowerCase() === openName.toLowerCase());
-            if (hit) { $('q').value = hit.name; await loadEntities(); selectEntity(hit.id); } else toast(`Entity "${openName}" not found`, true);
+            try {   // by id (fresh from the server), then the exact relationship if this item is about one
+              let id = i.open_entity_id;
+              if (!id) {
+                const r = await api('/entities?limit=200&q=' + encodeURIComponent(openName));
+                const hit = r.entities.find(x => x.name.toLowerCase() === openName.toLowerCase());
+                if (!hit) return toast(`Entity "${openName}" not found`, true);
+                id = hit.id;
+              }
+              await selectEntity(id);
+              $('q').value = S.entity.name; await loadEntities(); renderEntities();
+              if (i.rel_id != null) {
+                const r = S.entity.relationships.find(x => x.rel_id === Number(i.rel_id));
+                if (r) { $('relFilter').value = ''; $('onlyUnnamed').checked = false; S.rel = r; renderRels(); renderRel(); }
+                else toast('That relationship is no longer on this entity — it was changed; mark the item reviewed if done', true);
+              }
+            } catch (e) { toast(e.message, true); }
           } }, 'open') : '', why), whyBox);
       });
     });

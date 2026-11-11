@@ -23,6 +23,9 @@ ITEMS = [
 class TestMatching(unittest.TestCase):
     def test_relationship_item_settled_by_editing_that_edge(self):
         self.assertEqual(review.matching(ITEMS, rel_ids=[4242]), ["a"])
+        llm = [{"id": "h", "kind": "humanoid_entity_check", "rel_id": 77, "entity": "Humanoid"}]
+        self.assertEqual(review.matching(llm, rel_ids=[77]), ["h"])
+        self.assertEqual(review.matching(llm, entity_names=["Humanoid"]), [])     # only by its relationship
         self.assertEqual(review.matching(ITEMS, rel_ids=[1]), [])
 
     def test_alias_item_settled_by_moving_that_alias(self):

@@ -361,7 +361,7 @@ def review_list(_who):
     if rels:   # relationship items: name the edge and the entity to open
         con = _read_con()
         try:
-            rows = {r[0]: r[1:] for r in con.execute(f"""SELECT r.rel_id, ea.name, r.rel_type, eb.name FROM relationships r
+            rows = {r[0]: r[1:] for r in con.execute(f"""SELECT r.rel_id, ea.name, r.rel_type, eb.name, r.entity_a_id FROM relationships r
                 JOIN entities ea ON ea.entity_id = r.entity_a_id JOIN entities eb ON eb.entity_id = r.entity_b_id
                 WHERE r.rel_id IN ({','.join('?' * len(rels))})""", rels).fetchall()}
         finally:
@@ -369,7 +369,7 @@ def review_list(_who):
         for i in items:
             r = rows.get(int(i["rel_id"])) if i.get("rel_id") is not None else None
             if r:
-                i["open_entity"], i["edge"] = r[0], f"{r[0]} —{r[1]}→ {r[2]}"
+                i["open_entity"], i["open_entity_id"], i["edge"] = r[0], r[3], f"{r[0]} —{r[1]}→ {r[2]}"
     for i in items:
         if "open_entity" not in i and str(i.get("kind", "")).startswith("entity_"):
             i["open_entity"] = i.get("entity") or str(i.get("doc_id") or "").split("~", 1)[0]
@@ -391,7 +391,7 @@ def review_resolve(who):
 _JOINS = {"merge": [("src_id", "dst_id")], "spin_in_many": [], "link": [("child_id", "parent_id")]}   # ops that JOIN two entities
 
 
-def _auto_resolve(op: str, payload: dict, result: dict, who) -> int:
+def _auto_resolve(op: str, payload: dict, result: dict, who) -> int:  # noqa: C901
     """An admin save on an item settles its open review entries (best effort)."""
     try:
         con = _read_con()
@@ -409,6 +409,7 @@ def _auto_resolve(op: str, payload: dict, result: dict, who) -> int:
             if isinstance(before.get(key), str):
                 names.append(before[key])
         rel_ids = [payload.get("rel_id")] + list(payload.get("rel_ids") or [])
+        rel_ids += [e.get("rel_id") for e in (before.get("edges") or [])]     # delete_entity with_edges
         nm = {}
         con2 = _read_con()
         try:

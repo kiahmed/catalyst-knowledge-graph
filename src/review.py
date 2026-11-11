@@ -73,6 +73,7 @@ def resolve(fs: Any, ids: Iterable[str], *, by: str, resolution: str, edit_ids: 
 # settled — it stays open until someone presses "Reviewed".
 _AUTO = {
     "direction_unclear": "rel",          # that relationship was edited
+    "humanoid_entity_check": "rel",      # 2026-11-10 LLM pass leftovers: that relationship was edited
     "entity_wrong_alias": "alias",       # that (entity, alias) pair was moved / dropped / spun out
     "entity_ingest_unsure": "entity",    # the entity ingest created was merged / linked / renamed / edited
     "entity_merge": "pair",              # a merge between exactly those two entities
