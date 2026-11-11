@@ -11,8 +11,11 @@ company's history. We keep them — without drawing them as edges or changing an
 ## 2. Design
 An internal event is a self-loop row with the new status **`internal`**. Every live view, count and
 consumer already selects `status IN ('active','materialized')`, so internal rows are excluded everywhere
-by construction; the few `status <> 'rejected'` count queries (export stats, social picker) now also
-exclude `internal`. Only symmetric (two-party) types are never internal: "X partners_with X" is noise.
+by construction; the `status <> 'rejected'` COUNT queries (export stats, social picker) now also exclude
+`internal`. Other `<> 'rejected'` readers deliberately still see internal rows, since they are real events
+about the entity: card chips (export card entities, render chips), LLM/handle context (entities.py
+evidence + audit context, handle_sweep context, dev-utils/entity_audit). None counts or draws edges.
+Only symmetric (two-party) types are never internal: "X partners_with X" is noise.
 
 ## 3. Requirements
 - R1 Between-entity edges, counts and views are unchanged: card relationships list, graph edges, graph
@@ -20,17 +23,18 @@ exclude `internal`. Only symmetric (two-party) types are never internal: "X part
   card PNGs — all keep excluding `entity_a_id = entity_b_id` (they already do).
 - R2 Merge: a LIVE self-loop it creates becomes `internal` (directional type) or `rejected` (symmetric);
   non-live rows keep their status (never revived).
-- R3 Ingest keeps a self-loop when the extractor named two DIFFERENT things that resolve to one real entity
-  ("Optimus" → Tesla, "Tesla") with a directional type, stored as `internal` (`ingest.is_internal_event`).
-  Not kept: the same name on both ends (noise), a symmetric type, or a `group` bucket.
+- R3 Ingest DROPS every self-loop (as before this ticket). It can't tell an internal event ("Optimus" →
+  Tesla) from a bad alias ("Samsung SDS" → Samsung SDI makes "SDS supplies SDI" a fake SDI event) — CI
+  audit W1, 2026-11-11. Internal events come only from a deliberate admin merge (R2).
 - R4 Each card doc gets an additive `internal_events: [{entity, rel, rel_subtype, mechanism, confidence,
   evidence_type}]` (its `internal` rows, min_edge_confidence applied, one per (entity, rel), [] when none).
 - R5 Node panel: when an entity has internal events, one row "Internal events (N)" (N = cards) under
   "Top edges"; clicking it opens the Cards tab filtered to exactly those cards (existing `showCardsFor`).
   The expanded card shows its normal between-entity edges; the self-loop itself is not drawn.
 - R6 Admin: `internal` is a valid edge status only for a self-loop; a self-loop can never be set live
-  (active/materialized); no duplicate internal event per card. Editor lists unchanged (self-loops hidden;
-  delete-entity-with-edges removes them, revertibly).
+  (active/materialized); no duplicate internal event per card (also on a revert's re-insert). The entity
+  pane lists its internal events with Reject / Delete (CI audit W2: a wrong one — e.g. from a merge of two
+  duplicate entities — must be fixable in the UI); the Relationships column still hides self-loops.
 
 ## 3a. Review follow-up (4ae9b6e review)
 - An `internal` row can't be repointed (it would leave a non-loop `internal` row no view shows).
@@ -47,9 +51,11 @@ deploys ×5, pilots, integrates_with, built_on, supplies, spins_out_from) to `in
 `set_edge_status` path (audited, revertible), then refresh those cards.
 
 ## 5. Consumers
-Traction Engine reads `relationships` directly: rows with status `internal` appear there; its live filter
-(`status IN ('active','materialized')`) already excludes them. Card docs gain `internal_events`; nothing
-existing changes shape.
+Firestore card docs are safe: `internal` never appears in `relationships[]`; card docs only gain
+`internal_events`. UNVERIFIED (CI audit W5, tracked in implementation_spec): if Traction Engine reads the
+DuckDB `relationships` table directly with a `status <> 'rejected'` filter (not `IN ('active',
+'materialized')`), internal self-loops would reach it as edges — confirm its filter before the Tesla
+data step.
 
 ## 6. Tests
 tests/test_internal_events.py — merge (directional → internal, symmetric → rejected, dead rows not

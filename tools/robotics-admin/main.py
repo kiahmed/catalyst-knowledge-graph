@@ -350,7 +350,15 @@ def status(_who):
         n = review.count_open(_firestore())
     except Exception as exc:  # noqa: BLE001
         n, _ = None, _log("review_count_failed", error=str(exc))
-    return jsonify({"ok": True, **_backend_status(), "review_open": n})
+    try:
+        con = _read_con()
+        try:
+            rejected = admin_ops.rejected_count(con)
+        finally:
+            con.close()
+    except Exception as exc:  # noqa: BLE001 — the header still works without the count
+        rejected, _ = None, _log("rejected_count_failed", error=str(exc))
+    return jsonify({"ok": True, **_backend_status(), "review_open": n, "rejected": rejected})
 
 
 @app.get("/admin/api/review")
@@ -498,7 +506,7 @@ def entity(_who, eid):
 def rejected(_who):
     con = _read_con()
     try:
-        return jsonify({"ok": True, "edges": admin_ops.rejected_edges(con)})
+        return jsonify({"ok": True, "edges": admin_ops.rejected_edges(con), "total": admin_ops.rejected_count(con)})
     finally:
         con.close()
 

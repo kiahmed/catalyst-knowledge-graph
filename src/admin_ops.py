@@ -147,7 +147,16 @@ def entity_detail(con: duckdb.DuckDBPyConnection, eid: int) -> dict[str, Any]:
     # entity ONLY through that alias (card never names the entity itself).
     for al in aliases:
         al["via_rel_ids"] = _via(rels, name, al["alias"])
+    # Internal events (self-loops with status 'internal') — listed so a wrong one can be rejected or deleted.
+    internal = [{"rel_id": rid, "rel_type": rt, "mechanism": mech, "entry_id": entry,
+                 "date": ts.isoformat()[:10] if ts else None, "headline": head}
+                for rid, rt, mech, entry, ts, head in con.execute("""
+                    SELECT r.rel_id, r.rel_type, r.mechanism, c.entry_id, c.timestamp, c.headline
+                    FROM relationships r JOIN catalysts c USING (catalyst_id)
+                    WHERE r.entity_a_id = ? AND r.entity_b_id = ? AND r.status = 'internal'
+                    ORDER BY c.timestamp DESC, r.rel_id""", [eid, eid]).fetchall()]
     return {"id": eid, "name": name, "type": typ, "ticker": ticker, "aliases": aliases, "family": family,
+            "internal_events": internal,
             "relationships": rels}
 
 
@@ -184,6 +193,17 @@ def _rel_rows(con: duckdb.DuckDBPyConnection, where: str, params: list) -> list[
     return rows
 
 
+def _live_twin(con: duckdb.DuckDBPyConnection, catalyst_id: int, rel_id: int | None, a: int, rel_type: str,
+               b: int) -> bool:
+    """Another live row on the card that says the same thing — for a two-party (symmetric) type the
+    reversed pair counts too (CI audit W3: dedupe would otherwise silently delete one of them)."""
+    sym = rel_type in direction.symmetric_types()
+    return bool(con.execute("""SELECT 1 FROM relationships WHERE catalyst_id = ? AND rel_id <> ? AND rel_type = ?
+                               AND status IN ('active', 'materialized')
+                               AND ((entity_a_id = ? AND entity_b_id = ?) OR (? AND entity_a_id = ? AND entity_b_id = ?))""",
+                            [catalyst_id, -1 if rel_id is None else rel_id, rel_type, a, b, sym, b, a]).fetchone())
+
+
 def _restore_rel_rows(con: duckdb.DuckDBPyConnection, rows: list[dict[str, Any]]) -> set[int]:
     """Re-insert hard-deleted relationship rows exactly (same rel_id). Refuses if any id is reused or an
     endpoint / card is gone — nothing is written then."""
@@ -208,6 +228,11 @@ def _restore_rel_rows(con: duckdb.DuckDBPyConnection, rows: list[dict[str, Any]]
                                [r["catalyst_id"], a, r["rel_type"], b]).fetchone():
                     raise EditConflict(f"relationship {r['rel_id']}: the same edge exists on its card again — "
                                        "reject or delete that one first")
+        if r.get("status") == "internal" and con.execute(
+                """SELECT 1 FROM relationships WHERE catalyst_id = ? AND entity_a_id = ? AND rel_type = ?
+                   AND entity_b_id = ? AND status = 'internal'""",
+                [r["catalyst_id"], r["entity_a_id"], r["rel_type"], r["entity_b_id"]]).fetchone():
+            raise EditConflict(f"relationship {r['rel_id']}: this internal event is on its card again")
     for r in rows:
         cols = list(r)
         con.execute(f"INSERT INTO relationships ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
@@ -387,9 +412,7 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
             raise EditError("an edge can't point an entity at itself")
         # Refuse to create an exact copy of another edge on the same card: the
         # dedupe would silently delete one and a revert couldn't restore it.
-        if con.execute("""SELECT 1 FROM relationships WHERE catalyst_id = ? AND rel_id <> ? AND entity_a_id = ?
-                          AND rel_type = ? AND entity_b_id = ? AND status IN ('active', 'materialized')""",
-                       [cur["catalyst_id"], rel_id, res["entity_a_id"], res["rel_type"], res["entity_b_id"]]).fetchone():
+        if _live_twin(con, cur["catalyst_id"], rel_id, res["entity_a_id"], res["rel_type"], res["entity_b_id"]):
             raise EditError("that edge already exists on this card — set this one 'rejected' instead of repointing")
         sets = ", ".join(f"{k} = ?" for k in new)
         con.execute(f"UPDATE relationships SET {sets} WHERE rel_id = ?", [*new.values(), rel_id])
@@ -414,10 +437,8 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
                 [cur["catalyst_id"], rel_id, cur["entity_a_id"], cur["rel_type"], cur["entity_b_id"]]).fetchone():
             raise EditError("this internal event is already on the card")
         # Reviving a dead edge must not make it a live twin of another edge on the card.
-        if status in LIVE and cur["status"] not in LIVE and con.execute(
-                """SELECT 1 FROM relationships WHERE catalyst_id = ? AND rel_id <> ? AND entity_a_id = ?
-                   AND rel_type = ? AND entity_b_id = ? AND status IN ('active', 'materialized')""",
-                [cur["catalyst_id"], rel_id, cur["entity_a_id"], cur["rel_type"], cur["entity_b_id"]]).fetchone():
+        if status in LIVE and cur["status"] not in LIVE and _live_twin(
+                con, cur["catalyst_id"], rel_id, cur["entity_a_id"], cur["rel_type"], cur["entity_b_id"]):
             raise EditError("an identical live edge already exists on this card")
         con.execute("UPDATE relationships SET status = ? WHERE rel_id = ?", [status, rel_id])
         return {"rel_id": rel_id, "status": cur["status"]}, {"rel_id": rel_id, "status": status}, True, {cur["catalyst_id"]}
@@ -712,8 +733,12 @@ def repoint_many(con: duckdb.DuckDBPyConnection, *, from_entity_id: int, to_enti
             "cards": sorted(cards)}
 
 
+def rejected_count(con: duckdb.DuckDBPyConnection) -> int:
+    return con.execute("SELECT COUNT(*) FROM relationships WHERE status = 'rejected'").fetchone()[0]
+
+
 def rejected_edges(con: duckdb.DuckDBPyConnection, limit: int = 2000) -> list[dict[str, Any]]:
-    """Every rejected relationship, newest card first (the admin Rejected list)."""
+    """Rejected relationships, newest card first (the admin Rejected list; the caller shows the total)."""
     sym = direction.symmetric_types()
     return [{"rel_id": rid, "a": an, "rel_type": rt, "b": bn, "self_loop": a == b, "mechanism": mech,
              "restorable": a != b or rt not in sym,     # "X partners_with X" can never come back
@@ -962,7 +987,13 @@ def revert_edit(con: duckdb.DuckDBPyConnection, edit_id: str, *, email: str, ip:
             raise EditConflict(f"alias {after['alias']!r} is no longer on that entity")
         con.execute("DELETE FROM entity_aliases WHERE entity_id = ? AND alias = ?", [after["entity_id"], after["alias"]])
         return _record_manual_revert(con, edit_id, email, ip, before, after)
-    elif op == "add_edge":   # undo = hard delete of the added row (itself revertible), only while still live
+    elif op == "add_edge":   # undo = hard delete of the added row (itself revertible), only if it is unchanged
+        row = con.execute("SELECT entity_a_id, rel_type, entity_b_id FROM relationships WHERE rel_id = ?",
+                          [after["rel_id"]]).fetchone()
+        if not row:
+            raise EditConflict(f"relationship {after['rel_id']} no longer exists")
+        if list(row) != [after["entity_a_id"], after["rel_type"], after["entity_b_id"]]:
+            raise EditConflict(f"relationship {after['rel_id']} was changed since it was added — revert that edit first")
         inverse = ("delete_edge", {"rel_id": after["rel_id"], "expect": {"status": "active"}})
     elif op in ("link", "unlink"):
         key = {k: before[k] for k in ("child_id", "parent_id", "relation")}

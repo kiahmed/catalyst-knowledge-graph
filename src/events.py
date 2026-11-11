@@ -25,7 +25,8 @@ _CUES: dict[str, re.Pattern] = {
                               r"(?:Nasdaq|NYSE|HKEX|KOSDAQ|STAR Market|stock exchange) (?:debut|listing)|SPAC|prospectus|"
                               r"(?:debut\w*|launch\w*|list\w*|trad\w*) on (?:the )?(?:Nasdaq|NYSE|HKEX|KOSDAQ|STAR Market))\b", _I),
     "m_and_a": re.compile(r"\b(acquir(?:e|es|ed|ing)|acquisition|merg(?:e|es|ed|er|ing)|buy(?:s|ing)?|bought|buyout|"
-                          r"takeover|takes? over|full ownership|majority stake|spin-?offs?|spins? off)\b", _I),
+                          r"takeover|takes? over|full ownership|majority stake|spins? off|spinning off|"
+                          r"spin-?offs?(?=\s*(?:$|[,;:]|of\b|from\b|plan|deal|to\b)))\b", _I),
     "funding": re.compile(r"\b(rais(?:e|es|ed|ing)|funding|Series [A-H]\+?|seed round|pre-seed|financing|"
                           r"round of|valuation|valued at|backs|invests?|investment|grants?|subsid(?:y|ies|i[sz]es)|"
                           r"secur(?:e|es|ed|ing) (?:" + _MONEY + r"|billions|millions|(?:major |mega |new )?(?:funding|rounds?|capital)|mega rounds?)\b)", _I),

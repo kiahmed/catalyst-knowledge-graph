@@ -28,5 +28,9 @@ All 889 prod cards. Three tuning rounds of hand-reading 10 per type; final: fund
 partnership ~10/10, leadership 4/4, deployment/launch ~8/10, facility/regulation ~7/10, research ~6/8.
 Blind Gemini check 31/34 (two diffs fixed after; one is a two-event headline where rules take the first).
 
+## CI audit follow-up (2026-11-11)
+"Spin-off" counts only as an event ("X prepares a spin-off", "spins off its unit"), not as a company
+descriptor ("EPFL Spin-Off Embodied AI Unveils …" → product_launch; the eval had scored it m_and_a).
+
 ## Tests
 tests/test_events.py — prod headlines per type, every false positive found while tuning, refresh idempotence.

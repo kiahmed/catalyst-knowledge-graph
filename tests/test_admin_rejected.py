@@ -88,6 +88,49 @@ class TestDeleteGuard(_Fixture):
                                                    "with_edges": True, "expect_edges": 1}, **WHO)
 
 
+class TestCiAudit(_Fixture):
+    def test_w3_restoring_a_reversed_two_party_twin_is_refused(self):
+        self._rel(self.tesla, "competes_with", self.figure)
+        rev = self._rel(self.figure, "competes_with", self.tesla, "rejected")
+        with self.assertRaises(ops.EditError):
+            ops.restore_many(self.con, rel_ids=[rev], **WHO)
+        self.assertEqual(self._status(rev), "rejected")
+
+    def test_w3_repoint_into_a_reversed_two_party_twin_is_refused(self):
+        self._rel(self.tesla, "competes_with", self.figure)
+        other = self._rel(self.fake, "competes_with", self.tesla)
+        with self.assertRaises(ops.EditError):
+            ops.apply_edit(self.con, "repoint_edge", {"rel_id": other, "entity_a_id": self.figure,
+                                                      "expect": {"entity_a_id": self.fake}}, **WHO)
+
+    def test_w4_add_edge_revert_refused_after_repoint(self):
+        out = ops.apply_edit(self.con, "add_edge", {"entry_id": "ROB-1", "entity_a_id": self.figure,
+                                                    "rel_type": "supplies", "entity_b_id": self.tesla,
+                                                    "mechanism": "Figure supplies robots to Tesla."}, **WHO)
+        rel = out["after"]["rel_id"]
+        ops.apply_edit(self.con, "repoint_edge", {"rel_id": rel, "entity_b_id": self.fake,
+                                                  "expect": {"entity_b_id": self.tesla}}, **WHO)
+        with self.assertRaises(ops.EditConflict):
+            ops.revert_edit(self.con, out["edit_id"], email=WHO["email"], ip=WHO["ip"], vocab=WHO["vocab"])
+        self.assertEqual(self._status(rel), "active")                        # the repointed row survives
+
+    def test_w2_entity_detail_lists_internal_events_and_they_can_be_rejected(self):
+        loop = self._rel(self.tesla, "deploys", self.tesla, "internal")
+        d = ops.entity_detail(self.con, self.tesla)
+        self.assertEqual([x["rel_id"] for x in d["internal_events"]], [loop])
+        ops.apply_edit(self.con, "set_edge_status", {"rel_id": loop, "status": "rejected",
+                                                     "expect": {"status": "internal"}}, **WHO)
+        self.assertEqual(ops.entity_detail(self.con, self.tesla)["internal_events"], [])
+        self.assertEqual(ops.rejected_count(self.con), 1)
+
+    def test_restore_of_a_deleted_internal_row_never_duplicates(self):
+        a = self._rel(self.tesla, "deploys", self.tesla, "internal")
+        out = ops.apply_edit(self.con, "delete_edge", {"rel_id": a, "expect": {"status": "internal"}}, **WHO)
+        self._rel(self.tesla, "deploys", self.tesla, "internal")             # the same event is back meanwhile
+        with self.assertRaises(ops.EditConflict):
+            ops.revert_edit(self.con, out["edit_id"], email=WHO["email"], ip=WHO["ip"], vocab=WHO["vocab"])
+
+
 class TestInternalEventFixes(_Fixture):
     def test_internal_row_cannot_be_repointed(self):
         loop = self._rel(self.tesla, "deploys", self.tesla, "internal")

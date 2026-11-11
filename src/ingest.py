@@ -153,18 +153,6 @@ def _fetch_findings(
 # ── Write one extraction result (one transaction) ──────────────────
 
 
-def is_internal_event(con: duckdb.DuckDBPyConnection, rel: dict, entity_id: int, symmetric: set[str]) -> bool:
-    """A self-loop worth keeping as an internal event (docs/ticket-internal-events.md): the extractor named
-    two DIFFERENT things that resolved to one real entity ("Optimus" → Tesla, "Tesla"), with a directional
-    type. Noise otherwise: the same name on both ends, a two-party type, or a generic group bucket."""
-    ea = str(rel.get("entity_a") or "").strip().casefold()
-    eb = str(rel.get("entity_b") or "").strip().casefold()
-    if not ea or ea == eb or rel.get("rel_type") in symmetric:
-        return False
-    row = con.execute("SELECT type FROM entities WHERE entity_id = ?", [entity_id]).fetchone()
-    return bool(row) and row[0] != "group"
-
-
 def write_extraction(
     con: duckdb.DuckDBPyConnection,
     entry: dict[str, Any],
@@ -227,11 +215,10 @@ def write_extraction(
                     entry.get("entry_id"), rel,
                 )
                 continue
-            status = "active"
-            if a_id == b_id:   # both names resolved to one entity
-                if not is_internal_event(con, rel, a_id, symmetric):
-                    continue
-                status = "internal"
+            if a_id == b_id:   # both names resolved to one entity: dropped. Ingest can't tell an internal
+                # event ("Optimus" → Tesla) from a bad alias ("Samsung SDS" → Samsung SDI) — only a deliberate
+                # admin merge makes internal events (docs/ticket-internal-events.md, CI audit W1).
+                continue
             if rel["rel_type"] in symmetric and a_id > b_id:
                 a_id, b_id = b_id, a_id          # one stored direction for symmetric types
             if (a_id, rel["rel_type"], b_id) in written:
@@ -259,7 +246,6 @@ def write_extraction(
                 ),
                 first_flagged_at=entry_date,
                 source_refs=source_refs_json,
-                status=status,
             )
 
         # Pass-3 "unclear" edges → their rel_ids, for the review queue (flagged

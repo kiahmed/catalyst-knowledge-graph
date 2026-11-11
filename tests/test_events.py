@@ -43,6 +43,12 @@ class TestRules(unittest.TestCase):
         for head, want in cases.items():
             self.assertEqual(C(head), want, head)
 
+    def test_ci_audit(self):
+        self.assertEqual(C("EPFL Spin-Off Embodied AI Unveils Tendon-Driven Wheeled Humanoid AIR"), "product_launch")
+        self.assertEqual(C("SoftBank Prepares $100 Billion Roze AI and Robotics Spin-Off"), "m_and_a")
+        self.assertEqual(C("Honda spins off its robotics unit"), "m_and_a")
+        self.assertEqual(C("Big buyers line up for humanoids"), None)        # "buyers" is not "buys"
+
     def test_review_findings_b8046e9(self):
         self.assertEqual(C("Bill Gates-backed Figure rival raises $100M"), "funding")
         self.assertIsNone(C("Agility redesigns Digit in order to cut costs"))

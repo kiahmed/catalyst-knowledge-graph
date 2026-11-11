@@ -239,6 +239,24 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
       el('button', { onclick: () => linkTo('subsidiary_of') }, 'Set parent…'),
       el('button', { onclick: () => linkTo('sister_of') }, 'Add sister…'),
       el('button', { class: 'danger', onclick: mergeInto }, 'Merge into…')));
+    // Internal events (self-loops kept by a merge, docs/ticket-internal-events.md): not graph edges, so not in
+    // the Relationships column — listed here so a wrong one (e.g. from a duplicate-entity merge) can be fixed.
+    const ie = e.internal_events || [];
+    p.append(el('h3', {}, `Internal events (${ie.length})`));
+    if (!ie.length) p.append(el('p', { class: 'kv' }, 'none'));
+    ie.forEach(x => p.append(el('div', { class: 'item' },
+      el('span', { style: 'flex:1' }, el('b', {}, `${e.name} —${x.rel_type}→ itself`), ' ',
+         el('span', { class: 'kv' }, `rel ${x.rel_id} · ${x.date || ''} · ${(x.headline || '').slice(0, 80)}`),
+         x.mechanism ? el('div', { class: 'kv' }, x.mechanism.slice(0, 200)) : ''),
+      el('a', { href: '/#card-' + x.entry_id, target: '_blank', class: 'kv' }, x.entry_id),
+      el('button', { title: 'Hide it (status rejected; revertible; restorable from the Rejected list)', onclick: async () => {
+        if (!confirm(`Reject internal event "${e.name} ${x.rel_type}" on ${x.entry_id}?`)) return;
+        if (await run('set_edge_status', { rel_id: x.rel_id, status: 'rejected', expect: { status: 'internal' } }, 'Rejected')) afterEdit();
+      } }, 'Reject'),
+      el('button', { class: 'danger', title: 'Remove it permanently (revertible from the Edit log)', onclick: async () => {
+        if (!confirm(`Permanently delete internal event "${e.name} ${x.rel_type}" on ${x.entry_id}?`)) return;
+        if (await run('delete_edge', { rel_id: x.rel_id, expect: { status: 'internal' } }, 'Deleted')) afterEdit();
+      } }, 'Delete'))));
     syncSel2();
   }
   function syncSel2() {
@@ -706,7 +724,8 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
     };
     restore.addEventListener('click', () => save('restore_many', 'Restore'));
     purge.addEventListener('click', () => save('delete_edge_many', 'Delete permanently'));
-    box.replaceChildren(el('h3', {}, all, ' ', `Rejected relationships (${d.edges.length})`, ' ', restore, ' ', purge));
+    box.replaceChildren(el('h3', {}, all, ' ', `Rejected relationships (${d.total ?? d.edges.length})`, ' ', restore, ' ', purge));
+    if (d.total > d.edges.length) box.append(el('p', { class: 'kv' }, `Showing the newest ${d.edges.length} of ${d.total}.`));
     if (!d.edges.length) box.append(el('p', { class: 'kv' }, 'No rejected relationships.'));
     d.edges.forEach(r => box.append(el('div', { class: 'item' },
       el('input', { type: 'checkbox', 'data-rej': '1', onclick: ev => { ev.target.checked ? picked.add(r.rel_id) : picked.delete(r.rel_id); sync(); } }),
@@ -747,6 +766,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
   async function refreshStatus() {
     try { S.status = await api('/status'); } catch (e) { S.status = { running: [], soon: [], errors: [e.message] }; }
     setReviewCount(S.status.review_open);
+    $('btnRejected').textContent = S.status.rejected == null ? 'Rejected' : `Rejected (${S.status.rejected})`;
     const b = $('banner'), r = S.status.running || [], soon = S.status.soon || [];
     if (r.length) {
       b.className = 'bad';

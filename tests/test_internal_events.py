@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 import duckdb  # noqa: E402
 
-from src import admin_ops as ops, db, direction, entities, export, ingest  # noqa: E402
+from src import admin_ops as ops, db, entities, export, ingest  # noqa: E402
 
 WHO = {"email": "info@solutionjet.net", "ip": "203.0.113.1",
        "vocab": {"deploys", "partners_with", "competes_with", "supplies"}}
@@ -61,20 +61,10 @@ class TestMerge(_Fixture):
         self.assertEqual(self._status(dead), "rejected")
 
 
-class TestIngestRule(_Fixture):
-    def test_rule(self):
-        sym = direction.symmetric_types()
-        ok = lambda a, b, t, eid: ingest.is_internal_event(  # noqa: E731
-            self.con, {"entity_a": a, "entity_b": b, "rel_type": t}, eid, sym)
-        self.assertTrue(ok("Tesla", "Optimus", "deploys", self.tesla))
-        self.assertFalse(ok("Tesla", "tesla ", "deploys", self.tesla))           # same name both ends = noise
-        self.assertFalse(ok("Tesla", "Optimus", "partners_with", self.tesla))    # two-party type
-        self.assertFalse(ok("humanoids", "humanoid makers", "deploys", self.group))   # generic bucket
-        self.assertFalse(ok("", "Optimus", "deploys", self.tesla))
-
-
 class TestIngestEndToEnd(_Fixture):
-    def test_write_extraction_keeps_alias_self_loop_as_internal(self):
+    def test_write_extraction_drops_alias_self_loops(self):
+        # CI audit W1: ingest can't tell "Optimus" → Tesla from a bad alias ("Samsung SDS" → Samsung SDI),
+        # so it drops every self-loop; only a deliberate admin merge creates internal events.
         from src.config import load_config
         from src.extract import ExtractionResult
         self.con.execute("INSERT INTO entity_aliases (entity_id, alias, verified, source) VALUES (?, 'Optimus Gen 3', true, 'admin')",
@@ -94,7 +84,7 @@ class TestIngestEndToEnd(_Fixture):
         cid = ingest.write_extraction(self.con, entry, res, load_config())
         rows = self.con.execute("SELECT entity_a_id, rel_type, entity_b_id, status FROM relationships WHERE catalyst_id = ?",
                                 [cid]).fetchall()
-        self.assertEqual(rows, [(self.tesla, "deploys", self.tesla, "internal")])   # two-party type dropped
+        self.assertEqual(rows, [])
 
 
 class TestExportAndCounts(_Fixture):
