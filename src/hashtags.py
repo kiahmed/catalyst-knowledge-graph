@@ -19,6 +19,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from . import subtypes
+
 MAX_TAGS = 6
 MAX_ENTITY_TAGS = 2
 MAX_THEME_TAGS = 2
@@ -234,6 +236,9 @@ def store_for_catalyst(con, catalyst_id: int) -> list[str]:
         "UPDATE catalysts SET hashtags = ? WHERE catalyst_id = ?",
         [json.dumps(tags), catalyst_id],
     )
+    # Every path that changes a card's edges (ingest, admin edits + reverts,
+    # merges) calls this, so the card's other derived column refreshes here too.
+    subtypes.refresh(con, [catalyst_id])
     return tags
 
 

@@ -29,7 +29,7 @@ import duckdb
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from . import db, direction, hashtags
+from . import db, direction, hashtags, subtypes
 from .config import RoboticsConfig
 from .extract import ExtractionResult, extract, research_sources_json
 from .resolve import Decision, decide_entities, resolve_entity
@@ -384,6 +384,11 @@ def run_ingest(
         tagged = hashtags.backfill(con)
         if tagged:
             log.info("hashtags_backfill tagged=%d", tagged)
+        # Relationship subtypes: full recompute, writes only changed rows — the
+        # first run backfills, a later rules change self-heals. Milliseconds.
+        subtyped = subtypes.refresh(con)
+        if subtyped:
+            log.info("subtypes_refresh changed=%d", subtyped)
 
         last_date, last_id, _last_gen_unused = db.get_watermark(con, cfg.sector)
 

@@ -97,6 +97,11 @@ def _load_cards(
     show_invalidated: bool,
     entry_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
+    # rel_subtype (src/subtypes.py) arrives with the first ingest after deploy;
+    # a DB not yet migrated exports null rather than failing.
+    sub_col = ("r.rel_subtype" if con.execute(
+        "SELECT 1 FROM duckdb_columns() WHERE table_name = 'relationships' AND column_name = 'rel_subtype'").fetchone()
+        else "NULL")
     # Time-window filter (0 = no cap).
     where_clauses = ["sector = ?"]
     params: list[Any] = [sector]
@@ -176,7 +181,7 @@ def _load_cards(
             f"""
             SELECT ea.name, r.rel_type, eb.name, r.confidence,
                    r.evidence_type, r.mechanism, r.mechanism_strength,
-                   r.impact_magnitude, r.flagged, r.source_refs, r.status
+                   r.impact_magnitude, r.flagged, r.source_refs, r.status, {sub_col}
             FROM relationships r
             JOIN entities ea ON ea.entity_id = r.entity_a_id
             JOIN entities eb ON eb.entity_id = r.entity_b_id
@@ -190,7 +195,7 @@ def _load_cards(
         ).fetchall()
         rels = [
             {
-                "from": a, "rel": rt, "to": b,
+                "from": a, "rel": rt, "rel_subtype": sub, "to": b,
                 "confidence": float(c),
                 "evidence_type": et,
                 "mechanism": mech,
@@ -201,7 +206,7 @@ def _load_cards(
                 "status": st or "active",
                 "in_story": a in in_story or b in in_story,
             }
-            for (a, rt, b, c, et, mech, ms, im, fl, sr, st) in rel_rows
+            for (a, rt, b, c, et, mech, ms, im, fl, sr, st, sub) in rel_rows
         ]
 
         subtitle = _short_subtitle(sent_takeaways)
@@ -516,6 +521,7 @@ def _build_graph_projection(cards: list[dict[str, Any]]) -> dict[str, Any]:
                 "from": a,
                 "to": b,
                 "rel": r["rel"],
+                "rel_subtype": r.get("rel_subtype"),
                 "confidence": conf,
                 "evidence_type": r.get("evidence_type"),
                 "mechanism": r.get("mechanism"),

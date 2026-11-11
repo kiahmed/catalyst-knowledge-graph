@@ -59,6 +59,7 @@ def ensure_schema(con: duckdb.DuckDBPyConnection) -> None:
     # writes are verified, and the admin service may run before any ingest has.
     con.execute("ALTER TABLE entity_aliases ADD COLUMN IF NOT EXISTS verified BOOLEAN")
     con.execute("ALTER TABLE entity_aliases ADD COLUMN IF NOT EXISTS source VARCHAR")
+    con.execute("ALTER TABLE relationships ADD COLUMN IF NOT EXISTS rel_subtype VARCHAR")   # src/subtypes.py
 
 
 # ── Reads ──────────────────────────────────────────────────────────
