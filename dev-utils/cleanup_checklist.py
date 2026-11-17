@@ -10,7 +10,9 @@ Sections (each item has a stable key, so your ticks survive every rebuild):
 
 An item is ticked when you mark it `- [x]`, or automatically when prod shows it's resolved: in A the entity is
 gone / a group / has no live edges; in B and C an item the scan no longer finds stays in the list, ticked, marked
-"resolved". A tick is never removed. The file is replaced atomically (it is the only store of your ticks).
+"resolved". Your ticks are permanent. Automatic ticks carry an `auto` flag in the item's marker and are
+recomputed on every rebuild — so an item that comes back (an entity gains a new edge, an alias pulls cards again)
+re-opens instead of staying falsely ticked. The file is replaced atomically (it is the only store of your ticks).
 """
 from __future__ import annotations
 
@@ -34,7 +36,7 @@ SEED = DATA / "concept_entities_labels.txt"       # the one-time LLM label list 
 LIVE = "status IN ('active', 'materialized')"
 # Keys are machine-made: section + entity id (+ a short hash of the alias) — never free text, so no spaces and
 # no "-->" can ever appear inside one.
-_KEY = re.compile(r"<!--\s*key:([A-Za-z]+:[0-9]+(?::[0-9a-f]{10})?)\s*-->")
+_KEY = re.compile(r"<!--\s*key:([A-Za-z]+:[0-9]+(?::[0-9a-f]{10})?)(\s+auto)?\s*-->\s*$")
 _TICK = re.compile(r"^\s*[-*+]\s+\[[xX]\]")
 _RESOLVED = " — resolved (no longer found by the scan)"
 
@@ -57,7 +59,7 @@ def _previous() -> tuple[set[str], dict[str, tuple[str, str]], list[str]]:
             m = _KEY.search(line)
             if not m:
                 continue
-            if _TICK.match(line):
+            if _TICK.match(line) and not m.group(2):     # only YOUR ticks carry over; auto ticks are recomputed
                 ticked.add(m.group(1))
             text = re.sub(r"^\s*[-*+]\s+\[[ xX]\]\s*", "", line[:m.start()]).rstrip()
             items[m.group(1)] = (section, text)
@@ -66,8 +68,12 @@ def _previous() -> tuple[set[str], dict[str, tuple[str, str]], list[str]]:
     return ticked, items, sec_a
 
 
-def _item(done: bool, key: str, text: str) -> str:
-    return f"- [{'x' if done else ' '}] {text} <!-- key:{key} -->"
+def _item(done: bool, key: str, text: str, *, ticked: set[str] | None = None, auto: bool = False) -> str:
+    """`ticked` = your ticks; `auto` = prod shows it resolved. Yours wins (permanent); an auto-only tick is
+    flagged so the next rebuild recomputes it."""
+    human = key in (ticked or set())
+    flag = " auto" if (auto and not human) else ""
+    return f"- [{'x' if (done or human or auto) else ' '}] {text} <!-- key:{key}{flag} -->"
 
 
 def _concepts(con, ticked, prev_a) -> tuple[list[str], str]:
@@ -96,8 +102,8 @@ def _concepts(con, ticked, prev_a) -> tuple[list[str], str]:
         else:
             state, auto = f"{live} live edge(s)", False
         label = kind if kind.lower() != "done" else "concept"
-        out.append(_item(auto or key in ticked or key in seed_done, key,
-                         f"**{row[0] if row else name}** (id {eid}) — {label} — {state}"))
+        out.append(_item(False, key, f"**{row[0] if row else name}** (id {eid}) — {label} — {state}",
+                         ticked=ticked | seed_done, auto=auto))
     return out, (f"⚠ {skipped} line(s) in {SEED.name} couldn't be read and are not listed." if skipped else "")
 
 
@@ -106,7 +112,7 @@ def _carry_resolved(section: str, found: set[str], items, ticked) -> list[str]:
     out = []
     for key, (sec, text) in items.items():
         if sec == section and key not in found:
-            out.append(_item(True, key, text.replace(_RESOLVED, "") + _RESOLVED))
+            out.append(_item(False, key, text.replace(_RESOLVED, "") + _RESOLVED, ticked=ticked, auto=True))
     return out
 
 
@@ -125,7 +131,8 @@ def _aliases(con, ticked, items) -> list[str]:
             key = _alias_key("alias", eid, alias)
             found.add(key)
             shown = ", ".join(cards[:6]) + (f" … +{len(cards) - 6}" if len(cards) > 6 else "")
-            out.append(_item(key in ticked, key, f"**{name}** ← alias “{alias}” — {len(cards)} card(s) never name {name}: {shown}"))
+            out.append(_item(False, key, f"**{name}** ← alias “{alias}” — {len(cards)} card(s) never name {name}: {shown}",
+                             ticked=ticked))
     return out + _carry_resolved("B", found, items, ticked)
 
 
@@ -136,7 +143,8 @@ def _generic_aliases(con, ticked, items) -> list[str]:
         if names.is_generic(alias):
             key = _alias_key("generic", eid, alias)
             found.add(key)
-            out.append(_item(key in ticked, key, f"**{name}** ← generic alias “{alias}” (move to a group bucket or drop)"))
+            out.append(_item(False, key, f"**{name}** ← generic alias “{alias}” (move to a group bucket or drop)",
+                             ticked=ticked))
     return out + _carry_resolved("C", found, items, ticked)
 
 
@@ -154,10 +162,8 @@ def _write_atomic(path: Path, text: str) -> None:
         raise
 
 
-def main() -> int:
-    p = os.path.join(tempfile.mkdtemp(), "robotics.duckdb")
-    duckdb_sync.pull(p)
-    con = duckdb.connect(p, read_only=True)
+def build(con) -> tuple[str, list[str]]:
+    """The checklist text for this DB + the current file's ticks; also the per-section open counts."""
     ticked, items, prev_a = _previous()
     a_items, a_note = _concepts(con, ticked, prev_a)
     secs = [("A. Concept / non-organization entities", "Fix in admin: make it a `group`, merge it into the real company, "
@@ -178,7 +184,15 @@ def main() -> int:
         counts.append(f"{title.split('.')[0]} {open_n}/{len(its)} open")
         lines += [f"## {title} — {open_n} open of {len(its)}", "", how, ""] + ([note, ""] if note else []) \
             + (its or ["- nothing found"]) + [""]
-    _write_atomic(OUT, "\n".join(lines))
+    return "\n".join(lines), counts
+
+
+def main() -> int:
+    p = os.path.join(tempfile.mkdtemp(), "robotics.duckdb")
+    duckdb_sync.pull(p)
+    con = duckdb.connect(p, read_only=True)
+    text, counts = build(con)
+    _write_atomic(OUT, text)
     print(f"{OUT}: " + ", ".join(counts))
     return 0
 
