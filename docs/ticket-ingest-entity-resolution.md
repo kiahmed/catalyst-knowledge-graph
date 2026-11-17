@@ -147,7 +147,7 @@ written) + `resolved` (the LLM's canonical form). For each name:
   case-sensitive existing canonical name / verified alias (a model mislabel of "Figure"). It's never sent to the
   resolution LLM.
 - The §3.2 word gate stays underneath as the safety net. The model decides; code verifies.
-- Live check on ROB-080126-003, ROB-090826-003 and ROB-032926-001 (data/kind_test_*): only named orgs emitted.
+- Live check on ROB-080126-003, ROB-090826-003 and ROB-032926-001: only named orgs emitted (test outputs not kept).
   The descriptors and products those cards used to produce were gone.
 
 ## 4. Cost

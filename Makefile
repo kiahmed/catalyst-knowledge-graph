@@ -1,7 +1,7 @@
 # Catalyst knowledge-graph — developer commands (Robotics module).
 # Most commands wrap `docker compose` + `curl` for the tool HTTP endpoints.
 
-.PHONY: help setup doctor up down logs ps ps-short \
+.PHONY: help setup doctor up down logs ps ps-short cleanup-checklist \
         ingest ingest-dry ingest-prod export watermark check-log firestore-ping \
         reextract backtest \
         render render-batch render-status \
@@ -338,6 +338,15 @@ entity-link:
 # Re-extract specific cards on the authoritative cloud DB (same path as a
 # cloud ingest: direction check + LLM entity resolution). Dry run unless APPLY=1.
 #   make reextract-prod IDS=ROB-…,ROB-… [APPLY=1]   (IDS=@file also works)
+# One living data-cleanup checklist (concept entities, stray aliases, generic aliases), rebuilt in place from
+# prod (read-only); your [x] ticks are kept. → data/cleanup_checklist.md
+cleanup-checklist:
+	@set -a; . ./.env.prod; set +a; \
+	  docker compose run --rm --no-deps -v "$(CURDIR):/repo" -w /repo \
+	    -v "$$FIREBASE_DEPLOY_KEY:/tmp/sa.json:ro" -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json \
+	    -e GCP_PROJECT="$$GCP_PROJECT" -e DUCKDB_GCS_BUCKET="$$DATA_BUCKET" -e DUCKDB_PATH=/tmp/robotics.duckdb \
+	    --entrypoint python robotics-ingest dev-utils/cleanup_checklist.py
+
 # Stale card images: card data changed after its card PNG / graph poster was
 # rendered (live Firestore doc update_time vs bucket image time). Covers every
 # kind of fix (admin edits, direction fixes, merges, re-extraction). Writes
