@@ -224,6 +224,8 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
     # Optional finer meaning under rel_type (src/subtypes.py, deterministic).
     # NULL = plain parent type. Never replaces rel_type; always rolls up to it.
     con.execute("ALTER TABLE relationships ADD COLUMN IF NOT EXISTS rel_subtype VARCHAR")
+    # true = the subtype was set by an admin: subtypes.refresh() leaves it alone (unless the type changes)
+    con.execute("ALTER TABLE relationships ADD COLUMN IF NOT EXISTS rel_subtype_locked BOOLEAN")
     # What the card's story reports (src/events.py, deterministic from the headline). NULL = none.
     con.execute("ALTER TABLE catalysts ADD COLUMN IF NOT EXISTS event_type VARCHAR")
     # Alias trust (docs/ticket-ingest-entity-resolution.md §3.4): only a

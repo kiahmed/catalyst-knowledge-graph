@@ -152,11 +152,21 @@ def refresh(con, catalyst_ids=None) -> int:
         if not params:
             return 0
         where = f"WHERE r.catalyst_id IN ({','.join('?' * len(params))})"
-    rows = con.execute(f"""SELECT r.rel_id, r.rel_type, r.mechanism, r.evidence_type, a.name, b.name, a.type, r.rel_subtype
+    has_lock = bool(con.execute("SELECT 1 FROM duckdb_columns() WHERE table_name = 'relationships' "
+                                "AND column_name = 'rel_subtype_locked'").fetchone())
+    rows = con.execute(f"""SELECT r.rel_id, r.rel_type, r.mechanism, r.evidence_type, a.name, b.name, a.type, r.rel_subtype,
+                               {'coalesce(r.rel_subtype_locked, false)' if has_lock else 'false'}
         FROM relationships r JOIN entities a ON a.entity_id = r.entity_a_id
         JOIN entities b ON b.entity_id = r.entity_b_id {where}""", params).fetchall()
-    changes = [(new, rel_id) for rel_id, rt, mech, ev, an, bn, at, cur in rows
-               if (new := classify(rt, mech, ev, a_name=an, b_name=bn, a_type=at)) != cur]
+    # An admin-set (locked) subtype is kept while it still belongs to the row's type; after a retype it no
+    # longer can, so the lock lifts and the rules decide again.
+    unlock = [rel_id for rel_id, rt, *_x, cur, locked in rows if locked and parent_of(cur or "") != rt]
+    changes = [(new, rel_id) for rel_id, rt, mech, ev, an, bn, at, cur, locked in rows
+               if not (locked and parent_of(cur or "") == rt)
+               and (new := classify(rt, mech, ev, a_name=an, b_name=bn, a_type=at)) != cur]
+    if unlock:
+        con.execute(f"UPDATE relationships SET rel_subtype_locked = NULL WHERE rel_id IN ({','.join('?' * len(unlock))})",
+                    unlock)
     if changes:               # one set-based UPDATE (row-by-row executemany is seconds per thousand in DuckDB)
         con.execute("""UPDATE relationships SET rel_subtype = n.s
                        FROM (SELECT unnest(?::VARCHAR[]) AS s, unnest(?::INTEGER[]) AS id) n

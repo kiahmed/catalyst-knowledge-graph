@@ -21,6 +21,7 @@ import duckdb
 from . import direction, entities, hashtags, subtypes
 
 LIVE = ("active", "materialized")
+EVIDENCE_TYPES = ("direct", "inferred", "web_grounded", "speculative")   # = src/extract.py EvidenceType
 EDGE_STATUSES = ("active", "materialized", "invalidated", "rejected", "internal")   # every status a relationship can hold
 # 'internal' = an internal event: a self-loop kept outside every live view (docs/ticket-internal-events.md)
 LINK_RELATIONS = ("subsidiary_of", "sister_of")
@@ -61,6 +62,7 @@ def ensure_schema(con: duckdb.DuckDBPyConnection) -> None:
     con.execute("ALTER TABLE entity_aliases ADD COLUMN IF NOT EXISTS verified BOOLEAN")
     con.execute("ALTER TABLE entity_aliases ADD COLUMN IF NOT EXISTS source VARCHAR")
     con.execute("ALTER TABLE relationships ADD COLUMN IF NOT EXISTS rel_subtype VARCHAR")   # src/subtypes.py
+    con.execute("ALTER TABLE relationships ADD COLUMN IF NOT EXISTS rel_subtype_locked BOOLEAN")
 
 
 # ── Reads ──────────────────────────────────────────────────────────
@@ -135,14 +137,19 @@ def entity_detail(con: duckdb.DuckDBPyConnection, eid: int) -> dict[str, Any]:
     # rel_subtype arrives with the first save / ingest after deploy; a read-only DB not yet migrated shows none
     sub_col = "r.rel_subtype" if con.execute("SELECT 1 FROM duckdb_columns() WHERE table_name = 'relationships' "
                                              "AND column_name = 'rel_subtype'").fetchone() else "NULL"
-    for (rel_id, a_id, a_name, rt, b_id, b_name, ev, conf, status, mech, entry_id, date, headline, finding, sub) in con.execute(f"""
+    lock_col = "coalesce(r.rel_subtype_locked, false)" if con.execute(
+        "SELECT 1 FROM duckdb_columns() WHERE table_name = 'relationships' AND column_name = 'rel_subtype_locked'"
+    ).fetchone() else "false"
+    for (rel_id, a_id, a_name, rt, b_id, b_name, ev, conf, status, mech, entry_id, date, headline, finding, sub,
+         locked) in con.execute(f"""
             SELECT r.rel_id, r.entity_a_id, ea.name, r.rel_type, r.entity_b_id, eb.name, r.evidence_type, r.confidence,
-                   r.status, r.mechanism, c.entry_id, c.timestamp, c.headline, c.raw_finding, {sub_col}
+                   r.status, r.mechanism, c.entry_id, c.timestamp, c.headline, c.raw_finding, {sub_col}, {lock_col}
             FROM relationships r JOIN catalysts c USING (catalyst_id)
             JOIN entities ea ON ea.entity_id = r.entity_a_id JOIN entities eb ON eb.entity_id = r.entity_b_id
             WHERE ? IN (r.entity_a_id, r.entity_b_id) AND r.entity_a_id <> r.entity_b_id
             ORDER BY c.timestamp DESC, r.rel_id""", [eid]).fetchall():
         rels.append({"rel_id": rel_id, "a": {"id": a_id, "name": a_name}, "rel_type": rt, "rel_subtype": sub,
+                     "rel_subtype_locked": bool(locked),
                      "b": {"id": b_id, "name": b_name},
                      "evidence": ev, "confidence": conf, "status": status, "mechanism": mech, "entry_id": entry_id,
                      "date": date.isoformat() if date else None, "headline": headline, "finding": finding,
@@ -420,7 +427,14 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
             raise EditError("that edge already exists on this card — set this one 'rejected' instead of repointing")
         sets = ", ".join(f"{k} = ?" for k in new)
         con.execute(f"UPDATE relationships SET {sets} WHERE rel_id = ?", [*new.values(), rel_id])
-        return {"rel_id": rel_id, **{k: cur[k] for k in new}}, {"rel_id": rel_id, **new}, True, {cur["catalyst_id"]}
+        before = {"rel_id": rel_id, **{k: cur[k] for k in new}}
+        if "rel_type" in new and new["rel_type"] != cur["rel_type"]:
+            # A retype lifts a hand-set subtype (subtypes.refresh); remember it so a revert can put it back.
+            held = con.execute("SELECT rel_subtype FROM relationships WHERE rel_id = ? AND rel_subtype_locked",
+                               [rel_id]).fetchone()
+            if held and held[0]:
+                before["_locked_subtype"] = held[0]
+        return before, {"rel_id": rel_id, **new}, True, {cur["catalyst_id"]}
 
     if op == "set_edge_status":
         rel_id, status = _need(p, "rel_id", "status")
@@ -588,8 +602,51 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
                  "unresolved": unresolved, "edges": edges}, {"deleted": eid, "edges_deleted": len(edges)}, True,
                 {e["catalyst_id"] for e in edges})
 
+    if op == "edit_edge":   # evidence type / mechanism / subtype of one edge (docs/ticket-admin-edit-edge-details.md)
+        (rel_id,) = _need(p, "rel_id")
+        row = con.execute("""SELECT evidence_type, mechanism, rel_subtype, coalesce(rel_subtype_locked, false), rel_type,
+                                    catalyst_id FROM relationships WHERE rel_id = ?""",
+                          [rel_id]).fetchone()
+        if not row:
+            raise EditError(f"no relationship {rel_id!r}")
+        cur = {"evidence_type": row[0], "mechanism": row[1],
+               "rel_subtype": row[2] if row[3] else "auto"}       # "auto" = the rules decide (not locked)
+        new = {k: p[k] for k in ("evidence_type", "mechanism", "rel_subtype") if k in p and p[k] is not None}
+        if not new:
+            raise EditError("nothing to change: give evidence_type, mechanism and/or rel_subtype")
+        _check_expect(cur, p.get("expect"), list(new))
+        if "evidence_type" in new and new["evidence_type"] not in EVIDENCE_TYPES:
+            raise EditError(f"evidence_type must be one of {EVIDENCE_TYPES}")
+        if "mechanism" in new:
+            new["mechanism"] = str(new["mechanism"]).strip()
+            if len(new["mechanism"]) < 10:
+                raise EditError("mechanism: say in a sentence what the card shows (10+ characters)")
+        if "rel_subtype" in new:
+            sub = new["rel_subtype"] or "auto"
+            if sub != "auto" and subtypes.parent_of(sub) != row[4]:
+                raise EditError(f"subtype {sub!r} doesn't belong to {row[4]} — choose one of "
+                                f"{subtypes.SUBTYPES.get(row[4], [])} or auto")
+            new["rel_subtype"] = sub
+        if "evidence_type" in new:
+            con.execute("UPDATE relationships SET evidence_type = ? WHERE rel_id = ?", [new["evidence_type"], rel_id])
+        if "mechanism" in new:
+            con.execute("UPDATE relationships SET mechanism = ? WHERE rel_id = ?", [new["mechanism"], rel_id])
+        if "rel_subtype" in new:
+            if new["rel_subtype"] == "auto":   # back to the rules (recomputed by store_for_catalyst below)
+                con.execute("UPDATE relationships SET rel_subtype_locked = NULL WHERE rel_id = ?", [rel_id])
+            else:
+                con.execute("UPDATE relationships SET rel_subtype = ?, rel_subtype_locked = true WHERE rel_id = ?",
+                            [new["rel_subtype"], rel_id])
+        return ({"rel_id": rel_id, **{k: cur[k] for k in new}}, {"rel_id": rel_id, **new}, True, {row[5]})
+
     if op == "add_edge":   # a relationship the extractor missed, asserted by the admin on one card
         entry, a, rt, b, mech = _need(p, "entry_id", "entity_a_id", "rel_type", "entity_b_id", "mechanism")
+        ev = p.get("evidence_type") or "direct"
+        if ev not in EVIDENCE_TYPES:
+            raise EditError(f"evidence_type must be one of {EVIDENCE_TYPES}")
+        sub = p.get("rel_subtype") or None
+        if sub is not None and subtypes.parent_of(sub) != rt:
+            raise EditError(f"subtype {sub!r} doesn't belong to {rt}")
         card = con.execute("SELECT catalyst_id, timestamp FROM catalysts WHERE entry_id = ?", [entry]).fetchone()
         if not card:
             raise EditError(f"no card {entry!r}")
@@ -612,9 +669,9 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
             raise EditError("this relationship is already live on the card")
         day = card[1].date() if hasattr(card[1], "date") else card[1]
         rel_id = con.execute("""INSERT INTO relationships (catalyst_id, entity_a_id, rel_type, entity_b_id, confidence,
-                                    evidence_type, mechanism, flagged, first_flagged_at)
-                                VALUES (?, ?, ?, ?, 1.0, 'direct', ?, false, ?) RETURNING rel_id""",
-                             [card[0], a, rt, b, mech, day]).fetchone()[0]
+                                    evidence_type, mechanism, flagged, first_flagged_at, rel_subtype, rel_subtype_locked)
+                                VALUES (?, ?, ?, ?, 1.0, ?, ?, false, ?, ?, ?) RETURNING rel_id""",
+                             [card[0], a, rt, b, ev, mech, day, sub, True if sub else None]).fetchone()[0]
         return ({"rel_id": None}, {"rel_id": rel_id, "entry_id": entry, "entity_a_id": a, "rel_type": rt,
                                    "entity_b_id": b}, True, {card[0]})
 
@@ -854,9 +911,15 @@ def revert_edit(con: duckdb.DuckDBPyConnection, edit_id: str, *, email: str, ip:
     if reverted_by:
         raise EditError(f"already reverted by {reverted_by}")
     if op == "repoint_edge":
-        keys = [k for k in before if k != "rel_id"]
-        inverse = ("repoint_edge", {"rel_id": before["rel_id"], **{k: before[k] for k in keys},
-                                    "expect": {k: after[k] for k in keys}})
+        keys = [k for k in before if k not in ("rel_id", "_locked_subtype")]
+        out = apply_edit(con, "repoint_edge", {"rel_id": before["rel_id"], **{k: before[k] for k in keys},
+                                               "expect": {k: after[k] for k in keys}},
+                         email=email, ip=ip, vocab=vocab, reverts=edit_id)
+        held = before.get("_locked_subtype")
+        if held:   # the type is back → so is the subtype the admin had set on it (CI review, 2026-11-16)
+            con.execute("""UPDATE relationships SET rel_subtype = ?, rel_subtype_locked = true
+                           WHERE rel_id = ? AND rel_type = ?""", [held, before["rel_id"], subtypes.parent_of(held)])
+        return out
     elif op == "set_edge_status":
         inverse = ("set_edge_status", {"rel_id": before["rel_id"], "status": before["status"],
                                        "expect": {"status": after["status"]}})
@@ -991,6 +1054,33 @@ def revert_edit(con: duckdb.DuckDBPyConnection, edit_id: str, *, email: str, ip:
             raise EditConflict(f"alias {after['alias']!r} is no longer on that entity")
         con.execute("DELETE FROM entity_aliases WHERE entity_id = ? AND alias = ?", [after["entity_id"], after["alias"]])
         return _record_manual_revert(con, edit_id, email, ip, before, after)
+    elif op == "edit_edge":
+        # Restore EXACTLY what was there — a NULL or short original mechanism included — so not through the
+        # forward op's input guards (CI review, 2026-11-16). Guarded by the recorded after-state instead.
+        rel_id = before["rel_id"]
+        keys = [k for k in before if k != "rel_id"]
+        row = con.execute("""SELECT evidence_type, mechanism, rel_subtype, coalesce(rel_subtype_locked, false), rel_type,
+                                    catalyst_id FROM relationships WHERE rel_id = ?""", [rel_id]).fetchone()
+        if not row:
+            raise EditConflict(f"relationship {rel_id} no longer exists")
+        cur = {"evidence_type": row[0], "mechanism": row[1], "rel_subtype": row[2] if row[3] else "auto"}
+        stale = {k: (after[k], cur[k]) for k in keys if cur[k] != after[k]}
+        if stale:
+            raise EditConflict(f"changed since: {stale}")
+        if "evidence_type" in keys:
+            con.execute("UPDATE relationships SET evidence_type = ? WHERE rel_id = ?", [before["evidence_type"], rel_id])
+        if "mechanism" in keys:
+            con.execute("UPDATE relationships SET mechanism = ? WHERE rel_id = ?", [before["mechanism"], rel_id])
+        if "rel_subtype" in keys:
+            if before["rel_subtype"] == "auto":
+                con.execute("UPDATE relationships SET rel_subtype_locked = NULL WHERE rel_id = ?", [rel_id])
+            elif subtypes.parent_of(before["rel_subtype"]) == row[4]:
+                con.execute("UPDATE relationships SET rel_subtype = ?, rel_subtype_locked = true WHERE rel_id = ?",
+                            [before["rel_subtype"], rel_id])
+            else:
+                raise EditConflict(f"relationship {rel_id} is a {row[4]} now — {before['rel_subtype']!r} can't go back on it")
+        hashtags.store_for_catalyst(con, row[5])     # rules re-run (an unlocked subtype follows the restored text)
+        return _record_manual_revert(con, edit_id, email, ip, before, after, cards=_card_ids(con, {row[5]}))
     elif op == "add_edge":   # undo = hard delete of the added row (itself revertible), only if it is unchanged
         row = con.execute("SELECT entity_a_id, rel_type, entity_b_id FROM relationships WHERE rel_id = ?",
                           [after["rel_id"]]).fetchone()

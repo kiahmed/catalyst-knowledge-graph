@@ -340,7 +340,8 @@ def _backend_status() -> dict[str, Any]:
 def me(who):
     return jsonify({"ok": True, "email": who[0], "ip": who[1], "sector": CFG.sector,
                     "rel_types": sorted(_vocab()), "statuses": list(admin_ops.EDGE_STATUSES),
-                    "link_relations": list(admin_ops.LINK_RELATIONS), "entity_types": list(admin_ops.ENTITY_TYPES)})
+                    "link_relations": list(admin_ops.LINK_RELATIONS), "entity_types": list(admin_ops.ENTITY_TYPES),
+                    "evidence_types": list(admin_ops.EVIDENCE_TYPES), "subtypes": admin_ops.subtypes.SUBTYPES})
 
 
 @app.get("/admin/api/status")
