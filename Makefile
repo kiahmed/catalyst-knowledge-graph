@@ -1,7 +1,7 @@
 # Catalyst knowledge-graph — developer commands (Robotics module).
 # Most commands wrap `docker compose` + `curl` for the tool HTTP endpoints.
 
-.PHONY: help setup doctor up down logs ps ps-short cleanup-checklist \
+.PHONY: help setup doctor up down logs ps ps-short cleanup-checklist test-ui \
         ingest ingest-dry ingest-prod export watermark check-log firestore-ping \
         reextract backtest \
         render render-batch render-status \
@@ -338,6 +338,19 @@ entity-link:
 # Re-extract specific cards on the authoritative cloud DB (same path as a
 # cloud ingest: direction check + LLM entity resolution). Dry run unless APPLY=1.
 #   make reextract-prod IDS=ROB-…,ROB-… [APPLY=1]   (IDS=@file also works)
+# Browser tests (tests/ui/): a throwaway copy of frontend/ in .ui-test-site/ (gitignored) + a payload built from a
+# READ-ONLY prod copy, driven by headless Chromium on the host (needs: pip install playwright && playwright install
+# chromium). Invariant checks: ego view, rel-type filter, layout, internal events, silent refresh (simulated Firestore).
+UI_SITE := $(CURDIR)/.ui-test-site
+test-ui:
+	@rm -rf "$(UI_SITE)" && mkdir -p "$(UI_SITE)" && cp -r frontend/. "$(UI_SITE)/" && rm -f "$(UI_SITE)/firebase-config.js" && \
+	  set -a && . ./.env.prod && set +a && \
+	  docker compose run --rm --no-deps -v "$(CURDIR):/repo:ro" -v "$(UI_SITE):/site" -w /repo \
+	    -v "$$FIREBASE_DEPLOY_KEY:/tmp/sa.json:ro" -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json \
+	    -e GCP_PROJECT="$$GCP_PROJECT" -e DUCKDB_GCS_BUCKET="$$DATA_BUCKET" -e DUCKDB_PATH=/tmp/robotics.duckdb \
+	    --entrypoint python robotics-ingest tests/ui/build_payload.py /site 2>&1 | grep -v "^INFO" | tail -1 && \
+	  python3 tests/ui/test_ui.py "$(UI_SITE)"
+
 # One living data-cleanup checklist (concept entities, stray aliases, generic aliases), rebuilt in place from
 # prod (read-only); your [x] ticks are kept. → data/cleanup_checklist.md
 cleanup-checklist:

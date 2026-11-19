@@ -36,6 +36,9 @@ land. Until now new data showed only after a hard reload (e.g. a new internal ev
   upstream-dedup delete (a few per month); trim if it ever matters.
 
 ## Tests
+`make test-ui` (tests/ui/test_ui.py) runs the silent-refresh cases in headless Chromium on every run: unseeded page
+makes no calls; missing SDK rejects and clears busy; no change → 0 item queries; a change merges + applies a
+tombstone + keeps the Cards page; throttle; ego view kept through a refresh.
 tests/test_firestore_delta.py `test_silent_refresh_markers`; tests/test_upstream_dedup.py (tombstone).
 Headless Chromium with a stubbed `checkUpdates`: a view switch merged a changed card (new headline, NVIDIA
 internal event), dropped a deleted one, advanced `version`; a second lookup within 15 s made no call.

@@ -386,10 +386,22 @@ Hand-fix entities and edges (wrong alias landing, mis-pointed edge, missing pare
    - **Filter by card text** (third column, `Aa` = case-sensitive): e.g. `Humanoid` with Aa finds the company's cards rather than "humanoid robots"; then tick "all" and spin out / repoint.
    - **Pre-tick from an alias:** click an alias name. The third column ticks every live relationship on cards that reached this entity only through that alias (the card never names the entity). The "only via: N" tag shows the count. Review the ticks, then spin out or repoint.
    - **Repoint checked → …:** moves the ticked relationships from this entity to another existing entity in one save (the "all" box ticks everything shown). Each edge goes through the normal single repoint (self-loop and duplicate-edge guards, dedupe, hashtags, card/entity refresh, re-embedding; the stale-screen check is "the edge still involves this entity") and gets its own revertible log row. It's all or nothing: if any one is refused, nothing is saved.
+   - **Edit an edge's details** (Edit form): **Evidence** (direct / inferred / web_grounded / speculative),
+     **Mechanism** (editable text) and **Subtype**. Subtype "auto (rules)" lets the rules pick it from the mechanism;
+     choosing one locks it ("set by admin"), and a type change lifts the lock (docs/ticket-admin-edit-edge-details.md).
+   - **Add edge on this card** (relationship pane): an edge the extractor missed — source/target from the card chips,
+     type, subtype, evidence, a one-sentence mechanism (docs/ticket-admin-add-edge.md).
+   - **Rejected (N)** (header): every rejected edge, filter by entity, "select all shown", bulk **Restore** (comes back
+     exactly as it is now; a self-loop comes back as an internal event) or **Delete permanently**.
+   - **Internal events** (entity pane): an entity's self-loop events (e.g. "Tesla deploys Optimus" after a merge), with
+     Reject / Delete. Never drawn as graph edges (docs/ticket-internal-events.md).
+   - **Delete entity** with live edges asks you to type its exact name (the server checks it too).
    - **Spin out** (button on an alias): when an alias really names another organization ("SEER Robotics" on Serve Robotics), it becomes its own entity. The relationships you checked in the third column move with it, and only the side that pointed at the current entity changes. With nothing checked, it just creates the bare entity and removes the alias. One revertible edit; the revert is refused once the new entity has other edges, aliases or links.
 4. **Save** applies it right away:
    - pull the GCS DuckDB → apply → push (generation-checked; if someone else changed it, you get a 409, so reload);
-   - rewrite just the touched card docs and the entity docs in Firestore. Reload the map to see the change; the graph doc and insights catch up at the next ingest.
+   - rewrite just the touched card docs and the entity docs in Firestore. Open pages pick the change up on their next
+     lookup (silent refresh, no reload — docs/ticket-frontend-silent-refresh.md); the graph doc, insights and card
+     PNGs catch up at the next ingest / `make render-stale APPLY=1`.
 
 **Safety:**
 - Every edit checks the values you saw (`expect`). It refuses self-loops, and it refuses duplicating or reviving a live twin edge on the same card.
@@ -398,3 +410,16 @@ Hand-fix entities and edges (wrong alias landing, mis-pointed edge, missing pare
 - **Fix with LLM** asks Gemini to pick the right family member from the card text. It is suggestions only, and you approve each one.
 
 **Banner:** shows ingest, render, and Arboryx scheduler runs that are in flight or due within 60 min. Saving during a run asks you to confirm, and the edit is logged with `_backend_running`. Prefer editing between runs: the push is generation-checked, so whichever side writes second gets a conflict instead of overwriting.
+
+## 14. Tests and checks
+
+| Need | Command | What it does |
+|---|---|---|
+| Python unit tests | `docker compose run --rm --no-deps -v "$PWD:/repo:ro" -w /repo --entrypoint python robotics-ingest -m unittest tests.<module>` | One module at a time (`unittest discover` can hang on network-touching modules). |
+| Browser tests | `make test-ui` | Builds a throwaway copy of the site (`.ui-test-site/`, gitignored) from a READ-ONLY prod snapshot and runs 27 headless-Chromium checks: company (ego) view across 90/30/7 days, relationship-type filter, internal-events row, silent refresh (simulated Firestore), dropdown layout at 4 widths. Invariants, not prod numbers. Needs `pip install playwright && playwright install chromium` on the host. Writes nothing to prod. |
+| Data-cleanup checklist | `make cleanup-checklist` | Rebuilds the ONE cleanup file `data/cleanup_checklist.md` from prod (read-only): concept entities, aliases pulling in cards that never name the entity, generic aliases. Your `- [x]` ticks are kept; automatic ticks (flag `auto`) are recomputed, so anything that comes back re-opens. Don't write notes after a line's `<!-- key:… -->` marker. |
+| Stale card images | `make render-stale [APPLY=1]` | Cards whose data changed after their PNG was rendered; `APPLY=1` re-renders them. |
+
+The browser tests exist so a reviewer runs the same checks the author ran (they used to live in a temp folder) and so
+bugs found by hand (e.g. the ego-view report of 2026-11-17) stay covered.
+

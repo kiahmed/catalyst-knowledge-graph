@@ -14,3 +14,7 @@ Status: built 2026-11-11 · Item 5 of the 2026-11-11 delivery list · frontend o
 - R5 Same filter everywhere the graph filters edges: graph.js filterPayload (+ render signature), the
   page's window-widening probe (graphEdgeCountFor), node-panel edges (edgesTouching), ego search.
 - R6 No other filter or default view changes; with "All" the graph is exactly as before.
+
+## Tests
+`make test-ui`: a subtype choice draws only its parent type and exactly filterPayload's edges; "All" removes `rt`;
+the dropdown overlaps neither the legend nor the search at 1400/1100/900/700px.

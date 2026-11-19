@@ -58,6 +58,7 @@ DuckDB `relationships` table directly with a `status <> 'rejected'` filter (not 
 data step.
 
 ## 6. Tests
+`make test-ui`: the node-panel row shows the right count and its click opens exactly those cards.
 tests/test_internal_events.py — merge (directional → internal, symmetric → rejected, dead rows not
 revived), ingest rule, card export (relationships + stats identical, internal_events filled once, graph has
 no self-loop edge), admin status guard + revert.

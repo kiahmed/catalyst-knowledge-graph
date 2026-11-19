@@ -64,3 +64,6 @@ tools/infra/prod.auto.tfvars
 .DS_Store
 Thumbs.db
 data/.prod-status.duckdb*
+
+# make test-ui throwaway site copy
+.ui-test-site/
