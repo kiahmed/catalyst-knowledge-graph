@@ -29,7 +29,7 @@ import duckdb
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from . import db, direction, events, hashtags, subtypes
+from . import db, direction, events, hashtags, names, story, subtypes
 from .config import RoboticsConfig
 from .extract import ExtractionResult, extract, research_sources_json
 from .resolve import Decision, decide_entities, resolve_entity
@@ -153,6 +153,38 @@ def _fetch_findings(
 # ── Write one extraction result (one transaction) ──────────────────
 
 
+def story_text(entry: dict[str, Any], result: ExtractionResult) -> str:
+    """The card's OWN text: headline + finding + the fetched source article. Never the extractor's web research
+    (when a card has no article, `context_text` IS that research — it must not make a claim look "direct")."""
+    diag = getattr(result, "enrichment", None) or {}
+    article = (getattr(result, "context_text", "") or "") if diag.get("path") == "url_fetch" and diag.get("ok") else ""
+    return " ".join(x for x in (getattr(result, "headline", "") or "", str(entry.get("finding") or ""), article) if x)
+
+
+def checked_evidence(con: duckdb.DuckDBPyConnection, rel: dict[str, Any], ends: list[tuple[int, str]], text: str,
+                     aliases: dict[str, set[str]]) -> tuple[str, str | None]:
+    """(evidence_type to store, why it changed or None). A `direct` edge needs BOTH ends named in the card's own
+    text (name, alias, or the extracted mention); otherwise the claim came from research → `web_grounded` when it
+    cites a source, else `inferred` (docs/ticket-ingest-direct-evidence-check.md). Deterministic, no LLM.
+    `ends` = [(entity_id, the extracted name that resolved to it)] — paired BEFORE any symmetric reordering, so
+    a swapped two-party edge can't credit one end with the other end's name.
+    Edges touching a `group` bucket are left alone (a generic bucket can't be matched by name)."""
+    ev = str(rel.get("evidence_type") or "direct")
+    if ev != "direct":
+        return ev, None
+    missing = []
+    for eid, raw in ends:
+        row = con.execute("SELECT name, type FROM entities WHERE entity_id = ?", [eid]).fetchone()
+        if not row or row[1] == "group":
+            return ev, None
+        if not (story.mentioned(row[0], text, aliases) or (raw and names.mentioned_in(text, str(raw)))):
+            missing.append(row[0])
+    if not missing:
+        return ev, None
+    new = "web_grounded" if rel.get("source_refs") else "inferred"
+    return new, f"direct → {new}: {', '.join(missing)} not named in the card's own text"
+
+
 def write_extraction(
     con: duckdb.DuckDBPyConnection,
     entry: dict[str, Any],
@@ -205,6 +237,8 @@ def write_extraction(
 
         # Insert relationships whose endpoints were resolvable.
         symmetric = direction.symmetric_types()
+        own_text = story_text(entry, result)          # for the direct-evidence check (no research text)
+        aliases = story.load_aliases(con)
         written: set[tuple[int, str, int]] = set()
         for rel in result.relationships:
             a_id = name_to_id.get(rel.get("entity_a"))
@@ -226,6 +260,12 @@ def write_extraction(
             written.add((a_id, rel["rel_type"], b_id))
             refs = rel.get("source_refs") or []
             source_refs_json = json.dumps(refs) if refs else None
+            evidence, why = checked_evidence(con, rel, [(name_to_id[rel["entity_a"]], rel["entity_a"]),
+                                                        (name_to_id[rel["entity_b"]], rel["entity_b"])], own_text, aliases)
+            if why:
+                rel["evidence_type"], rel["evidence_downgraded"] = evidence, why
+                log.info("evidence_downgraded entry_id=%s edge=%s|%s|%s %s", entry.get("entry_id"),
+                         rel.get("entity_a"), rel["rel_type"], rel.get("entity_b"), why)
             db.insert_relationship(
                 con,
                 catalyst_id=catalyst_id,
@@ -234,7 +274,7 @@ def write_extraction(
                 entity_b_id=b_id,
                 confidence=float(rel.get("confidence") or 0.0),
                 flagged=bool(rel.get("flagged", False)),
-                evidence_type=str(rel.get("evidence_type") or "direct"),
+                evidence_type=evidence,
                 mechanism=rel.get("mechanism"),
                 mechanism_strength=(
                     float(rel["mechanism_strength"])
