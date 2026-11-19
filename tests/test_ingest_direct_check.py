@@ -45,6 +45,9 @@ class TestDirectCheck(unittest.TestCase):
         self.assertNotIn("Agility", ingest.story_text({"finding": "Tesla ramps Optimus."}, research))
         article = _result("Optimus trials begin", [], [], "The article: Agility Robotics responds.", "url_fetch")
         self.assertIn("Agility", ingest.story_text({"finding": "Tesla ramps Optimus."}, article))
+        own = ingest.story_text({"finding": "Tesla ramps Optimus.", "sentiment_takeaways": "Bullish for Agility Robotics.",
+                                 "guidance_play": "Watch NVIDIA.", "price_levels": "TSLA 250"}, research)
+        self.assertTrue(all(w in own for w in ("Agility Robotics", "NVIDIA", "TSLA")))   # the finding's own text counts
         failed = _result("Optimus trials begin", [], [], "research text", "url_fetch+grounding", ok=False)
         self.assertNotIn("research", ingest.story_text({"finding": "x"}, failed))
 

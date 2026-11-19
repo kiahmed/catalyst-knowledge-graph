@@ -154,11 +154,13 @@ def _fetch_findings(
 
 
 def story_text(entry: dict[str, Any], result: ExtractionResult) -> str:
-    """The card's OWN text: headline + finding + the fetched source article. Never the extractor's web research
-    (when a card has no article, `context_text` IS that research — it must not make a claim look "direct")."""
+    """The card's OWN text: headline + the finding with its own takeaways / guidance / price-level text + the
+    fetched source article. Never the extractor's web research (when a card has no article, `context_text` IS that
+    research — it must not make a claim look "direct")."""
     diag = getattr(result, "enrichment", None) or {}
     article = (getattr(result, "context_text", "") or "") if diag.get("path") == "url_fetch" and diag.get("ok") else ""
-    return " ".join(x for x in (getattr(result, "headline", "") or "", str(entry.get("finding") or ""), article) if x)
+    own = [str(entry.get(k) or "") for k in ("finding", "sentiment_takeaways", "guidance_play", "price_levels")]
+    return " ".join(x for x in (getattr(result, "headline", "") or "", *own, article) if x)
 
 
 def checked_evidence(con: duckdb.DuckDBPyConnection, rel: dict[str, Any], ends: list[tuple[int, str]], text: str,

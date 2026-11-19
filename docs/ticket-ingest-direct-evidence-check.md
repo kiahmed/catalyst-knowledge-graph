@@ -9,7 +9,9 @@ Apptronik" and "Agility Robotics supplies GXO" as `direct`. The 2026-11-17 bulk 
 but nothing stopped new ones — the ingest code had no such rule.
 
 ## Rule (src/ingest.py `story_text`, `checked_evidence`, applied in `write_extraction` before each insert)
-- R1 The card's OWN text = headline + finding + the fetched source article (enrichment path `url_fetch`, ok).
+- R1 The card's OWN text = headline + finding + the finding's own takeaways / guidance / price-level text
+  (added 2026-11-19: they name companies the one-line finding doesn't) + the fetched source article
+  (enrichment path `url_fetch`, ok).
   Never the extractor's grounding research: when a card has no article, `context_text` IS that research and
   must not make a claim look direct.
 - R2 A `direct` edge stays `direct` only if BOTH ends are named in that text — by canonical name or alias
