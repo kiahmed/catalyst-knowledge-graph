@@ -41,5 +41,6 @@ A one-time bulk correction of the 689 no-article `direct` edges (→ `web_ground
 `inferred`), as audited, revertible admin edits — only with the user's go.
 
 ## Tests
+`make test-ui` (admin suite) drives this through the real admin page (test mode, local copy).
 tests/test_admin_edit_edge.py — edit + revert; lock survives refresh and a mechanism change; auto restores
 the rules value; retype lifts the lock; guards; add_edge with evidence + locked subtype.

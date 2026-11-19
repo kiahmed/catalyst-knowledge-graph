@@ -338,18 +338,37 @@ entity-link:
 # Re-extract specific cards on the authoritative cloud DB (same path as a
 # cloud ingest: direction check + LLM entity resolution). Dry run unless APPLY=1.
 #   make reextract-prod IDS=ROB-…,ROB-… [APPLY=1]   (IDS=@file also works)
-# Browser tests (tests/ui/): a throwaway copy of frontend/ in .ui-test-site/ (gitignored) + a payload built from a
-# READ-ONLY prod copy, driven by headless Chromium on the host (needs: pip install playwright && playwright install
-# chromium). Invariant checks: ego view, rel-type filter, layout, internal events, silent refresh (simulated Firestore).
+# Browser tests (tests/ui/), two suites, both on a READ-ONLY prod snapshot; headless Chromium on the host (needs:
+# pip install playwright && playwright install chromium). Nothing reaches prod.
+#   1. Public site: a throwaway copy of frontend/ in .ui-test-site/ (gitignored) + a payload built from the snapshot.
+#      Invariant checks: ego view, rel-type filter, layout, internal events, silent refresh (simulated Firestore).
+#   2. Admin page: the REAL admin app in test mode (tests/ui/admin_server.py, container ckg-admin-uitest on
+#      127.0.0.1:8791): fake signed-in admin, saves go to a local copy of the snapshot (the GCS bucket setting is
+#      pointed at a non-existent bucket after the one read). Checks: reject → Rejected list restore, edit evidence/
+#      subtype/mechanism + revert, add edge, typed-name delete guard, internal events.
 UI_SITE := $(CURDIR)/.ui-test-site
+ADMIN_UI_PORT := 8791
 test-ui:
-	@rm -rf "$(UI_SITE)" && mkdir -p "$(UI_SITE)" && cp -r frontend/. "$(UI_SITE)/" && rm -f "$(UI_SITE)/firebase-config.js" && \
-	  set -a && . ./.env.prod && set +a && \
+	@rm -rf "$(UI_SITE)" && mkdir -p "$(UI_SITE)" && cp -r frontend/. "$(UI_SITE)/" && rm -f "$(UI_SITE)/firebase-config.js"; \
+	  set -a; . ./.env.prod; set +a; \
+	  echo "── 1/2 public site ─────────────────────────────"; \
 	  docker compose run --rm --no-deps -v "$(CURDIR):/repo:ro" -v "$(UI_SITE):/site" -w /repo \
 	    -v "$$FIREBASE_DEPLOY_KEY:/tmp/sa.json:ro" -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json \
 	    -e GCP_PROJECT="$$GCP_PROJECT" -e DUCKDB_GCS_BUCKET="$$DATA_BUCKET" -e DUCKDB_PATH=/tmp/robotics.duckdb \
-	    --entrypoint python robotics-ingest tests/ui/build_payload.py /site 2>&1 | grep -v "^INFO" | tail -1 && \
-	  python3 tests/ui/test_ui.py "$(UI_SITE)"
+	    --entrypoint python robotics-ingest tests/ui/build_payload.py /site 2>&1 | grep -v "^INFO" | tail -1; \
+	  python3 tests/ui/test_ui.py "$(UI_SITE)"; rc1=$$?; \
+	  echo "── 2/2 admin page (test-mode server, local copy) ─"; \
+	  docker rm -f ckg-admin-uitest >/dev/null 2>&1; \
+	  docker compose run -d --rm --no-deps --name ckg-admin-uitest -p 127.0.0.1:$(ADMIN_UI_PORT):$(ADMIN_UI_PORT) \
+	    -v "$(CURDIR):/repo:ro" -w /repo -v "$$FIREBASE_DEPLOY_KEY:/tmp/sa.json:ro" -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json \
+	    -e GCP_PROJECT="$$GCP_PROJECT" -e DUCKDB_GCS_BUCKET="$$DATA_BUCKET" -e DUCKDB_PATH=/tmp/robotics.duckdb \
+	    -e PYTHONDONTWRITEBYTECODE=1 --entrypoint sh robotics-ingest \
+	    -c 'pip -q install flask firebase-admin >/dev/null 2>&1; python tests/ui/admin_server.py $(ADMIN_UI_PORT)' >/dev/null 2>&1; \
+	  for i in $$(seq 1 60); do curl -fsS http://127.0.0.1:$(ADMIN_UI_PORT)/__health >/dev/null 2>&1 && break; sleep 3; done; \
+	  python3 tests/ui/test_admin_ui.py http://127.0.0.1:$(ADMIN_UI_PORT); rc2=$$?; \
+	  docker rm -f ckg-admin-uitest >/dev/null 2>&1; \
+	  if [ $$rc1 -ne 0 ] || [ $$rc2 -ne 0 ]; then echo "test-ui: FAILED (public=$$rc1 admin=$$rc2)"; exit 1; fi; \
+	  echo "test-ui: all passed"
 
 # One living data-cleanup checklist (concept entities, stray aliases, generic aliases), rebuilt in place from
 # prod (read-only); your [x] ticks are kept. → data/cleanup_checklist.md

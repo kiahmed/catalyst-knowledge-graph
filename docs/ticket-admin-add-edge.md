@@ -18,5 +18,6 @@ Status: built 2026-11-11 · Item 3 of the 2026-11-11 delivery list · admin only
   status OR its endpoints / type changed since (CI audit W4: revert the later repoint first).
 
 ## Tests
+`make test-ui` (admin suite) drives this through the real admin page (test mode, local copy).
 tests/test_admin_add_edge.py — add + subtype computed + revert; every guard; two-party ordering and the
 reversed duplicate.

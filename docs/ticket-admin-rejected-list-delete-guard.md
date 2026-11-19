@@ -29,3 +29,6 @@ Status: built 2026-11-11 · Items 2 and 4 of the 2026-11-11 delivery list · adm
   the simple confirm.
 - R7 The server enforces it too: `delete_entity` with live edges requires `confirm_name` == the entity's
   current name (exact), else EditError — a stale page or a scripted call can't skip it.
+
+## Tests
+`make test-ui` (admin suite): reject an edge in the UI → filter the Rejected list by entity → "select all shown" → Restore → active again; Delete entity with live edges refuses a wrong typed name and deletes on the exact one.

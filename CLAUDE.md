@@ -22,3 +22,14 @@ Longer output is allowed ONLY when I explicitly ask ("deep dive",
 - Status: `make ingest-render-status` (local vs cloud side by side).
 - On-demand prod run: `make ingest-prod`.
 - Full history + decisions: `docs/workbench.md` (newest entries at top).
+
+# Testing / review rules
+
+- Any change under `frontend/` or `tools/robotics-admin/` (or `src/admin_ops.py`,
+  `src/export.py`, `src/firestore_export.py`): run `make test-ui` and include its
+  result before PASS / commit. It drives the public site and the admin page in
+  headless Chromium on a read-only prod snapshot — nothing reaches prod.
+- Python changes: run the touched `tests/test_*.py` modules one at a time in the
+  ingest image (`python -m unittest tests.<module>`; `discover` can hang).
+- Report outputs go into fixed files (e.g. `data/cleanup_checklist.md` via
+  `make cleanup-checklist`), updated in place — no new timestamped files per run.
