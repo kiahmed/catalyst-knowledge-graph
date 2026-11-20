@@ -11,6 +11,17 @@
 </script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+// Phone layout switch: <html class="is-mobile"> on phone-sized screens
+// (≤760px wide, or a touch screen ≤500px tall in landscape). Every phone-only
+// rule lives in /assets/mobile.css under that class, so desktop is untouched.
+(function () {
+  var q = window.matchMedia('(max-width: 760px), (pointer: coarse) and (max-height: 500px)');
+  function apply() { document.documentElement.classList.toggle('is-mobile', q.matches); }
+  apply();
+  if (q.addEventListener) q.addEventListener('change', apply); else q.addListener(apply);
+})();
+</script>
 
 <!-- Open Graph (X / LinkedIn link cards) -->
 <meta property="og:type" content="website" />
@@ -975,6 +986,7 @@ input[type="date"]:focus { border-color: var(--border-focus); }
   .gfilter-panel { width: calc(100vw - 24px); }
 }
 </style>
+<link rel="stylesheet" href="/assets/mobile.css">
 </head>
 <body>
 
@@ -1276,6 +1288,7 @@ input[type="date"]:focus { border-color: var(--border-focus); }
 <script src="/features.js" onerror="void 0"></script>
 <script src="/assets/firestore-source.js"></script>
 <script src="/assets/auth.js"></script>
+<script src="/assets/mobile.js"></script>
 
 <script>
 // ══ Data ══

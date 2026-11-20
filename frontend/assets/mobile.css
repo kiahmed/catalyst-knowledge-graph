@@ -1,0 +1,151 @@
+/* Phone layout. Every rule is scoped under html.is-mobile, which the inline
+   detector in index.html <head> sets only on phone-sized screens
+   (≤760px wide, or a touch screen ≤500px tall in landscape).
+   Desktop never matches anything in this file.
+
+   Same app feel as desktop: the page itself never scrolls. Bars stay fixed,
+   filters wrap onto several rows, cards stack in one column inside their own
+   scroll area, and the graph's panels become toggles / bottom sheets. */
+
+html.is-mobile { --m-top: 48px; --m-bot: 30px; }
+html.is-mobile body { height: 100vh; height: 100dvh; overscroll-behavior: none; }
+html.is-mobile .ascii-spot,
+html.is-mobile .key-hint { display: none; }
+
+/* iOS Safari zooms into any focused field under 16px and leaves the page
+   zoomed, which reads as "the UI is locked". 16px stops the auto-zoom. */
+html.is-mobile input[type="text"],
+html.is-mobile input[type="search"],
+html.is-mobile input[type="email"],
+html.is-mobile input[type="password"],
+html.is-mobile input[type="date"],
+html.is-mobile select,
+html.is-mobile textarea { font-size: 16px; }
+
+/* ── Bars ── */
+html.is-mobile .topbar { height: var(--m-top); padding: 0 12px; }
+html.is-mobile .topbar-brand { font-size: 14px; }
+html.is-mobile .view-btn { padding: 6px 12px; font-size: 13px; }
+html.is-mobile .bottombar { height: var(--m-bot); padding: 0 12px; justify-content: flex-start; font-size: 10px; }
+html.is-mobile .rauth-userchip { bottom: 3px; right: 8px; padding: 2px 3px 2px 10px; gap: 6px; font-size: 11px; }
+html.is-mobile .rauth-userchip-name { max-width: 110px; }
+html.is-mobile .rauth-signout { padding: 2px 9px; }
+html.is-mobile .rauth-gate { align-items: flex-start; overflow-y: auto; padding: 16px 12px; }
+html.is-mobile .rauth-card { padding: 24px 20px; }
+
+/* ── Cards view: controls / cards / pager ── */
+html.is-mobile #cardsView {
+  position: fixed; top: var(--m-top); bottom: var(--m-bot); left: 0; right: 0; z-index: 10;
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 56px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: "ctrl ctrl ctrl" "grid grid grid" "left info right";
+}
+html.is-mobile .control-group {
+  grid-area: ctrl; position: static; transform: none;
+  width: 100%; padding: 8px 10px 6px; gap: 6px;
+}
+html.is-mobile .filter-row { width: 100%; flex-wrap: wrap; justify-content: center; gap: 4px; padding: 5px 6px; }
+html.is-mobile .filter-pill { padding: 5px 8px; font-size: 10.5px; }
+html.is-mobile .refine-row { width: 100%; flex-wrap: wrap; justify-content: center; gap: 6px 12px; padding: 6px 8px; }
+html.is-mobile .refine-divider { display: none; }
+html.is-mobile .date-controls,
+html.is-mobile .conf-controls { flex-wrap: wrap; justify-content: center; }
+html.is-mobile input[type="date"] { width: 9.2em; padding: 2px 6px; }
+html.is-mobile .conf-slider-wrap input[type="range"] { width: 120px; }
+html.is-mobile .search-row { width: 100%; }
+html.is-mobile .card-id-filter[hidden] { display: none; }
+html.is-mobile .expanded-body .card-header { padding-right: 40px; }
+
+html.is-mobile .grid-stage {
+  grid-area: grid; position: static; transform: none; margin: 0; width: auto;
+  grid-template-columns: minmax(0, 1fr); align-content: start; gap: 10px;
+  /* cards have overflow:hidden → auto rows would shrink them to fit; keep full height and scroll */
+  grid-auto-rows: max-content;
+  padding: 4px 12px 12px;
+  overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+}
+html.is-mobile .sp-card:hover { transform: none; }
+html.is-mobile .card-body { padding: 14px 16px; }
+html.is-mobile .card-header { flex-wrap: wrap; gap: 6px; }
+html.is-mobile .card-tags { flex-wrap: wrap; }
+html.is-mobile .card-entities { flex-wrap: wrap; }
+
+html.is-mobile .nav-arrow {
+  position: static; transform: none; margin: 0;
+  width: 40px; height: 40px; font-size: 20px;
+  justify-self: center; align-self: center;
+}
+html.is-mobile .nav-arrow:active { transform: scale(0.93); margin-top: 0; }
+html.is-mobile .nav-arrow.left { grid-area: left; }
+html.is-mobile .nav-arrow.right { grid-area: right; }
+html.is-mobile .page-info {
+  grid-area: info; position: static; transform: none;
+  justify-content: center; padding: 6px 0;
+}
+
+/* Landscape phones: too short for fixed controls, so controls + cards scroll as one. */
+@media (max-height: 560px) {
+  html.is-mobile #cardsView { overflow-y: auto; grid-template-rows: auto auto auto; }
+  html.is-mobile .grid-stage { overflow: visible; }
+}
+
+/* ── Expanded card: bottom sheet ── */
+html.is-mobile .expanded-overlay { align-items: flex-end; }
+html.is-mobile .expanded-card {
+  width: 100%; max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+html.is-mobile .expanded-body { padding: 18px 16px 28px; }
+
+/* ── Recap view ── */
+html.is-mobile #recapView {
+  position: fixed; top: var(--m-top); bottom: var(--m-bot); left: 0; right: 0;
+  max-width: none; padding: 12px 12px 24px; overflow-y: auto; -webkit-overflow-scrolling: touch;
+}
+html.is-mobile .recap-grid { grid-template-columns: minmax(0, 1fr); }
+
+/* ── Graph view ── */
+html.is-mobile #graphView { top: var(--m-top); bottom: var(--m-bot); }
+html.is-mobile #graphView .gs-label { display: none; }
+html.is-mobile .graph-search { top: 8px; left: 8px; right: 8px; width: auto; }
+html.is-mobile .graph-search input { height: 36px; }
+html.is-mobile .gs-clear { top: 6px; }
+html.is-mobile .gs-suggestions { top: 40px; }
+html.is-mobile .graph-reltype { top: 52px; bottom: auto; left: 8px; right: 168px; width: auto; }
+html.is-mobile .graph-reltype select { height: 36px; padding: 0 8px; }
+
+/* Filters / Legend toggles (injected by mobile.js); panels hidden until toggled. */
+.m-graph-tools { display: none; }
+html.is-mobile .m-graph-tools {
+  position: absolute; top: 52px; right: 8px; z-index: 430;
+  display: flex; gap: 6px;
+}
+html.is-mobile .m-graph-tools button {
+  width: 76px; height: 36px; font: inherit; font-size: 13px; font-weight: 500;
+  color: var(--text-secondary); background: rgba(253,252,250,0.92);
+  border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow);
+}
+html.is-mobile .m-graph-tools button.active { color: var(--accent); border-color: var(--accent); }
+
+html.is-mobile .gfilter-panel { display: none; }
+html.is-mobile #graphView.m-filters-open .gfilter-panel {
+  display: flex; top: 96px; left: 8px; right: 8px; width: auto;
+  max-height: calc(100% - 150px); overflow-y: auto;
+}
+html.is-mobile .robotics-graph .robotics-graph-legend { display: none; }
+html.is-mobile #graphView.m-legend-open .robotics-graph-legend {
+  display: block; top: 96px; left: 8px; right: 8px; max-width: none;
+  max-height: calc(100% - 150px); overflow-y: auto;
+}
+html.is-mobile .robotics-graph .robotics-zoom { bottom: 12px; right: 8px; }
+
+/* Node panel + pinned edge: bottom sheets (JS positions the pin at the tap; override it). */
+html.is-mobile .node-panel {
+  top: auto; left: 0; right: 0; bottom: 0; width: auto; max-width: none;
+  height: 62%; border-radius: var(--radius) var(--radius) 0 0;
+}
+html.is-mobile .edge-pin {
+  left: 8px !important; right: 8px; top: auto !important; bottom: 8px;
+  width: auto; max-height: 60%; overflow-y: auto;
+}
