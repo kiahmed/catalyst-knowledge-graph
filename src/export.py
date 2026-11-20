@@ -102,6 +102,9 @@ def _load_cards(
     sub_col = ("r.rel_subtype" if con.execute(
         "SELECT 1 FROM duckdb_columns() WHERE table_name = 'relationships' AND column_name = 'rel_subtype'").fetchone()
         else "NULL")
+    origin_col = ("r.origin" if con.execute(
+        "SELECT 1 FROM duckdb_columns() WHERE table_name = 'relationships' AND column_name = 'origin'").fetchone()
+        else "NULL")
     # event_type (src/events.py): same — null until the first ingest after deploy migrates the DB.
     event_col = ("event_type" if con.execute(
         "SELECT 1 FROM duckdb_columns() WHERE table_name = 'catalysts' AND column_name = 'event_type'").fetchone()
@@ -185,7 +188,7 @@ def _load_cards(
             f"""
             SELECT ea.name, r.rel_type, eb.name, r.confidence,
                    r.evidence_type, r.mechanism, r.mechanism_strength,
-                   r.impact_magnitude, r.flagged, r.source_refs, r.status, {sub_col}
+                   r.impact_magnitude, r.flagged, r.source_refs, r.status, {sub_col}, {origin_col}
             FROM relationships r
             JOIN entities ea ON ea.entity_id = r.entity_a_id
             JOIN entities eb ON eb.entity_id = r.entity_b_id
@@ -209,8 +212,9 @@ def _load_cards(
                 "source_refs": json.loads(sr) if sr else [],
                 "status": st or "active",
                 "in_story": a in in_story or b in in_story,
+                **({"origin": org} if org else {}),        # 'admin' = added by hand (no source_refs by nature)
             }
-            for (a, rt, b, c, et, mech, ms, im, fl, sr, st, sub) in rel_rows
+            for (a, rt, b, c, et, mech, ms, im, fl, sr, st, sub, org) in rel_rows
         ]
 
         # Internal events (status 'internal' self-loops, docs/ticket-internal-events.md): their own list,

@@ -65,6 +65,14 @@ FAKE_AUTH = """window.RoboticsAuth = { requireSignIn: (cfg, cb) => cb({ email: '
   deferredGate: (cfg, cb) => cb({ email: 'ui-test@local', getIdToken: async () => 'test' }), noteCardOpen: () => {} };"""
 
 
+@main.app.before_request
+def _no_llm():
+    from flask import request  # noqa: PLC0415
+    if request.path == "/admin/api/suggest":     # "Fix with LLM" — never a real Gemini call from the test server
+        return {"ok": False, "error": "LLM suggestions are disabled in the UI test server"}, 501
+    return None
+
+
 @main.app.get("/admin.html")
 def _admin_page():
     return send_from_directory(FRONTEND, "admin.html")

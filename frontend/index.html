@@ -1907,8 +1907,11 @@ const SYNC_EVERY_MS = 15000;
 // pre-sign-in teaser (preview.json), where Firebase may not even be loaded and reads are denied.
 let SYNC = { ready: false, version: null, synced: null, deleted: 0, busy: false, last: 0 };
 let KEEP_PAGE = false;
+let SILENT = false;
 function maybeSync() {
   if (!SYNC.ready || !firestoreConfigured() || !PAYLOAD || !window.RoboticsFirestore || !RoboticsFirestore.checkUpdates) return;
+  // Signed out in this tab (reads would be denied): stop checking until the next signed-in load.
+  try { if (window.firebase && firebase.auth && !firebase.auth().currentUser) { SYNC.ready = false; return; } } catch (_) { /* no auth module */ }
   if (SYNC.busy || Date.now() - SYNC.last < SYNC_EVERY_MS) return;
   SYNC.busy = true; SYNC.last = Date.now();
   // Promise.resolve().then: a synchronous throw inside checkUpdates becomes a rejection, so busy always clears.
@@ -1933,8 +1936,8 @@ function applySync(u) {
   const sector = PAYLOAD.sector || "Robotics";
   CARDS = PAYLOAD.cards.map((c, i) => transformCard(c, i, sector));
   renderTypePills();
-  KEEP_PAGE = true;                                        // stay on the Cards page the user is reading
-  try { applyAllFilters(); } finally { KEEP_PAGE = false; }
+  KEEP_PAGE = true; SILENT = true;                         // stay on the page; no tick sound for a background merge
+  try { applyAllFilters(); } finally { KEEP_PAGE = false; SILENT = false; }
   // Graph: re-render only if it is on screen; switching to it later renders from the merged data anyway.
   if (GRAPH_INITIALIZED && document.getElementById("graphView").style.display !== "none") onFilterChange();
   const h = parseHash();
@@ -2213,7 +2216,7 @@ document.querySelectorAll(".view-btn").forEach(b => {
 // ══ Audio ══
 function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }
 function playTick() {
-  if (!soundOn) return; initAudio();
+  if (!soundOn || SILENT) return; initAudio();
   const o=audioCtx.createOscillator(), g=audioCtx.createGain();
   o.connect(g); g.connect(audioCtx.destination);
   o.frequency.value=600+Math.random()*200; o.type="sine";

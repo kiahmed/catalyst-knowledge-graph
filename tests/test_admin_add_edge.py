@@ -45,6 +45,15 @@ class TestAddEdge(unittest.TestCase):
         ops.revert_edit(self.con, out["edit_id"], email=WHO["email"], ip=WHO["ip"], vocab=WHO["vocab"])
         self.assertEqual(self._rows(), [])
 
+    def test_origin_admin_and_malformed_types(self):
+        out = ops.apply_edit(self.con, "add_edge", self.p, **WHO)
+        self.assertEqual(self.con.execute("SELECT origin FROM relationships WHERE rel_id = ?",
+                                          [out["after"]["rel_id"]]).fetchone()[0], "admin")      # n2
+        for bad in ({**self.p, "rel_type": ["x"]}, {**self.p, "entry_id": ["R"]}, {**self.p, "entity_a_id": "7"},
+                    {**self.p, "evidence_type": 3}):
+            with self.assertRaises(ops.EditError, msg=str(bad)):                               # n3: a 400, not a 500
+                ops.apply_edit(self.con, "add_edge", bad, **WHO)
+
     def test_guards(self):
         bad = [{**self.p, "entry_id": "ROB-404"}, {**self.p, "entity_b_id": self.samsung},
                {**self.p, "rel_type": "loves"}, {**self.p, "mechanism": "short"}, {**self.p, "entity_a_id": 999}]

@@ -335,9 +335,6 @@ entity-link:
 	@case "$(REL)" in ""|subsidiary_of|sister_of) ;; *) echo '!! REL must be subsidiary_of or sister_of'; exit 1;; esac
 	@$(ENTITY_AUDIT) $(if $(filter sister_of,$(REL)),--sister,--link) "$(CHILD)=>$(PARENT)"
 
-# Re-extract specific cards on the authoritative cloud DB (same path as a
-# cloud ingest: direction check + LLM entity resolution). Dry run unless APPLY=1.
-#   make reextract-prod IDS=ROB-…,ROB-… [APPLY=1]   (IDS=@file also works)
 # Browser tests (tests/ui/), two suites, both on a READ-ONLY prod snapshot; headless Chromium on the host (needs:
 # pip install playwright && playwright install chromium). Nothing reaches prod.
 #   1. Public site: a throwaway copy of frontend/ in .ui-test-site/ (gitignored) + a payload built from the snapshot.
@@ -412,6 +409,9 @@ render-stale:
 	  if [ -n "$$failed" ]; then echo "FAILED (rerun make render-stale APPLY=1): $${failed#,}"; exit 1; fi; \
 	  echo "all chunks OK"
 
+# Re-extract specific cards on the authoritative cloud DB (same path as a
+# cloud ingest: direction check + LLM entity resolution). Dry run unless APPLY=1.
+#   make reextract-prod IDS=ROB-…,ROB-… [APPLY=1]   (IDS=@file also works)
 reextract-prod:
 	@test -n "$(IDS)" || { echo '!! usage: make reextract-prod IDS=ROB-…,ROB-… [APPLY=1]'; exit 1; }
 	@set -a; . ./.env.prod; set +a; \

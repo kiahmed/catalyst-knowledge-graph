@@ -11,16 +11,20 @@ land. Until now new data showed only after a hard reload (e.g. a new internal ev
   window / company search, opening a node panel or a card — calls `maybeSync()`.
 - R2 `maybeSync` is cheap and silent: at most one check per 15 s, one in flight, failures only logged.
   A check reads ONE doc (`CKG-<sector>/catalysts`). If its `version` is unchanged, nothing else is read.
-- R3 When `version` moved: fetch only card docs with `synced_at >=` the newest one the page holds (">=" so
-  a page that loaded mid-write still gets the rest of that write), drop ids in `deleted_ids` added since,
+- R3 When `version` moved: fetch only card docs with `synced_at >=` (the newest stamp the page holds − 30 min
+  overlap, so an export still committing when a later save was synced is picked up), drop the ids in
+  `deleted_ids` (entries "<entry_id>@<stamp>") added since,
   merge by `card_id`, rebuild the graph from the cards, re-render the current view; filters, URL hash and
   an open node panel stay as they are. No reload, no spinner.
 - R4 Backend (`firestore_export._write_catalysts`): each written card doc gets `synced_at` (one stamp per
   write call; NOT part of the change hash); the parent doc gets `version` = that stamp only when cards were
   written. An admin refresh (`refresh_cards`, partial) no longer overwrites the parent's `count` with the
   few refreshed cards (latent bug fixed).
-- R5 Deletes (Arboryx dedup, `upstream_dedup`): append the id to the parent's `deleted_ids` (ArrayUnion) and
-  move `version`; best-effort — a failure only means a stale page keeps the card until reload.
+- R5 Deletes (Arboryx dedup, `upstream_dedup`): append "<entry_id>@<stamp>" (always unique → always appended)
+  to the parent's `deleted_ids` and move `version`; best-effort — a failure only means a stale page keeps the
+  card until reload. Silent refresh runs only after a signed-in Firestore load (`SYNC.ready`), stops after a
+  sign-out in the same tab, keeps the Cards page, re-renders the graph only when it is on screen, and plays no
+  tick sound.
 - R6 Not refreshed silently: the graph doc's stats / insights / recap (they change once a day with ingest).
   Firestore rules unchanged (signed-in users already read everything under `CKG-*`).
 
@@ -36,9 +40,9 @@ land. Until now new data showed only after a hard reload (e.g. a new internal ev
   upstream-dedup delete (a few per month); trim if it ever matters.
 
 ## Tests
-`make test-ui` (tests/ui/test_ui.py) runs the silent-refresh cases in headless Chromium on every run: unseeded page
-makes no calls; missing SDK rejects and clears busy; no change → 0 item queries; a change merges + applies a
-tombstone + keeps the Cards page; throttle; ego view kept through a refresh.
-tests/test_firestore_delta.py `test_silent_refresh_markers`; tests/test_upstream_dedup.py (tombstone).
-Headless Chromium with a stubbed `checkUpdates`: a view switch merged a changed card (new headline, NVIDIA
-internal event), dropped a deleted one, advanced `version`; a second lookup within 15 s made no call.
+tests/test_firestore_delta.py `test_silent_refresh_markers`; tests/test_upstream_dedup.py (tombstone format).
+`make test-ui` runs the page logic in headless Chromium against a fake Firestore behind the REAL checkUpdates
+(its `where('synced_at','>=',…)` is honoured): unseeded page makes no calls; missing SDK rejects and clears
+busy; no change → 0 item queries; the overlap window filters old docs; a change merges + applies a tombstone +
+keeps the Cards page; throttle; ego view kept through a refresh.
+

@@ -344,6 +344,9 @@ def me(who):
                     "evidence_types": list(admin_ops.EVIDENCE_TYPES), "subtypes": admin_ops.subtypes.SUBTYPES})
 
 
+_REJECTED: dict[str, Any] = {"at": 0.0, "n": None}
+
+
 @app.get("/admin/api/status")
 @_guard
 def status(_who):
@@ -351,12 +354,14 @@ def status(_who):
         n = review.count_open(_firestore())
     except Exception as exc:  # noqa: BLE001
         n, _ = None, _log("review_count_failed", error=str(exc))
-    try:
-        con = _read_con()
-        try:
-            rejected = admin_ops.rejected_count(con)
-        finally:
-            con.close()
+    try:   # the header polls every 60 s: re-count at most every 5 min (a save refreshes it via afterEdit)
+        if time.time() - _REJECTED["at"] > 300:
+            con = _read_con()
+            try:
+                _REJECTED.update(at=time.time(), n=admin_ops.rejected_count(con))
+            finally:
+                con.close()
+        rejected = _REJECTED["n"]
     except Exception as exc:  # noqa: BLE001 — the header still works without the count
         rejected, _ = None, _log("rejected_count_failed", error=str(exc))
     return jsonify({"ok": True, **_backend_status(), "review_open": n, "rejected": rejected})

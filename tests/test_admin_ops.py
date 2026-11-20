@@ -122,6 +122,15 @@ class TestAdminOps(_Fixture):
         self.assertIn("Amazon", aliases(self.aws))
         self.assertIsNone(self.con.execute("SELECT 1 FROM entities WHERE entity_id = ?", [new]).fetchone())
 
+    def test_spin_out_revert_refuses_a_reversed_two_party_twin(self):     # n4
+        out = ops.apply_edit(self.con, "spin_out", {"alias": "Amazon", "from_entity_id": self.aws,
+                                                    "type": "public_company", "rel_ids": [self.rel]}, **WHO)
+        cid = self.con.execute("SELECT catalyst_id FROM relationships WHERE rel_id = ?", [self.rel]).fetchone()[0]
+        self.con.execute("""INSERT INTO relationships (catalyst_id, entity_a_id, rel_type, entity_b_id, confidence,
+                            evidence_type) VALUES (?, ?, 'competes_with', ?, 0.8, 'direct')""", [cid, self.dhl, self.aws])
+        with self.assertRaises(ops.EditConflict):    # moving it back would re-create AWS↔DHL a second time
+            ops.revert_edit(self.con, out["edit_id"], email=WHO["email"], ip=WHO["ip"], vocab=VOCAB)
+
     def test_spin_out_without_edges_and_its_guards(self):
         out = ops.apply_edit(self.con, "spin_out", {"alias": "AWS", "from_entity_id": self.aws, "name": "AWS Corp",
                                                     "type": "private_company"}, **WHO)

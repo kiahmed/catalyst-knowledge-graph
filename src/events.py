@@ -26,7 +26,7 @@ _CUES: dict[str, re.Pattern] = {
                               r"(?:debut\w*|launch\w*|list\w*|trad\w*) on (?:the )?(?:Nasdaq|NYSE|HKEX|KOSDAQ|STAR Market))\b", _I),
     "m_and_a": re.compile(r"\b(acquir(?:e|es|ed|ing)|acquisition|merg(?:e|es|ed|er|ing)|buy(?:s|ing)?|bought|buyout|"
                           r"takeover|takes? over|full ownership|majority stake|spins? off|spinning off|"
-                          r"spin-?offs?(?=\s*(?:$|[,;:]|of\b|from\b|plan|deal|to\b)))\b", _I),
+                          r"spin-?offs?(?=\s*(?:$|[,;:]|of\b|plan|deal)))\b", _I),
     "funding": re.compile(r"\b(rais(?:e|es|ed|ing)|funding|Series [A-H]\+?|seed round|pre-seed|financing|"
                           r"round of|valuation|valued at|backs|invests?|investment|grants?|subsid(?:y|ies|i[sz]es)|"
                           r"secur(?:e|es|ed|ing) (?:" + _MONEY + r"|billions|millions|(?:major |mega |new )?(?:funding|rounds?|capital)|mega rounds?)\b)", _I),
@@ -36,7 +36,7 @@ _CUES: dict[str, re.Pattern] = {
     "production_facility": re.compile(r"\b(factory|factories|(?<!to )plants?(?! (?:a |its |the )?flags?)|gigafactory|production line|manufacturing (?:hub|base|site)|"
                                       r"mass[- ]produc\w+|(?:begin|start|ramp|initiat|scal|expand|boost)\w* (?:\S+ ){0,4}production|"
                                       r"production (?:ramps?|capacity|starts?|begins?)|commission(?:s|ed))\b", _I),
-    "deployment": re.compile(r"\b(deploy(?:s|ed|ing|ment|ments)?|deliver(?:s|ed)? (?:\S+ ){0,4}to|(?<!contract )contracts?(?! manufactur)|(?<!executive )(?<!in )orders?(?! to\b)|"
+    "deployment": re.compile(r"\b(deploy(?:s|ed|ing|ment|ments)?|deliver(?:s|ed)? (?:\S+ ){0,4}to|(?<!contract )contracts?(?! manufactur)|(?<!executive )orders\b|(?<!executive )(?<!\bin )order\b|"
                              r"pre-?orders?|pilot(?:s|ed|ing)?|commerciali[sz](?:e|es|ed|ing|ation)|"
                              r"selects?|selected)\b", _I),
     "partnership": re.compile(r"\b(partner(?:s|ed|ing|ship|ships)?|collaborat\w+|teams? up|alliance|"

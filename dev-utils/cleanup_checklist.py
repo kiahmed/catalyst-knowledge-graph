@@ -36,12 +36,18 @@ SEED = DATA / "concept_entities_labels.txt"       # the one-time LLM label list 
 LIVE = "status IN ('active', 'materialized')"
 # Keys are machine-made: section + entity id (+ a short hash of the alias) — never free text, so no spaces and
 # no "-->" can ever appear inside one.
-_KEY = re.compile(r"<!--\s*key:([A-Za-z]+:[0-9]+(?::[0-9a-f]{10})?)(\s+auto)?\s*-->\s*$")
+_KEY = re.compile(r"<!--\s*key:([A-Za-z]+:[0-9]+(?::[0-9a-f]{10})?)(\s+auto)?\s*-->")
 _TICK = re.compile(r"^\s*[-*+]\s+\[[xX]\]")
 _RESOLVED = " — resolved (no longer found by the scan)"
 
 
 def _alias_key(section: str, eid: int, alias: str) -> str:
+    """Exact alias text (case kept) → two aliases differing only by case get their own keys."""
+    return f"{section}:{eid}:{hashlib.sha1(alias.strip().encode()).hexdigest()[:10]}"
+
+
+def _legacy_key(section: str, eid: int, alias: str) -> str:
+    """The pre-2026-11-19 key (lower-cased alias) — still honoured so earlier ticks aren't lost."""
     return f"{section}:{eid}:{hashlib.sha1(alias.strip().lower().encode()).hexdigest()[:10]}"
 
 
@@ -56,9 +62,10 @@ def _previous() -> tuple[set[str], dict[str, tuple[str, str]], list[str]]:
             if line.startswith("## "):
                 section = line[3:4]
                 continue
-            m = _KEY.search(line)
-            if not m:
+            found = list(_KEY.finditer(line))     # the LAST marker is the real one; notes after it are allowed
+            if not found:
                 continue
+            m = found[-1]
             if _TICK.match(line) and not m.group(2):     # only YOUR ticks carry over; auto ticks are recomputed
                 ticked.add(m.group(1))
             text = re.sub(r"^\s*[-*+]\s+\[[ xX]\]\s*", "", line[:m.start()]).rstrip()
@@ -107,17 +114,18 @@ def _concepts(con, ticked, prev_a) -> tuple[list[str], str]:
     return out, (f"⚠ {skipped} line(s) in {SEED.name} couldn't be read and are not listed." if skipped else "")
 
 
-def _carry_resolved(section: str, found: set[str], items, ticked) -> list[str]:
-    """B/C items listed last time that the scan no longer finds: keep them, ticked, marked resolved."""
+def _carry_resolved(section: str, found: set[str], items, ticked, legacy: set[str] = frozenset()) -> list[str]:
+    """B/C items listed last time that the scan no longer finds: keep them, ticked, marked resolved.
+    `legacy` = old-style keys of items still found (re-keyed, not resolved) — not carried."""
     out = []
     for key, (sec, text) in items.items():
-        if sec == section and key not in found:
+        if sec == section and key not in found and key not in legacy:
             out.append(_item(False, key, text.replace(_RESOLVED, "") + _RESOLVED, ticked=ticked, auto=True))
     return out
 
 
 def _aliases(con, ticked, items) -> list[str]:
-    out, found = [], set()
+    out, found, legacy = [], set(), set()
     for eid, name, alias in con.execute("""SELECT e.entity_id, e.name, a.alias FROM entity_aliases a JOIN entities e USING (entity_id)
                                            WHERE lower(a.alias) <> lower(e.name) ORDER BY e.name, a.alias""").fetchall():
         cards = []
@@ -130,22 +138,24 @@ def _aliases(con, ticked, items) -> list[str]:
         if cards:
             key = _alias_key("alias", eid, alias)
             found.add(key)
+            legacy.add(_legacy_key("alias", eid, alias))
             shown = ", ".join(cards[:6]) + (f" … +{len(cards) - 6}" if len(cards) > 6 else "")
             out.append(_item(False, key, f"**{name}** ← alias “{alias}” — {len(cards)} card(s) never name {name}: {shown}",
-                             ticked=ticked))
-    return out + _carry_resolved("B", found, items, ticked)
+                             ticked=ticked | ({key} if _legacy_key("alias", eid, alias) in ticked else set())))
+    return out + _carry_resolved("B", found, items, ticked, legacy)
 
 
 def _generic_aliases(con, ticked, items) -> list[str]:
-    out, found = [], set()
+    out, found, legacy = [], set(), set()
     for eid, name, alias in con.execute("""SELECT e.entity_id, e.name, a.alias FROM entity_aliases a JOIN entities e USING (entity_id)
                                            WHERE e.type <> 'group' ORDER BY e.name, a.alias""").fetchall():
         if names.is_generic(alias):
             key = _alias_key("generic", eid, alias)
             found.add(key)
+            legacy.add(_legacy_key("generic", eid, alias))
             out.append(_item(False, key, f"**{name}** ← generic alias “{alias}” (move to a group bucket or drop)",
-                             ticked=ticked))
-    return out + _carry_resolved("C", found, items, ticked)
+                             ticked=ticked | ({key} if _legacy_key("generic", eid, alias) in ticked else set())))
+    return out + _carry_resolved("C", found, items, ticked, legacy)
 
 
 def _write_atomic(path: Path, text: str) -> None:
@@ -155,6 +165,7 @@ def _write_atomic(path: Path, text: str) -> None:
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
+        os.chmod(tmp, 0o644)             # mkstemp makes 0600; keep it editable by a non-root user
         os.replace(tmp, path)
     except BaseException:
         if os.path.exists(tmp):

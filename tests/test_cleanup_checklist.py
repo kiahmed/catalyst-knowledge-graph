@@ -89,7 +89,7 @@ class TestChecklist(unittest.TestCase):
     def test_resolved_b_item_is_carried_ticked_and_reopens_if_it_comes_back(self):
         self._run()
         fake = "alias:999999:0123456789"
-        t = cc.OUT.read_text().replace("## B.", "## B.", 1)
+        t = cc.OUT.read_text()
         t = re.sub(r"(## B\..*\n\n.*\n\n)", lambda m: m.group(1) + f"- [ ] **X** ← alias “y z” — 1 card(s) <!-- key:{fake} -->\n",
                    t, count=1)
         cc.OUT.write_text(t)
@@ -98,6 +98,33 @@ class TestChecklist(unittest.TestCase):
         self.assertTrue(line.startswith("- [x]") and " auto -->" in line and "resolved" in line)
         self.assertEqual(self._run().count(fake), 1)                                  # no duplicate on re-runs
 
+    def test_resolved_c_item_reopens_when_it_comes_back(self):
+        self._run()
+        self.con.execute("DELETE FROM entity_aliases WHERE alias = 'humanoid robot makers'")
+        t = self._run()
+        key = re.search(r"key:(generic:\d+:[0-9a-f]{10}) auto", t).group(1)            # carried, ticked, auto
+        db.insert_alias(self.con, self.tesla, "humanoid robot makers")                 # it comes back
+        line = self._line(self._run(), key)
+        self.assertTrue(line.startswith("- [ ]") and "resolved" not in line)          # re-opened
+
+    def test_note_after_marker_keeps_the_tick_and_file_is_0644(self):
+        self._run()
+        self._tick(f"concept:{self.busy}")
+        cc.OUT.write_text(cc.OUT.read_text().replace(f"key:concept:{self.busy} -->", f"key:concept:{self.busy} --> my note"))
+        self.assertTrue(self._line(self._run(), f"concept:{self.busy}").startswith("- [x]"))   # n11
+        self.assertEqual(oct(cc.OUT.stat().st_mode & 0o777), "0o644")                          # n12
+
+    def test_aliases_differing_by_case_get_their_own_keys_and_legacy_ticks_survive(self):
+        self.assertNotEqual(cc._alias_key("generic", 1, "Gulf investors"), cc._alias_key("generic", 1, "gulf investors"))  # n13
+        self.assertEqual(cc._legacy_key("generic", 1, "Gulf investors"), cc._legacy_key("generic", 1, "gulf investors"))
+        db.insert_alias(self.con, self.tesla, "Gulf investors")                       # generic, mixed case
+        self._run()
+        legacy = cc._legacy_key("generic", self.tesla, "Gulf investors")                # a tick made before the re-key
+        cc.OUT.write_text(cc.OUT.read_text() + f"\n- [x] old tick <!-- key:{legacy} -->\n")
+        t = self._run()
+        self.assertTrue(self._line(t, cc._alias_key("generic", self.tesla, "Gulf investors")).startswith("- [x]"))
+        self.assertNotIn("old tick", t)                                               # re-keyed, not "resolved"
+
     def test_seed_missing_keeps_section_a(self):
         self._run()
         self._tick(f"concept:{self.busy}")
@@ -105,7 +132,6 @@ class TestChecklist(unittest.TestCase):
         t = self._run()
         self.assertIn("missing — section A kept", t)
         self.assertTrue(self._line(t, f"concept:{self.busy}").startswith("- [x]"))
-
 
 if __name__ == "__main__":
     unittest.main()

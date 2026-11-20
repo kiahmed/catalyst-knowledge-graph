@@ -118,7 +118,8 @@ class TestUpstreamDedup(unittest.TestCase):
         self.assertEqual([m["target"] for m in s["merged"]], ["ROB-B"])
         self.assertNotIn(self.items + ("ROB-B",), self.fs.store)               # Firestore card gone
         base = self.fs.store[self.items[:-1]]                                   # open pages learn of the delete
-        self.assertEqual([e.split("@")[0] for e in base["deleted_ids"]], ["ROB-B"])   # "<id>@<stamp>"
+        self.assertEqual(len(base["deleted_ids"]), 1)
+        self.assertRegex(base["deleted_ids"][0], r"^ROB-B@\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")   # pinned format
         self.assertTrue(base["version"])
         con = duckdb.connect(self.path)
         self.assertIsNone(con.execute("SELECT 1 FROM catalysts WHERE entry_id='ROB-B'").fetchone())

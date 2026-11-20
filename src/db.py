@@ -226,6 +226,9 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
     con.execute("ALTER TABLE relationships ADD COLUMN IF NOT EXISTS rel_subtype VARCHAR")
     # true = the subtype was set by an admin: subtypes.refresh() leaves it alone (unless the type changes)
     con.execute("ALTER TABLE relationships ADD COLUMN IF NOT EXISTS rel_subtype_locked BOOLEAN")
+    # Where an edge came from when it wasn't extracted: 'admin' = added by hand (NULL = ingest). Lets consumers
+    # tell a hand-added edge (no source_refs by nature) from an extracted one missing its citations.
+    con.execute("ALTER TABLE relationships ADD COLUMN IF NOT EXISTS origin VARCHAR")
     # What the card's story reports (src/events.py, deterministic from the headline). NULL = none.
     con.execute("ALTER TABLE catalysts ADD COLUMN IF NOT EXISTS event_type VARCHAR")
     # Alias trust (docs/ticket-ingest-entity-resolution.md §3.4): only a

@@ -46,7 +46,10 @@ FAKE_FS = """(cfg) => {
   window.FIREBASE_CONFIG = {apiKey: 'test', collection: 'CKG-Robotics', catalystsSubpath: 'catalysts'};
   window.RoboticsAuth = window.RoboticsAuth || {};
   window.__fs = {meta: {version: 'v1'}, docs: [], queries: 0};
-  const items = { where: () => items, get: () => { __fs.queries++; return Promise.resolve({docs: __fs.docs.map(d => ({data: () => d}))}); } };
+  // where('synced_at', '>=', x) is honoured, so the real delta query (and its overlap window) is exercised
+  const query = (since) => ({ get: () => { __fs.queries++; __fs.lastSince = since;
+      return Promise.resolve({docs: __fs.docs.filter(d => since == null || (d.synced_at || '') >= since).map(d => ({data: () => d}))}); } });
+  const items = Object.assign(query(null), { where: (f, op, v) => query(v) });
   const base = { get: () => Promise.resolve({exists: true, data: () => __fs.meta}), collection: () => items };
   window.firebase = { firestore: () => ({ collection: () => ({ doc: () => base }) }) };
   Object.assign(SYNC, {ready: true, version: 'v1', synced: '2026-11-01T00:00:00.000Z', deleted: 0, busy: false, last: 0});
@@ -130,8 +133,10 @@ def test_internal_events(pg, port):
     row = pg.query_selector("[data-internal-events]")
     check(f"node panel shows 'Internal events ({n})' for {who}", row is not None and f"({n})" in row.inner_text())
     if row:
+        want = sorted(pg.evaluate("(w) => internalEventCards(w)", who))
         row.click(); pg.wait_for_timeout(800)
-        check("clicking it shows exactly those cards", pg.evaluate("filtered.length") == n)
+        got = sorted(pg.evaluate("filtered.map(c => c.card_id)"))
+        check("clicking it shows exactly those cards (same ids)", got == want, f"{len(got)} cards")
 
 
 def test_silent_refresh(pg, port):
@@ -146,6 +151,11 @@ def test_silent_refresh(pg, port):
           pg.evaluate("[SYNC.busy, filtered.length > 0]") == [False, True])
     pg.evaluate(FAKE_FS, None)
     pg.evaluate("() => { window.__before = CARDS; SYNC.last = 0; maybeSync(); }"); pg.wait_for_timeout(800)
+    pg.evaluate("""() => { __fs.meta = {version: 'v1b'}; __fs.docs = [Object.assign({}, PAYLOAD.cards[2], {synced_at: '2000-01-01T00:00:00.000Z'})];
+      SYNC.last = 0; maybeSync(); }"""); pg.wait_for_timeout(800)
+    check("delta query skips docs older than the overlap window (real >= filter)",
+          pg.evaluate("__fs.lastSince !== null && SYNC.version === 'v1b'"), pg.evaluate("String(__fs.lastSince)"))
+    pg.evaluate("() => { __fs.meta = {version: 'v1b'}; __fs.docs = []; __fs.queries = 0; window.__before = CARDS; }")
     check("no backend change → 1 version read, 0 item queries, nothing re-rendered",
           pg.evaluate("[__fs.queries, CARDS === __before]") == [0, True])
     pg.evaluate("""() => { page = 2; renderPage(); const c = PAYLOAD.cards[0]; window.__gone = PAYLOAD.cards[1].card_id;

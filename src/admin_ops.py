@@ -63,6 +63,7 @@ def ensure_schema(con: duckdb.DuckDBPyConnection) -> None:
     con.execute("ALTER TABLE entity_aliases ADD COLUMN IF NOT EXISTS source VARCHAR")
     con.execute("ALTER TABLE relationships ADD COLUMN IF NOT EXISTS rel_subtype VARCHAR")   # src/subtypes.py
     con.execute("ALTER TABLE relationships ADD COLUMN IF NOT EXISTS rel_subtype_locked BOOLEAN")
+    con.execute("ALTER TABLE relationships ADD COLUMN IF NOT EXISTS origin VARCHAR")
 
 
 # ── Reads ──────────────────────────────────────────────────────────
@@ -612,6 +613,8 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
         cur = {"evidence_type": row[0], "mechanism": row[1],
                "rel_subtype": row[2] if row[3] else "auto"}       # "auto" = the rules decide (not locked)
         new = {k: p[k] for k in ("evidence_type", "mechanism", "rel_subtype") if k in p and p[k] is not None}
+        if any(not isinstance(v, str) for v in new.values()):
+            raise EditError("edit_edge: evidence_type / mechanism / rel_subtype must be text")
         if not new:
             raise EditError("nothing to change: give evidence_type, mechanism and/or rel_subtype")
         _check_expect(cur, p.get("expect"), list(new))
@@ -641,6 +644,11 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
 
     if op == "add_edge":   # a relationship the extractor missed, asserted by the admin on one card
         entry, a, rt, b, mech = _need(p, "entry_id", "entity_a_id", "rel_type", "entity_b_id", "mechanism")
+        if not (isinstance(entry, str) and isinstance(rt, str) and isinstance(mech, str)
+                and all(isinstance(x, int) and not isinstance(x, bool) for x in (a, b))
+                and isinstance(p.get("evidence_type") or "direct", str)
+                and isinstance(p.get("rel_subtype") or "", str)):
+            raise EditError("add_edge: entry_id/rel_type/mechanism must be text, entity ids must be integers")
         ev = p.get("evidence_type") or "direct"
         if ev not in EVIDENCE_TYPES:
             raise EditError(f"evidence_type must be one of {EVIDENCE_TYPES}")
@@ -669,8 +677,9 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
             raise EditError("this relationship is already live on the card")
         day = card[1].date() if hasattr(card[1], "date") else card[1]
         rel_id = con.execute("""INSERT INTO relationships (catalyst_id, entity_a_id, rel_type, entity_b_id, confidence,
-                                    evidence_type, mechanism, flagged, first_flagged_at, rel_subtype, rel_subtype_locked)
-                                VALUES (?, ?, ?, ?, 1.0, ?, ?, false, ?, ?, ?) RETURNING rel_id""",
+                                    evidence_type, mechanism, flagged, first_flagged_at, rel_subtype, rel_subtype_locked,
+                                    origin)
+                                VALUES (?, ?, ?, ?, 1.0, ?, ?, false, ?, ?, ?, 'admin') RETURNING rel_id""",
                              [card[0], a, rt, b, ev, mech, day, sub, True if sub else None]).fetchone()[0]
         return ({"rel_id": None}, {"rel_id": rel_id, "entry_id": entry, "entity_a_id": a, "rel_type": rt,
                                    "entity_b_id": b}, True, {card[0]})
@@ -973,10 +982,8 @@ def revert_edit(con: duckdb.DuckDBPyConnection, edit_id: str, *, email: str, ip:
         for m in before["moves"]:
             cur = _edge(con, m["rel_id"])
             res = {k: (orig if k in m["sides"] else cur[k]) for k in ("entity_a_id", "entity_b_id")}
-            if con.execute("""SELECT 1 FROM relationships WHERE catalyst_id = ? AND rel_id <> ? AND entity_a_id = ?
-                              AND rel_type = ? AND entity_b_id = ? AND status IN ('active', 'materialized')""",
-                           [cur["catalyst_id"], m["rel_id"], res["entity_a_id"], cur["rel_type"],
-                            res["entity_b_id"]]).fetchone():
+            if _live_twin(con, cur["catalyst_id"], m["rel_id"], res["entity_a_id"], cur["rel_type"],
+                          res["entity_b_id"]):            # two-party types: the reversed pair is a twin too (n4)
                 raise EditConflict(f"relationship {m['rel_id']}: the same edge now exists on its card again — "
                                    "reject one of them first")
         touched = set()

@@ -49,6 +49,14 @@ class TestRules(unittest.TestCase):
         self.assertEqual(C("Honda spins off its robotics unit"), "m_and_a")
         self.assertEqual(C("Big buyers line up for humanoids"), None)        # "buyers" is not "buys"
 
+    def test_n1_n5(self):
+        self.assertEqual(C("Symbotic lands $500M in orders from Walmart"), "deployment")
+        self.assertEqual(C("Apptronik wins order to supply 100 robots"), "deployment")
+        self.assertIsNone(C("Agility redesigns Digit in order to cut costs"))
+        self.assertEqual(C("EPFL spin-off to unveil humanoid"), "product_launch")
+        self.assertEqual(C("Spin-off from ETH launches robot dog"), "product_launch")
+        self.assertEqual(C("Honda spins off its robotics unit"), "m_and_a")
+
     def test_review_findings_b8046e9(self):
         self.assertEqual(C("Bill Gates-backed Figure rival raises $100M"), "funding")
         self.assertIsNone(C("Agility redesigns Digit in order to cut costs"))
