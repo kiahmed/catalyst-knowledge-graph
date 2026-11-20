@@ -378,10 +378,13 @@ cleanup-checklist:
 
 # Stale card images: card data changed after its card PNG / graph poster was
 # rendered (live Firestore doc update_time vs bucket image time). Covers every
-# kind of fix (admin edits, direction fixes, merges, re-extraction). Writes
-# data/render_stale_<UTC ts>.txt (+ .ids). APPLY=1 then force-re-renders exactly
-# those cards on the prod render service, 3 per call (service timeout 120s;
-# needs gcloud login). Failed chunks are listed at the end; exit 1 if any.
+# kind of fix (admin edits, direction fixes, merges, re-extraction). Also finds
+# ORPHANED images (card deleted / merged away; ids still in a live card's
+# merged_from are kept). Writes fixed files data/render_stale.txt, .ids and
+# data/render_orphans.ids. APPLY=1 then force-re-renders exactly the stale cards
+# on the prod render service, 3 per call (service timeout 120s; needs gcloud
+# login) and, only if every chunk succeeded, deletes the orphan images at the end
+# (each id re-checked first; blocked on a suspicious read). Exit 1 on any failure.
 #   make render-stale [APPLY=1]
 render-stale:
 	@set -a; . ./.env.prod; set +a; \
@@ -391,7 +394,7 @@ render-stale:
 	    --entrypoint python robotics-ingest dev-utils/render_stale.py | tail -1) && test -f "$$ids_file" || exit 1; \
 	  ids=$$(tr -d '[:space:]' < "$$ids_file"); \
 	  if [ -z "$(APPLY)" ]; then echo "report: $${ids_file%.ids}.txt  (APPLY=1 to re-render)"; exit 0; fi; \
-	  if [ -z "$$ids" ]; then echo "nothing to re-render"; exit 0; fi; \
+	  if [ -z "$$ids" ]; then echo "nothing to re-render"; fi; \
 	  URL=$$(gcloud run services describe robotics-render --region us-central1 --project "$$GCP_PROJECT" \
 	    --format='value(status.url)') || { echo "!! gcloud login needed: gcloud auth login"; exit 1; }; \
 	  failed=""; \
@@ -406,8 +409,12 @@ render-stale:
 	    if [ "$$code" = "200" ] && echo "$$resp" | sed '$$d' | python3 dev-utils/render_stale.py --summarize; \
 	    then :; else echo "  !! HTTP $$code — will stay stale"; failed="$$failed,$$chunk"; fi; \
 	  done; \
-	  if [ -n "$$failed" ]; then echo "FAILED (rerun make render-stale APPLY=1): $${failed#,}"; exit 1; fi; \
-	  echo "all chunks OK"
+	  if [ -n "$$failed" ]; then echo "FAILED (rerun make render-stale APPLY=1): $${failed#,} — orphans NOT deleted"; exit 1; fi; \
+	  echo "all chunks OK"; \
+	  docker compose run --rm --no-deps -v "$(CURDIR):/repo" -w /repo \
+	    -v "$$FIREBASE_DEPLOY_KEY:/tmp/sa.json:ro" -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json \
+	    -e GCP_PROJECT="$$GCP_PROJECT" -e CARDS_BUCKET="$$CARDS_BUCKET" \
+	    --entrypoint python robotics-ingest dev-utils/render_stale.py --delete-orphans data/render_orphans.ids
 
 # Re-extract specific cards on the authoritative cloud DB (same path as a
 # cloud ingest: direction check + LLM entity resolution). Dry run unless APPLY=1.
