@@ -28,6 +28,22 @@ class TestOrphans(unittest.TestCase):
         self.assertTrue(rs.safe_to_delete(900, 0, 0)[0])
 
 
+class TestStaleReason(unittest.TestCase):
+    def test_fingerprint_decides_when_the_doc_has_one(self):
+        from datetime import datetime
+        old, new = datetime(2026, 1, 1), datetime(2026, 11, 1)
+        self.assertIsNone(rs.stale_reason("card", "v1-a", new, (old, "v1-a")))      # doc rewritten, same drawing
+        self.assertIn("content changed", rs.stale_reason("card", "v1-b", old, (new, "v1-a")))
+        self.assertIn("not fingerprinted", rs.stale_reason("card", "v1-a", old, (new, None)))
+        self.assertIn("missing", rs.stale_reason("card", "v1-a", old, None))
+
+    def test_time_fallback_for_pre_fingerprint_docs(self):
+        from datetime import datetime
+        old, new = datetime(2026, 1, 1), datetime(2026, 11, 1)
+        self.assertIn("older", rs.stale_reason("card", None, new, (old, None)))
+        self.assertIsNone(rs.stale_reason("card", None, old, (new, None)))
+
+
 class _Snap:
     def __init__(self, exists, data=None, id_=""):
         self.exists, self._d, self.id, self.update_time = exists, data or {}, id_, None

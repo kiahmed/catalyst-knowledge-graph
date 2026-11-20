@@ -24,7 +24,7 @@ from typing import Any
 
 import duckdb
 
-from . import db, detect, handles, recap, story, upstream_dedup
+from . import db, detect, handles, recap, render_fp, story, upstream_dedup
 from .config import RoboticsConfig
 
 
@@ -266,6 +266,10 @@ def _load_cards(
                 "linkedin_text": _linkedin_text(headline, subtitle, source_url),
             },
         })
+
+        # What the card's images draw, hashed (src/render_fp.py): the render service stamps it on the PNGs and
+        # `make render-stale` compares — only cards whose drawn content changed get re-rendered.
+        cards[-1]["render_fp"] = render_fp.fingerprint(cards[-1])
 
         if entry_id in merged_from:   # only when present: keeps other cards' delta hashes stable
             cards[-1]["merged_from"] = merged_from[entry_id]

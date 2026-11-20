@@ -138,7 +138,14 @@ def _bucket_png_ids() -> set[str]:
     }
 
 
-def _upload_png(card_id: str, local_path: Path, *, overwrite: bool = False) -> dict[str, Any]:
+def _stamp(blob, render_fp: str | None) -> None:
+    """Record which drawn content an image was made from (src/render_fp.py; compared by `make render-stale`)."""
+    if render_fp:
+        blob.metadata = {**(blob.metadata or {}), "render_fp": render_fp}
+
+
+def _upload_png(card_id: str, local_path: Path, *, overwrite: bool = False,
+                render_fp: str | None = None) -> dict[str, Any]:
     """Upload a single PNG to Firebase Storage. No-op when upload disabled.
 
     Default: skips when the blob already exists. overwrite=True (forced
@@ -160,10 +167,12 @@ def _upload_png(card_id: str, local_path: Path, *, overwrite: bool = False) -> d
             # Same bytes: keep the image, but bump its `updated` time so
             # `make render-stale` sees it as current (metadata-only patch).
             blob.metadata = {**(blob.metadata or {}), "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+            _stamp(blob, render_fp)
             blob.patch()
             return {"uploaded": False, "reason": "unchanged"}
     else:
         blob = bucket.blob(f"{STORAGE_CARDS_PREFIX}/{card_id}.png")
+    _stamp(blob, render_fp)
     # Private bucket — no make_public(). Browsers read via the Firebase
     # Storage SDK gated by storage.rules; this SA write is IAM-governed.
     blob.upload_from_filename(str(local_path), content_type="image/png")
@@ -487,7 +496,7 @@ def _bucket_graph_ids() -> set[str]:
 
 
 def _upload_graph_png(card_id: str, local_path: Path,
-                      overwrite: bool = False) -> dict[str, Any]:
+                      overwrite: bool = False, render_fp: str | None = None) -> dict[str, Any]:
     """overwrite=True (force runs) replaces a stale poster; default keeps the
     upload-once behaviour so routine sweeps never rewrite existing images."""
     bucket = _storage_bucket()
@@ -496,6 +505,7 @@ def _upload_graph_png(card_id: str, local_path: Path,
     blob = bucket.blob(f"{STORAGE_GRAPHS_PREFIX}/{card_id}.png")
     if not overwrite and blob.exists():
         return {"uploaded": False, "reason": "already_exists"}
+    _stamp(blob, render_fp)
     blob.upload_from_filename(str(local_path), content_type="image/png")
     return {"uploaded": True, "blob": blob.name}
 
@@ -913,7 +923,8 @@ def render_one():
     png = _render_png(card)
     out_path.write_bytes(png)
 
-    upload = _upload_png(card_id, out_path, overwrite=True)   # explicit single render = refresh
+    upload = _upload_png(card_id, out_path, overwrite=True,   # explicit single render = refresh
+                         render_fp=(_fresh_card_doc(card_id) or {}).get("render_fp"))
     duration = round(time.monotonic() - start, 2)
     _log("render_ok", card_id=card_id, bytes=len(png), duration_s=duration, upload=upload)
     return jsonify({
@@ -1044,6 +1055,7 @@ def render_batch():
     upload_failed = g_upload_failed = 0   # a failed upload leaves the bucket image stale: count it
     for (entry_id,) in rows:
         card: dict[str, Any] | None = None    # loaded lazily, shared by card+graph
+        fp: str | None = None                 # the card doc's render_fp, read once when anything is uploaded
         out_path = CARD_IMAGES_DIR / f"{entry_id}.png"
         # NOTE: no `continue` in the card section — the graph block below must
         # still run for catalysts whose card PNG is already done (which is
@@ -1072,7 +1084,8 @@ def render_batch():
         # the case where local PNGs exist but Storage doesn't (first cutover).
         if card_upload_needed:
             try:
-                up = _upload_png(entry_id, out_path, overwrite=force)
+                fp = fp or (_fresh_card_doc(entry_id) or {}).get("render_fp")
+                up = _upload_png(entry_id, out_path, overwrite=force, render_fp=fp)
                 if up.get("uploaded"):
                     uploaded += 1
                 else:
@@ -1101,7 +1114,8 @@ def render_batch():
                 _log("graph_failed", card_id=entry_id, error=str(exc))
                 continue
         try:
-            if _upload_graph_png(entry_id, g_path, overwrite=force).get("uploaded"):
+            fp = fp or (_fresh_card_doc(entry_id) or {}).get("render_fp")
+            if _upload_graph_png(entry_id, g_path, overwrite=force, render_fp=fp).get("uploaded"):
                 g_uploaded += 1
         except Exception as exc:
             g_upload_failed += 1

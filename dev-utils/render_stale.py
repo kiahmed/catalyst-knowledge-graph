@@ -1,10 +1,10 @@
 """Which card images are stale — and which images are orphaned?
 
-Stale: a card's live Firestore doc (CKG-<sector>/catalysts/items/<id>) is rewritten only when its content changes
-(ingest delta export, re-extraction, direction fixes, merges, admin edits). So the doc's update_time is "data last
-changed", and each image's bucket `updated` is "image last rendered". A card is stale when its doc changed after its
-card PNG or its graph poster, or when an image is missing. Re-rendering an unchanged card uploads nothing (the
-render service compares md5), so a false "stale" costs compute only.
+Stale (precise): export writes `render_fp` into each card doc — a hash of exactly what the card's images draw
+(src/render_fp.py) — and the render service stamps the hash it rendered from onto each image's metadata. A card is
+stale when an image is missing, or its stamp differs from the doc's render_fp ("not fingerprinted" = rendered before
+the fingerprint existed → once). Fields the images don't draw never flag a card.
+Fallback for a doc exported before render_fp existed: the old time check (doc update_time newer than the image).
 
 Orphaned: a card PNG / graph poster whose card no longer exists (deleted, or merged away by the Arboryx dedup).
 Images of ids still listed in a live card's `merged_from` are KEPT — old share links of a merged duplicate keep
@@ -12,8 +12,6 @@ resolving. `make render-stale APPLY=1` deletes the orphans at the END, after the
 re-checked right before its own delete (a fresh read of that card doc + a merged_from query). Safety: no deletes when fewer than 100 live cards were
 read, or when more than half of the images would go (that's a bad read, not cleanup).
 
-Caveat: a FIRESTORE_EXPORT_FULL_SYNC run (or an export that adds a field to every card) rewrites every doc →
-everything looks stale once.
 
 Usage (via make): make render-stale [APPLY=1]
     report → data/render_stale.txt, ids → data/render_stale.ids, orphans → data/render_orphans.ids
@@ -52,11 +50,11 @@ def _clients(args):
 
 
 def _live(items) -> tuple[dict, set[str]]:
-    """{card_id: (update_time, headline)} and every id kept alive through a live card's merged_from."""
+    """{card_id: (update_time, headline, render_fp)} and every id kept alive through a live card's merged_from."""
     docs, merged = {}, set()
-    for d in items.select(["headline", "merged_from"]).stream():
+    for d in items.select(["headline", "merged_from", "render_fp"]).stream():
         data = d.to_dict() or {}
-        docs[d.id] = (d.update_time, data.get("headline", ""))
+        docs[d.id] = (d.update_time, data.get("headline", ""), data.get("render_fp"))
         merged.update(str(x) for x in (data.get("merged_from") or []))
     return docs, merged
 
@@ -64,6 +62,18 @@ def _live(items) -> tuple[dict, set[str]]:
 def orphans_of(image_ids: set[str], live: set[str], merged: set[str]) -> list[str]:
     """Image ids with no live card, except removed duplicates still referenced by a live card's merged_from."""
     return sorted(i for i in image_ids if i not in live and i not in merged)
+
+
+def stale_reason(label: str, doc_fp: str | None, changed, image) -> str | None:
+    """Why one image of a card needs re-rendering, or None. image = (updated, stamped render_fp) or None (missing)."""
+    if image is None:
+        return f"{label} missing"
+    at, img_fp = image
+    if doc_fp:                                            # precise: drawn content vs what the image was drawn from
+        if img_fp == doc_fp:
+            return None
+        return f"{label} not fingerprinted" if not img_fp else f"{label} content changed"
+    return f"{label} older ({at:%Y-%m-%d %H:%M}Z)" if changed > at else None   # pre-render_fp doc
 
 
 def safe_to_delete(n_live: int, n_images: int, n_orphans: int) -> tuple[bool, str]:
@@ -127,20 +137,16 @@ def main() -> int:
     items, bucket = _clients(args)
     docs, merged = _live(items)
 
-    def images(prefix: str) -> dict:
-        return {b.name[len(prefix):-4]: b.updated for b in bucket.list_blobs(prefix=prefix) if b.name.endswith(".png")}
+    def images(prefix: str) -> dict:   # list_blobs returns custom metadata too — no per-blob reads
+        return {b.name[len(prefix):-4]: (b.updated, (b.metadata or {}).get("render_fp"))
+                for b in bucket.list_blobs(prefix=prefix) if b.name.endswith(".png")}
 
     cards, graphs = images("cards/"), images("graphs/")
 
     rows = []
-    for cid, (changed, head) in sorted(docs.items()):
-        why = []
-        for label, imgs in (("card image", cards), ("graph poster", graphs)):
-            at = imgs.get(cid)
-            if at is None:
-                why.append(f"{label} missing")
-            elif changed > at:
-                why.append(f"{label} older ({at:%Y-%m-%d %H:%M}Z)")
+    for cid, (changed, head, doc_fp) in sorted(docs.items()):
+        why = [r for label, imgs in (("card image", cards), ("graph poster", graphs))
+               if (r := stale_reason(label, doc_fp, changed, imgs.get(cid)))]
         if why:
             rows.append((cid, changed, "; ".join(why), head))
 
@@ -151,7 +157,8 @@ def main() -> int:
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
     lines = [f"RENDER-STALE CARDS — {now:%Y-%m-%d %H:%M}Z (live Firestore card docs vs bucket {args.bucket})",
-             "A card is listed when its data changed after its card image / graph poster, or an image is missing.",
+             "A card is listed when what its images draw changed (render_fp), an image is missing, or it predates the "
+             "fingerprint.",
              f"Cards checked: {len(docs)}  |  stale: {len(rows)}  |  orphaned images (card gone): {len(orphans)}",
              "Re-render these and delete the orphans: make render-stale APPLY=1", ""]
     lines += [f"{cid}  data changed {changed:%Y-%m-%d %H:%M}Z  |  {why}  |  {head[:90]}" for cid, changed, why, head in rows]
