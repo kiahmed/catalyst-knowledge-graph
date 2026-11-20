@@ -572,7 +572,28 @@ def edit(who):
                                "recheck this record after it finishes.")
     if code == 200:
         body_out["review_resolved"] = _auto_resolve(op, payload, body_out, who)
+        body_out["review_flagged"] = _flag_review(body_out.get("review") or [], body_out.get("edit_id"))
     return jsonify(body_out), code
+
+
+def _flag_review(items: list[dict], edit_id: str | None) -> int:
+    """Merge flags (admin_ops.merge_review_items) → the Review queue, one entry per relationship (best effort)."""
+    if not items:
+        return 0
+    try:
+        from src.upstream_dedup import flag_attention  # noqa: PLC0415
+
+        fs = _firestore()
+        if fs is None:
+            return 0
+        n = sum(flag_attention(fs, f"rel{it['rel_id']}", it["kind"], it["reason"], rel_id=it["rel_id"],
+                               entry_id=it.get("entry_id"), other_rel_id=it.get("other_rel_id"),
+                               category=CFG.sector, flagged_by_edit=edit_id) for it in items)
+        _log("review_flagged", n=n, edit_id=edit_id)
+        return n
+    except Exception as exc:  # noqa: BLE001 — never fail a saved edit over the inbox
+        _log("review_flag_failed", error=str(exc))
+        return 0
 
 
 @app.post("/admin/api/revert")

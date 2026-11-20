@@ -8,7 +8,9 @@ upstream_dedup.flag_attention:
   - entity audit apply: less-certain merge / link / alias drop (entity_<claim>)
   - Arboryx dedup feed surprises (dedup_matched_missing, upstream_deleted_unexpected)
 plus, surfaced 2026-11-10, the Pass-3 direction verifier's "unclear" verdict
-(kind direction_unclear, one entry per relationship).
+(kind direction_unclear, one entry per relationship), and since 2026-11-19 what an
+admin merge made suspicious (admin_ops.merge_review_items: merge_internal_event,
+merge_self_loop_rejected, merge_direction_conflict — one entry per relationship).
 
 Deliberately NOT queued: new / discarded names (already decided, logged in
 unresolved_entities) and speculative edges (labeled by evidence_type; thousands).
@@ -79,6 +81,9 @@ _AUTO = {
     "entity_merge": "pair",              # a merge between exactly those two entities
     "entity_subsidiary_of": "pair",      # a parent link between exactly those two entities
     "entity_sister_of": "pair",          # a sister link between exactly those two entities
+    "merge_internal_event": "rel",       # admin merge flags: that relationship was edited / restored / deleted
+    "merge_self_loop_rejected": "rel",
+    "merge_direction_conflict": "rel",
 }
 
 

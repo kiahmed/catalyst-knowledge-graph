@@ -747,11 +747,70 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
         touched = {r[0] for r in con.execute(
             "SELECT DISTINCT catalyst_id FROM relationships WHERE ? IN (entity_a_id, entity_b_id)", [src]).fetchall()}
         names = dict(con.execute("SELECT entity_id, name FROM entities WHERE entity_id IN (?, ?)", [src, dst]).fetchall())
+        moved = {r[0]: r[1:] for r in con.execute(   # live edges on src, as they read BEFORE the merge
+            """SELECT r.rel_id, ea.name, r.rel_type, eb.name, r.entity_a_id = ? AND r.entity_b_id = ?
+                      OR r.entity_a_id = ? AND r.entity_b_id = ? FROM relationships r
+               JOIN entities ea ON ea.entity_id = r.entity_a_id JOIN entities eb ON eb.entity_id = r.entity_b_id
+               WHERE ? IN (r.entity_a_id, r.entity_b_id) AND r.status IN ('active', 'materialized')""",
+            [src, dst, dst, src, src]).fetchall()}
         merged = entities.merge(con, src, dst, confidence=None, reason="admin", source="admin")
         return ({"src": names[src], "dst": names[dst]},
-                {"merged_into": names[dst], "duplicate_rows_removed": merged.get("deduped", 0)}, False, touched)
+                {"merged_into": names[dst], "duplicate_rows_removed": merged.get("deduped", 0),
+                 "review": merge_review_items(con, names[src], names[dst], dst, moved)}, False, touched)
 
     raise EditError(f"unknown op {op!r}")
+
+
+def merge_review_items(con: duckdb.DuckDBPyConnection, src_name: str, dst_name: str, dst: int,
+                       moved: dict[int, tuple]) -> list[dict[str, Any]]:
+    """What a merge made suspicious, for the admin Review queue (deterministic, no LLM):
+      - merge_internal_event: an edge between the two became "X <rel> X" (kept as an internal event) — right when
+        a product / unit was folded into its maker, a sign of a wrong merge when they were two companies;
+      - merge_self_loop_rejected: a two-party edge between the two (partners_with …) was dropped as noise;
+      - merge_direction_conflict: an edge moved onto dst now runs opposite another live edge of the same type on
+        the same card (A supplies B and B supplies A).
+    moved = {rel_id: (a_name, rel_type, b_name, between_src_and_dst)} read before the merge."""
+    if not moved:
+        return []
+    ids = list(moved)
+    now = {r[0]: r[1:] for r in con.execute(
+        f"SELECT rel_id, status, catalyst_id FROM relationships WHERE rel_id IN ({','.join('?' * len(ids))})",
+        ids).fetchall()}
+    entry = dict(con.execute(
+        f"SELECT catalyst_id, entry_id FROM catalysts WHERE catalyst_id IN "
+        f"(SELECT catalyst_id FROM relationships WHERE rel_id IN ({','.join('?' * len(ids))}))", ids).fetchall())
+    out = []
+    for rid, (a, rel, b, between) in moved.items():
+        if not between or rid not in now:
+            continue
+        status, cid = now[rid]
+        if status == "internal":
+            out.append({"rel_id": rid, "kind": "merge_internal_event", "entry_id": entry.get(cid),
+                        "reason": f"Merging {src_name} into {dst_name} turned “{a} {rel} {b}” into an internal event "
+                                  f"({dst_name} {rel} itself). Right if {src_name} was {dst_name}'s product or unit; "
+                                  f"if they were two companies the merge was wrong."})
+        elif status == "rejected":
+            out.append({"rel_id": rid, "kind": "merge_self_loop_rejected", "entry_id": entry.get(cid),
+                        "reason": f"Merging {src_name} into {dst_name} dropped the two-party edge “{a} {rel} {b}” "
+                                  f"(now Rejected). If they were two different companies, the merge was wrong."})
+    sym = sorted(direction.symmetric_types()) or [""]
+    for rid, other, cid in con.execute(
+            f"""SELECT r.rel_id, o.rel_id, r.catalyst_id FROM relationships r JOIN relationships o
+                  ON o.catalyst_id = r.catalyst_id AND o.rel_type = r.rel_type
+                 AND o.entity_a_id = r.entity_b_id AND o.entity_b_id = r.entity_a_id AND o.rel_id <> r.rel_id
+                WHERE r.rel_id IN ({','.join('?' * len(ids))}) AND ? IN (r.entity_a_id, r.entity_b_id)
+                  AND r.entity_a_id <> r.entity_b_id AND r.status IN ('active', 'materialized')
+                  AND o.status IN ('active', 'materialized') AND r.rel_type NOT IN (SELECT UNNEST(?::VARCHAR[]))""",
+            [*ids, dst, sym]).fetchall():
+        if other in moved and other < rid:
+            continue                                   # both moved: one item per pair
+        a, rel, b, _ = moved[rid]
+        out.append({"rel_id": rid, "other_rel_id": other, "kind": "merge_direction_conflict",
+                    "entry_id": entry.get(cid),
+                    "reason": f"After merging {src_name} into {dst_name}, “{a} {rel} {b}” (now on {dst_name}) runs "
+                              f"opposite another {rel} edge on the same card (rel {other}). One of them is "
+                              f"probably the wrong way round."})
+    return out
 
 
 def apply_edit(con: duckdb.DuckDBPyConnection, op: str, payload: dict[str, Any], *, email: str, ip: str | None,
@@ -770,7 +829,7 @@ def apply_edit(con: duckdb.DuckDBPyConnection, op: str, payload: dict[str, Any],
     if reverts:
         con.execute("UPDATE admin_edits SET reverted_by = ? WHERE edit_id = ?", [edit_id, reverts])
     return {"edit_id": edit_id, "op": op, "before": before, "after": after, "revertible": revertible,
-            "cards": _card_ids(con, touched)}
+            "cards": _card_ids(con, touched), "review": (after or {}).get("review") or []}
 
 
 def repoint_many(con: duckdb.DuckDBPyConnection, *, from_entity_id: int, to_entity_id: int, rel_ids: list[int],
@@ -896,14 +955,15 @@ def spin_in_many(con: duckdb.DuckDBPyConnection, *, into_entity_id: int, child_i
         if not con.execute("SELECT 1 FROM entity_links WHERE child_id = ? AND parent_id = ? AND relation = 'subsidiary_of'",
                            [c, into_entity_id]).fetchone():
             raise EditError(f"entity {c} is not a child of {into_entity_id}")
-    done, cards = [], set()
+    done, cards, flags = [], set(), []
     for c in child_ids:
         out = apply_edit(con, "merge", {"src_id": c, "dst_id": into_entity_id, **(extra or {})},
                          email=email, ip=ip, vocab=vocab)
         done.append(out["edit_id"])
         cards.update(out["cards"])
+        flags += out["review"]
     return {"edit_id": ",".join(done), "edit_ids": done, "op": "spin_in_many", "count": len(done),
-            "cards": sorted(cards)}
+            "cards": sorted(cards), "review": flags}
 
 
 def revert_edit(con: duckdb.DuckDBPyConnection, edit_id: str, *, email: str, ip: str | None,
