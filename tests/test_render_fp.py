@@ -47,7 +47,7 @@ class TestRenderFp(unittest.TestCase):
         self.assertFalse(changed(lambda c: c["relationships"][0].update(confidence=0.9001)))     # below display precision
 
     def test_format(self):
-        self.assertRegex(fingerprint(CARD), r"^v1-[0-9a-f]{16}$")
+        self.assertRegex(fingerprint(CARD), r"^v2-[0-9a-f]{16}$")
 
 
 if __name__ == "__main__":

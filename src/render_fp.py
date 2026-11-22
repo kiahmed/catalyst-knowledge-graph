@@ -15,7 +15,7 @@ import hashlib
 import json
 from typing import Any
 
-FP_VERSION = "1"
+FP_VERSION = "2"   # 2026-11-22: poster colors by the card's own heat (templates/cards/graph.html)
 
 
 def fingerprint(card: dict[str, Any]) -> str:

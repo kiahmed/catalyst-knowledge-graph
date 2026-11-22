@@ -35,7 +35,7 @@
       <span class="key"><i style="background:#10b981"></i>web-grounded</span>
       <span class="key"><i style="background:#d97706"></i>inferred</span>
       <span class="key"><i style="background:repeating-linear-gradient(90deg,#ef4444 0 6px,transparent 6px 10px)"></i>speculative</span>
-      <span class="key" id="bgKey" style="display:none"><i style="background:#1c1917;opacity:.3"></i>faded = not in this news</span>
+      <span class="key" id="bgKey" style="display:none"><i style="background:#1c1917;opacity:.45"></i>faded = not in this news</span>
       <span class="key note" id="noStory" style="display:none">no company named · links from research</span>
       <span class="key note" id="sizeNote">node size = connections · fill = heat</span>
     </span>
@@ -50,24 +50,40 @@
 // same edge-slice rules, same Cytoscape styles/layout. Keep in sync.
 const MINI_EVIDENCE_COLORS = { direct:'#1c1917', web_grounded:'#10b981',
                                inferred:'#d97706', speculative:'#ef4444' };
-const MINI_HEAT_COOL = { h:201, s:47, l:78 };
-const MINI_HEAT_WARM = { h:10, s:100, l:64 };
 function _lerp(a,b,t){ return a + (b-a)*t; }
-function _hslToHex(h,s,l){
-  s/=100; l/=100;
-  const k = n => (n + h/30) % 12;
-  const a = s * Math.min(l, 1-l);
-  const f = n => {
-    const c = l - a * Math.max(-1, Math.min(k(n)-3, Math.min(9-k(n), 1)));
-    return Math.round(255*c).toString(16).padStart(2,'0');
-  };
-  return `#${f(0)}${f(8)}${f(4)}`;
+// Node color = heat of THIS card's relationships, on the site map's RGB ramp —
+// mirrors frontend graph.js computeHeat + heatToHex (and src/heat.py): weight =
+// confidence × evidence weight, rivalry/invalidated/self-loops give none, each
+// pair+type once per card, normalized to the card's hottest, ^0.7. Was global
+// all-time heat (relative to NVIDIA) on an HSL ramp → near-white posters (2026-11-22).
+const HEAT_EVIDENCE_WEIGHT = { direct:1.0, web_grounded:0.85, inferred:0.6, speculative:0.3 };
+const HEAT_NO_HEAT_RELS = new Set(['competes_with', 'benchmarks_against']);
+const HEAT_SYMMETRIC = new Set(['partners_with', 'competes_with', 'benchmarks_against']);
+function cardHeat(edges){
+  const best = new Map();
+  edges.forEach(e => {
+    let a = e.from, b = e.to;
+    if (!a || !b || a === b || HEAT_NO_HEAT_RELS.has(e.rel) || e.status === 'invalidated') return;
+    const ew = HEAT_EVIDENCE_WEIGHT[e.evidence_type];
+    const w = (Number(e.confidence) || 0) * (ew == null ? 0.6 : ew);
+    if (w <= 0) return;
+    if (HEAT_SYMMETRIC.has(e.rel) && b < a) { const t = a; a = b; b = t; }
+    const k = `${a}\u0001${e.rel}\u0001${b}`;
+    const g = best.get(k);
+    if (!g || w > g.w) best.set(k, { a, b, w });
+  });
+  const raw = new Map();
+  best.forEach(g => { raw.set(g.a, (raw.get(g.a) || 0) + g.w); raw.set(g.b, (raw.get(g.b) || 0) + g.w); });
+  let top = 0; raw.forEach(v => { if (v > top) top = v; });
+  const out = new Map();
+  if (top) raw.forEach((v, n) => out.set(n, Math.pow(v / top, 0.7)));
+  return out;
 }
+const HEAT_COOL_RGB = { r:173, g:207, b:225 }, HEAT_WARM_RGB = { r:255, g:102, b:71 };
 function _heatHex(h){
-  const t = Math.max(0, Math.min(1, h||0));
-  return _hslToHex(_lerp(MINI_HEAT_COOL.h, MINI_HEAT_WARM.h, t),
-                   _lerp(MINI_HEAT_COOL.s, MINI_HEAT_WARM.s, t),
-                   _lerp(MINI_HEAT_COOL.l, MINI_HEAT_WARM.l, t));
+  const t = Math.max(0, Math.min(1, h || 0));
+  const c = k => Math.round(_lerp(HEAT_COOL_RGB[k], HEAT_WARM_RGB[k], t)).toString(16).padStart(2, '0');
+  return `#${c('r')}${c('g')}${c('b')}`;
 }
 
 const SCALE = {{ scale }};
@@ -102,6 +118,7 @@ NAMES.forEach(name => {
     nodesSlice.push({ id:name, name:name, ticker:null, type:"", heat:0, edge_count:0 });
 });
 
+const HEAT = cardHeat(edgesSlice);
 const elements = [];
 const maxEc = nodesSlice.reduce((m,n) => Math.max(m, n.edge_count||0), 1);
 const denom = Math.max(1, maxEc - 1);
@@ -110,8 +127,8 @@ nodesSlice.forEach(n => {
   const t = Math.min(1, (ec - 1) / denom);
   elements.push({ group:"nodes", data:{ id:n.id,
     label: n.ticker ? `${n.name} (${n.ticker})` : n.name,
-    _size: _lerp(18, 42, t) * SCALE, _fill: _heatHex(n.heat || 0),
-    _nodeOp: (STORY && !NO_STORY_NAMES && !STORY.has(n.id)) ? 0.4 : 1,
+    _size: _lerp(18, 42, t) * SCALE, _fill: _heatHex(HEAT.get(n.id) || 0),
+    _nodeOp: (STORY && !NO_STORY_NAMES && !STORY.has(n.id)) ? 0.6 : 1,
     _labelMargin: 7*SCALE + _lerp(18, 42, t) * SCALE * 0.14 }});
 });
 edgesSlice.forEach((e, idx) => {
@@ -121,7 +138,7 @@ edgesSlice.forEach((e, idx) => {
   if (e.evidence_type === "speculative") ls = "dashed";
   if (e.status === "invalidated") { ls = "dashed"; op = 0.3; }
   else if (e.status === "stale") op = 0.4;
-  if (e.in_story === false && !NO_STORY_NAMES) op *= 0.3;   // background research
+  if (e.in_story === false && !NO_STORY_NAMES) op *= 0.45;  // background research (site: same)
   elements.push({ group:"edges", data:{ id:`m${idx}-${e.from}-${e.to}`,
     source:e.from, target:e.to, _width:_lerp(1,4,conf) * SCALE,
     _color:color, _opacity:op, _lineStyle:ls }});
