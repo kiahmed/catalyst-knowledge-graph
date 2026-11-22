@@ -24,7 +24,7 @@ from typing import Any
 
 import duckdb
 
-from . import db, detect, handles, recap, render_fp, story, upstream_dedup
+from . import db, detect, funding, handles, heat, recap, render_fp, story, upstream_dedup
 from .config import RoboticsConfig
 
 
@@ -240,6 +240,10 @@ def _load_cards(
             # What the story reports (src/events.py): ipo_listing, m_and_a, funding, product_launch,
             # production_facility, deployment, partnership, regulation, research, leadership — or null.
             "event_type": event_type,
+            # Funding cards only (src/funding.py): {kind, target, amount, currency, amount_usd, round}
+            # from the headline. Per card, not per investor edge; the UI sums distinct rounds.
+            "funding": (funding.parse(headline, [e["name"] for e in entities], aliases)
+                        if event_type == "funding" else None),
             "date": ts.isoformat() if ts else None,
             "headline": headline,
             "subtitle": subtitle,
@@ -519,9 +523,9 @@ def full_history_layout(con: duckdb.DuckDBPyConnection, sector: str,
 def _build_graph_projection(cards: list[dict[str, Any]]) -> dict[str, Any]:
     """Flatten cards into a node-and-edge graph suitable for direct UI render.
 
-    Each node is an entity keyed by name; heat = sum of incident edge
-    confidences (invalidated edges already excluded by _load_cards). Each
-    edge carries catalyst context + mechanism so tooltips can render.
+    Each node is an entity keyed by name; heat is src/heat.py (repeats
+    collapsed, evidence-weighted, rivalry excluded, 0..1). Each edge carries
+    catalyst context + mechanism so tooltips can render.
     """
     nodes: dict[str, dict[str, Any]] = {}
     edges: list[dict[str, Any]] = []
@@ -545,7 +549,6 @@ def _build_graph_projection(cards: list[dict[str, Any]]) -> dict[str, Any]:
             conf = float(r.get("confidence") or 0.0)
             for n in (a, b):
                 if n in nodes:
-                    nodes[n]["heat"] += conf
                     nodes[n]["edge_count"] += 1
             edges.append({
                 "from": a,
@@ -562,11 +565,9 @@ def _build_graph_projection(cards: list[dict[str, Any]]) -> dict[str, Any]:
                 "catalyst_date": card_date,
             })
 
-    # Normalize heat to 0..1 so the UI can color consistently.
-    if nodes:
-        max_heat = max(n["heat"] for n in nodes.values()) or 1.0
-        for n in nodes.values():
-            n["heat"] = round(n["heat"] / max_heat, 3)
+    node_heat = heat.compute(edges)
+    for n in nodes.values():
+        n["heat"] = node_heat.get(n["name"], 0.0)
 
     node_list = sorted(nodes.values(), key=lambda n: n["heat"], reverse=True)
     _precompute_layout(node_list, edges)

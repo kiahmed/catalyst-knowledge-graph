@@ -2157,13 +2157,13 @@ function buildFullGraph(payload) {
       if (seen.has(key)) return;
       seen.add(key);
       edges.push(Object.assign({}, r, { catalyst_id: c.card_id, catalyst_date: c.date }));
-      const conf = Number(r.confidence) || 0;
-      [r.from, r.to].forEach(n => { const nd = node(n, meta.get(n)); nd.heat += conf; nd.edge_count += 1; });
+      [r.from, r.to].forEach(n => { const nd = node(n, meta.get(n)); nd.edge_count += 1; });
     });
   });
-  let maxHeat = 0;
-  nodes.forEach(n => { if (n.heat > maxHeat) maxHeat = n.heat; });
-  nodes.forEach(n => { n.heat = maxHeat ? Math.round(1000 * n.heat / maxHeat) / 1000 : 0; });
+  // All-history heat (graph.js computeHeat = src/heat.py). The Graph tab
+  // recolors per filter in filterPayload; this is only the fallback.
+  const allHeat = (window.RoboticsGraph && RoboticsGraph.computeHeat) ? RoboticsGraph.computeHeat(edges) : new Map();
+  nodes.forEach(n => { n.heat = allHeat.get(n.id) || 0; });
   return { nodes: [...nodes.values()].sort((a, b) => b.heat - a.heat), edges };
 }
 
@@ -2727,6 +2727,45 @@ function cardsMentioning(entityName) {
   });
 }
 
+// ══ Funding raised (src/funding.py puts {kind,target,amount_usd,round} on funding cards) ══
+// Summed here, in the browser, over the cards in the current time window — every card is
+// already loaded, so no endpoint and no stored per-company total to keep in sync.
+// Several cards covering one round count once: same round label, or (no conflicting labels)
+// amounts within 15% inside 120 days, or an undisclosed amount within 60 days.
+function fundingRounds(name, f) {
+  const gen = new Date((PAYLOAD && PAYLOAD.generated_at) || Date.now());
+  const days = f && f.timeWindowDays > 0 ? f.timeWindowDays : 0;
+  const cutoff = days ? new Date(gen.getTime() - days * 86400000) : null;
+  const rows = ((PAYLOAD && PAYLOAD.cards) || [])
+    .filter(c => c.funding && c.funding.kind === "round" && c.funding.target === name)
+    .filter(c => !cutoff || new Date(c.date) >= cutoff)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const groups = [];
+  rows.forEach(c => {
+    const fu = c.funding, d = new Date(c.date);
+    const g = groups.find(g => g.round && fu.round && g.round === fu.round) || groups.find(g => {
+      const apart = Math.abs(d - g.last) / 86400000;
+      if (g.round && fu.round) return false;               // different labels = different rounds
+      if (g.amount_usd && fu.amount_usd) return apart <= 120 && Math.abs(g.amount_usd - fu.amount_usd) / Math.max(g.amount_usd, fu.amount_usd) < 0.15;
+      return apart <= 60;
+    });
+    if (g) {
+      g.cards.push(c.card_id); g.last = d;
+      g.round = g.round || fu.round;
+      g.amount_usd = Math.max(g.amount_usd || 0, fu.amount_usd || 0) || null;
+    } else {
+      groups.push({ date: c.date, last: d, round: fu.round, amount_usd: fu.amount_usd || null, cards: [c.card_id] });
+    }
+  });
+  return { rounds: groups, total: groups.reduce((s, g) => s + (g.amount_usd || 0), 0) };
+}
+function fmtUsd(v) {
+  if (!v) return "undisclosed";
+  if (v >= 1e9) return `$${(v / 1e9).toFixed(v >= 1e10 ? 0 : 1)}B`;
+  if (v >= 1e6) return `$${(v / 1e6).toFixed(v >= 1e8 ? 0 : 1)}M`;
+  return `$${Math.round(v / 1e3)}K`;
+}
+
 function openNodePanel(entityId) {
   if (!PAYLOAD) return;
   maybeSync();
@@ -2734,13 +2773,15 @@ function openNodePanel(entityId) {
   const panel = document.getElementById("nodePanel");
   if (!node) { closeNodePanel(); return; }
 
+  // Heat for the current filters (time window etc.), same as the node's color.
+  const viewHeat = (RoboticsGraph.filterPayload(PAYLOAD, currentGraphFilters()).heat || new Map()).get(node.id) || 0;
   document.getElementById("npTitle").textContent = node.ticker ? `${node.name} (${node.ticker})` : node.name;
-  document.getElementById("npSub").textContent = `heat ${Number(node.heat || 0).toFixed(2)} · ${node.edge_count || 0} edges`;
+  document.getElementById("npSub").textContent = `heat ${viewHeat.toFixed(2)} · ${node.edge_count || 0} edges`;
   const badge = document.getElementById("npTypeBadge");
   badge.textContent = (node.type || "").replace(/_/g, " ");
   badge.style.display = node.type ? "" : "none";
 
-  const heatPct = Math.round(Math.max(0, Math.min(1, node.heat || 0)) * 100);
+  const heatPct = Math.round(Math.max(0, Math.min(1, viewHeat)) * 100);
   const edges = edgesTouching(entityId).slice().sort((a,b) => (b.confidence||0) - (a.confidence||0));
   const top5 = edges.slice(0, 5);
   const related = cardsMentioning(node.name)
@@ -2783,11 +2824,24 @@ function openNodePanel(entityId) {
       }).join("")
     : `<div class="np-caption" style="text-transform:none;letter-spacing:0">no catalysts mention this entity</div>`;
 
+  // Funding raised in this view (omitted when none — no empty section).
+  const fund = fundingRounds(node.name, currentGraphFilters());
+  const fundHTML = fund.rounds.length
+    ? `<div class="np-section">
+        <div class="np-section-label">Funding raised · ${fmtUsd(fund.total)} · ${fund.rounds.length} round${fund.rounds.length > 1 ? "s" : ""}</div>
+        ${fund.rounds.slice().reverse().map(g => `<div class="np-related-row" data-open-card="${g.cards[g.cards.length - 1]}">
+          <span class="np-related-date">${formatDateShort(g.date)}</span>
+          <span class="np-related-headline">${fmtUsd(g.amount_usd)}${g.round ? " · " + g.round : ""}${g.cards.length > 1 ? ` · ${g.cards.length} reports` : ""}</span>
+        </div>`).join("")}
+      </div>`
+    : "";
+
   document.getElementById("npBody").innerHTML = `
     <div class="np-heatbar-wrap">
       <div class="np-heatbar"><div class="np-heatbar-fill" style="width:${heatPct}%"></div></div>
       <div class="np-caption">heat ${heatPct}% · ${node.edge_count || 0} incident edges</div>
     </div>
+    ${fundHTML}
     <div class="np-section">
       <div class="np-section-label">Top ${Math.min(5, edges.length)} edges</div>
       ${edgesHTML}
@@ -2992,28 +3046,8 @@ const MINI_EVIDENCE_COLORS = {
   inferred: '#d97706',
   speculative: '#ef4444'
 };
-const MINI_HEAT_COOL = { h: 201, s: 47, l: 78 };
-const MINI_HEAT_WARM = { h: 10, s: 100, l: 64 };
 function _lerp(a,b,t){ return a + (b-a)*t; }
 function _truncate(s, n){ return (s && s.length > n) ? s.slice(0, n - 1) + "…" : (s || ""); }
-function _hslToHex(h,s,l){
-  s/=100; l/=100;
-  const k = n => (n + h/30) % 12;
-  const a = s * Math.min(l, 1-l);
-  const f = n => {
-    const col = l - a * Math.max(-1, Math.min(k(n)-3, Math.min(9-k(n), 1)));
-    return Math.round(255*col).toString(16).padStart(2,'0');
-  };
-  return `#${f(0)}${f(8)}${f(4)}`;
-}
-function _heatHex(h) {
-  const t = Math.max(0, Math.min(1, h || 0));
-  return _hslToHex(
-    _lerp(MINI_HEAT_COOL.h, MINI_HEAT_WARM.h, t),
-    _lerp(MINI_HEAT_COOL.s, MINI_HEAT_WARM.s, t),
-    _lerp(MINI_HEAT_COOL.l, MINI_HEAT_WARM.l, t)
-  );
-}
 
 let _miniCy = null;
 
@@ -3193,6 +3227,11 @@ function renderMiniGraph(container, card) {
   const storyNames = new Set(ents.filter(e => e.in_story).map(e => e.name));
   const noStoryNames = card._storyNamesEntities === false;
 
+  // Color = heat of THIS card's relationships (who the story revolves around),
+  // on the main map's RGB ramp. It used global all-time heat (relative to
+  // NVIDIA) + an HSL ramp that turned mid values pale green, so most card
+  // subgraphs were near-white (2026-11-21).
+  const cardHeat = RoboticsGraph.computeHeat(edgesSlice.map(e => Object.assign({}, e, { catalyst_date: card.isoDate })));
   const elements = [];
   const maxEc = nodesSlice.reduce((m, n) => Math.max(m, n.edge_count || 0), 1);
   const denom = Math.max(1, maxEc - 1);
@@ -3206,8 +3245,8 @@ function renderMiniGraph(container, card) {
         id: n.id,
         label: n.ticker ? `${n.name} (${n.ticker})` : n.name,
         _size: size,
-        _fill: _heatHex(n.heat || 0),
-        _nodeOp: (storyKnown && !noStoryNames && !storyNames.has(n.id)) ? 0.4 : 1
+        _fill: RoboticsGraph.heatToHex(cardHeat.get(n.id) || 0),
+        _nodeOp: (storyKnown && !noStoryNames && !storyNames.has(n.id)) ? 0.6 : 1
       }
     });
   });
@@ -3222,7 +3261,7 @@ function renderMiniGraph(container, card) {
     // Background = the extractor's research, not named in this news. Faded,
     // never hidden; relevance, not truth (that's evidence_type).
     const background = e.in_story === false && !noStoryNames;
-    if (background) op *= 0.3;
+    if (background) op *= 0.45;
     elements.push({
       group: "edges",
       data: {

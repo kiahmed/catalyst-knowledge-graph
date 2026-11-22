@@ -172,6 +172,10 @@
       return true;
     });
 
+    // Heat for THIS filter (window, evidence, confidence, type) — before the
+    // per-line aggregation, which would hide repeats spread over months.
+    const heat = computeHeat(edges);
+
     // One line per (from, rel, to): the same relationship restated by many
     // cards is drawn once, with count + the card ids (newest first).
     edges = aggregateEdges(edges);
@@ -194,9 +198,56 @@
     edges.forEach(e => { keep.add(e.from); keep.add(e.to); });
     if (f.egoEntity) keep.add(f.egoEntity); // show the entity even edge-less
     const rawNodes = (payload.graph && payload.graph.nodes) || [];
-    const nodes = rawNodes.filter(n => keep.has(n.id));
+    const nodes = rawNodes.filter(n => keep.has(n.id))
+      .map(n => Object.assign({}, n, { heat: heat.get(n.id) || 0 }));
 
-    return { nodes, edges };
+    return { nodes, edges, heat };
+  }
+
+  // Entity heat v2 — MIRROR of src/heat.py (keep identical; see its docstring):
+  // a relationship restated within HEAT_REPEAT_DAYS is one event; weight =
+  // confidence × evidence weight; rivalry and invalidated edges carry no heat;
+  // normalized 0..1 to the hottest node of this edge set. Returns Map name → heat.
+  const HEAT_EVIDENCE_WEIGHT = { direct: 1.0, web_grounded: 0.85, inferred: 0.6, speculative: 0.3 };
+  const HEAT_NO_HEAT_RELS = new Set(['competes_with', 'benchmarks_against']);
+  const HEAT_REPEAT_DAYS = 90;
+  const HEAT_CURVE = 0.7;   // = heat.py CURVE: keeps v1's map brightness
+  function computeHeat(edges) {
+    const rows = [];
+    (edges || []).forEach(e => {
+      let a = e.from, b = e.to;
+      const rel = e.rel;
+      if (!a || !b || a === b || HEAT_NO_HEAT_RELS.has(rel) || e.status === 'invalidated') return;
+      const ew = HEAT_EVIDENCE_WEIGHT[e.evidence_type];
+      const w = (Number(e.confidence) || 0) * (ew == null ? 0.6 : ew);
+      if (w <= 0) return;
+      if (SYMMETRIC_RELS.has(rel) && b < a) { const t = a; a = b; b = t; }
+      const d = parseDate(e.catalyst_date);
+      rows.push({ day: d ? Math.floor(d.getTime() / 86400000) : null, key: `${a}\u0001${rel}\u0001${b}`, a, b, w });
+    });
+    rows.sort((x, y) => (x.day == null ? -Infinity : x.day) - (y.day == null ? -Infinity : y.day));
+    const events = new Map();
+    rows.forEach(r => {
+      let g = events.get(r.key);
+      if (!g) { g = { a: r.a, b: r.b, evs: [] }; events.set(r.key, g); }
+      const last = g.evs[g.evs.length - 1];
+      if (last && (r.day == null || last.day == null || r.day - last.day < HEAT_REPEAT_DAYS)) {
+        last.w = Math.max(last.w, r.w);                     // same event, restated (or undated)
+      } else {
+        g.evs.push({ day: r.day, w: r.w });
+      }
+    });
+    const raw = new Map();
+    events.forEach(g => {
+      const total = g.evs.reduce((s, ev) => s + ev.w, 0);
+      raw.set(g.a, (raw.get(g.a) || 0) + total);
+      raw.set(g.b, (raw.get(g.b) || 0) + total);
+    });
+    let top = 0;
+    raw.forEach(v => { if (v > top) top = v; });
+    const out = new Map();
+    if (top) raw.forEach((v, n) => out.set(n, Math.round(1000 * Math.pow(v / top, HEAT_CURVE)) / 1000));
+    return out;
   }
 
   // Representative = the newest card's edge (ties: higher confidence);
@@ -481,7 +532,7 @@
       `    <span class="robotics-legend-gradient" style="${gradientStyle}"></span>`,
       '    <span class="robotics-legend-heatlabel">high</span>',
       '  </div>',
-      '  <div class="robotics-legend-caption">heat = sum of incident edge confidences</div>',
+      '  <div class="robotics-legend-caption">heat = deduped, evidence-weighted links</div>',
       '  <div class="robotics-legend-row robotics-legend-sizerow">',
       '    <span class="robotics-legend-dot robotics-legend-dot-sm"></span>',
       '    <span class="robotics-legend-dot robotics-legend-dot-md"></span>',
@@ -1173,5 +1224,7 @@
   // (same filters as render — no second, drifting implementation).
   RoboticsGraph.filterPayload = filterPayload;
   RoboticsGraph.relTypeMatches = relTypeMatches;
+  RoboticsGraph.computeHeat = computeHeat;
+  RoboticsGraph.heatToHex = heatToHex;   // card mini-graph uses the map's exact color ramp
   window.RoboticsGraph = RoboticsGraph;
 })();
