@@ -137,6 +137,32 @@ def test_compare_and_rank(pg, port):
           and pg.evaluate("document.querySelector('.robotics-graph-legend').classList.contains('is-layer')"))
 
 
+def test_status_and_funding_tag(pg, port):
+    """Status chips (st=) filter the drawn links; funding cards show their amount tag."""
+    open_graph(pg, port, "view=graph&tw=0")
+    chip_n = "(st) => parseInt(document.querySelector(`#gfStatusChips [data-st=${st}]`).textContent.split(' ').pop(), 10)"
+    active_n = pg.evaluate(chip_n, "active")
+    check("status chips show a count each", active_n > 0, f"active {active_n}")
+    pg.click("#gfStatusChips [data-st=active]"); pg.wait_for_timeout(3000)
+    d = pg.evaluate(DRAWN)
+    want = pg.evaluate("RoboticsGraph.filterPayload(PAYLOAD, currentGraphFilters()).edges.filter(e => (e.status || 'active') === 'active').length")
+    hash_ = pg.evaluate("new URLSearchParams(location.hash.slice(1)).get('st')")
+    check("turning 'active' off hides active links", hash_ == "materialized" and want == 0
+          and (not d or len(d["edges"]) == pg.evaluate("RoboticsGraph.filterPayload(PAYLOAD, currentGraphFilters()).edges.length")), f"st={hash_}")
+    check("an 'off' chip still shows its count", pg.evaluate(chip_n, "active") == active_n)
+    pg.click("#gfStatusChips [data-st=materialized]"); pg.wait_for_timeout(2000)
+    hash_ = pg.evaluate("new URLSearchParams(location.hash.slice(1)).get('st')")
+    check("all chips off = st=none, nothing drawn", hash_ == "none"
+          and pg.evaluate("RoboticsGraph.filterPayload(PAYLOAD, currentGraphFilters()).edges.length") == 0, f"st={hash_}")
+    fc = pg.evaluate("""() => { const c = (PAYLOAD.cards || []).find(c => c.funding && c.funding.kind === 'round' && c.funding.amount_usd);
+      return c ? [c.card_id, fmtUsd(c.funding.amount_usd)] : null; }""")
+    check("data has a funding card with an amount", bool(fc))
+    if not fc:
+        return
+    html = pg.evaluate("(id) => renderCompact(CARDS.find(c => c.card_id === id))", fc[0])
+    check("funding card shows its amount tag", "tag-fund" in html and fc[1] in html, f"{fc[0]} {fc[1]}")
+
+
 def test_layout(browser, port):
     for w in (1400, 1100, 900, 700):
         pg = browser.new_page(viewport={"width": w, "height": 900})
@@ -207,7 +233,7 @@ def main() -> int:
             browser = p.chromium.launch()
             for fn, kw in ((test_ego_filter_across_windows, {}), (test_ego_filter_across_windows, {"sync": True}),
                            (test_reltype_filter, {}), (test_internal_events, {}), (test_silent_refresh, {}),
-                           (test_compare_and_rank, {})):
+                           (test_compare_and_rank, {}), (test_status_and_funding_tag, {})):
                 pg = browser.new_page(viewport={"width": 1400, "height": 900})
                 errors = []
                 pg.on("pageerror", lambda e, errors=errors: errors.append(str(e)))

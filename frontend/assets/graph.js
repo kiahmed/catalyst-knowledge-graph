@@ -161,6 +161,7 @@
     let edges = rawEdges.filter(e => {
       if (!relTypeMatches(e, f.relType)) return false;            // ?rt=type or type/subtype
       if (!showInvalidated && e.status === 'invalidated') return false;
+      if (f.statuses && f.statuses.indexOf(e.status || 'active') < 0) return false;   // Status chips (st=)
       if (f.hideFlagged && e.flagged) return false;               // ?noflag=1
       if (excluded.size && excluded.has(e.catalyst_id)) return false;   // ?xcard=ID,ID
       if ((e.confidence || 0) < minConfidence) return false;
@@ -769,6 +770,7 @@
       f.timeWindowDays,
       f.minConfidence,
       !!f.showInvalidated,
+      (f.statuses || []).slice().sort(),
       (f.evidenceTypes || []).slice().sort(),
       f.relType || '',
       f.egoEntity || '',

@@ -372,6 +372,7 @@ input[type="date"]:focus { border-color: var(--border-focus); }
   border: 1px solid color-mix(in srgb, var(--type-color, var(--accent)) 18%, transparent);
 }
 .card-date { font-size: 11px; color: var(--text-muted); }
+.tag-fund { background: rgba(16,185,129,0.08); color: #059669; border: 1px solid rgba(16,185,129,0.22); text-transform: none; letter-spacing: 0; }
 
 .card-headline {
   font-size: 15px; font-weight: 600; line-height: 1.35;
@@ -1254,8 +1255,11 @@ input[type="date"]:focus { border-color: var(--border-focus); }
       </div>
     </div>
     <div class="gf-section">
-      <div class="gf-toggle-row">
-        <label><input type="checkbox" id="gfInvToggle"> Show invalidated edges</label>
+      <div class="gf-label">Status</div>
+      <div class="gf-chips" id="gfStatusChips">
+        <button class="gf-chip" data-st="active">active</button>
+        <button class="gf-chip" data-st="materialized">materialized</button>
+        <button class="gf-chip" data-st="invalidated">invalidated</button>
       </div>
     </div>
     <div class="gf-section">
@@ -1567,6 +1571,7 @@ function transformCard(c, idx, sector) {
     _ents: ents,                 // raw entities incl. in_story (story dimming)
     _storyNamesEntities: c.story_names_entities,
     merged_from: c.merged_from || [],   // upstream-deduped ids that now land here
+    funding: c.funding || null,         // src/funding.py (funding cards only)
   };
 }
 
@@ -1592,6 +1597,7 @@ function writeHash(partial) {
 }
 
 const EVIDENCE_TYPES_ALL = ["direct","inferred","web_grounded","speculative"];
+const STATUSES_ALL = ["active", "materialized", "invalidated"];
 
 function currentGraphFilters() {
   const gcfg = (PAYLOAD && PAYLOAD.graph_config) || {};
@@ -1608,7 +1614,13 @@ function currentGraphFilters() {
     // exports ship 0/"All", which made every first paint render everything.)
     timeWindowDays: h.tw != null ? parseInt(h.tw, 10) : 30,
     minConfidence: h.minc != null ? parseFloat(h.minc) : (gcfg.min_edge_confidence ?? 0.0),
-    showInvalidated: h.inv != null ? h.inv === "1" : !!gcfg.show_invalidated,
+    showInvalidated: h.st != null ? h.st.split(",").includes("invalidated")
+                                  : (h.inv != null ? h.inv === "1" : !!gcfg.show_invalidated),
+    // Edge statuses shown (Status chips; st= in the hash). Default: active +
+    // materialized, plus invalidated when inv=1 (older links).
+    // st=none = every chip deliberately off (distinct from "not set" → default).
+    statuses: h.st != null ? (h.st === "none" ? [] : h.st.split(",").filter(x => STATUSES_ALL.includes(x)))
+      : ["active", "materialized"].concat((h.inv != null ? h.inv === "1" : !!gcfg.show_invalidated) ? ["invalidated"] : []),
     evidenceTypes: ev,
     // rt=<rel_type> or rt=<rel_type>/<rel_subtype>; "" = all
     relType: h.rt || "",
@@ -1633,6 +1645,7 @@ function graphEdgeCountFor(f) {
   let n = 0;
   for (const e of edges) {
     if (!f.showInvalidated && e.status === "invalidated") continue;
+    if (f.statuses && !f.statuses.includes(e.status || "active")) continue;
     if (f.hideFlagged && e.flagged) continue;
     if (excluded.has(e.catalyst_id)) continue;
     if ((e.confidence || 0) < f.minConfidence) continue;
@@ -2338,11 +2351,22 @@ function renderCompact(card) {
   const vel = card.velocity ? `<div class="vel-row"><span class="vel-arrow ${card.velocity.dir}">${card.velocity.dir==='up'?'▲':card.velocity.dir==='down'?'▼':'—'}</span><span class="vel-val ${card.velocity.dir}">${card.velocity.val}</span></div>` : '<div></div>';
 
   return `<div class="card-body">
-    <div class="card-header"><div class="card-tags"><span class="tag tag-sector">${card.sector}</span><span class="tag tag-type" style="--type-color:${card.typeColor}">${card.typeLabel}</span></div><span class="card-date">${card.date}</span></div>
+    <div class="card-header"><div class="card-tags"><span class="tag tag-sector">${card.sector}</span><span class="tag tag-type" style="--type-color:${card.typeColor}">${card.typeLabel}</span>${fundingTag(card)}</div><span class="card-date">${card.date}</span></div>
     <h2 class="card-headline">${card.headline}</h2>
     ${ent}${dots}
     <div class="card-footer">${vel}<div class="brand"><span class="dot" style="background:${card.accent}"></span>robotics</div></div>
   </div>`;
+}
+
+// Funding tag on a funding card: "$1.4B · Series C", "Series A", "$6.3B valuation", "$400M fund". Nothing otherwise.
+function fundingTag(card) {
+  const f = card.funding;
+  if (!f) return "";
+  const amt = f.amount_usd ? fmtUsd(f.amount_usd) : "";
+  const text = f.kind === "valuation" ? (amt ? `${amt} valuation` : "")
+    : f.kind === "fund" ? (amt ? `${amt} fund` : "new fund")
+    : [amt, f.round].filter(Boolean).join(" · ");
+  return text ? `<span class="tag tag-fund" title="From the headline${f.currency && f.currency !== "USD" ? " (converted from " + f.currency + ")" : ""}">${text}</span>` : "";
 }
 
 // ══ Render expanded ══
@@ -2358,7 +2382,7 @@ function renderExpanded(card) {
   const dots = card.confidence !== null ? (()=>{const n=Math.round(card.confidence*5);const lv=card.confidence<0.5?' low':card.confidence<0.8?' mid':'';return `<div class="confidence-row" style="margin-bottom:16px"><span class="confidence-label">Confidence</span><div class="confidence-dots">${[0,1,2,3,4].map(i=>`<div class="conf-dot${i<n?' on'+lv:''}"></div>`).join('')}</div></div>`;})() : '';
   const vel = card.velocity ? `<div class="vel-row"><span class="vel-arrow ${card.velocity.dir}">${card.velocity.dir==='up'?'▲':card.velocity.dir==='down'?'▼':'—'}</span><span>${card.sector} ${card.velocity.label}:</span><span class="vel-val ${card.velocity.dir}">${card.velocity.val}</span></div>` : '<div></div>';
 
-  return `<div class="card-header"><div class="card-tags"><span class="tag tag-sector">${card.sector}</span><span class="tag tag-type" style="--type-color:${card.typeColor}">${card.typeLabel}</span></div><span class="card-date">${card.date}</span></div>
+  return `<div class="card-header"><div class="card-tags"><span class="tag tag-sector">${card.sector}</span><span class="tag tag-type" style="--type-color:${card.typeColor}">${card.typeLabel}</span>${fundingTag(card)}</div><span class="card-date">${card.date}</span></div>
   <h2 class="card-headline" style="font-size:19px;margin-bottom:10px;-webkit-line-clamp:unset">${card.headline}</h2>
   <p class="exp-subtitle">${card.subtitle}</p>
   ${ent}${dots}${extra}
@@ -2623,9 +2647,18 @@ function hydrateFilterPanel() {
   if (slider) slider.value = String(pct);
   const lbl = document.getElementById("gfMincLabel");
   if (lbl) lbl.textContent = pct + "%";
-  // Invalidated toggle
-  const inv = document.getElementById("gfInvToggle");
-  if (inv) inv.checked = !!f.showInvalidated;
+  // Status chips, each with its count of links in this view (all statuses on). Like
+  // "Top in this view", counts cover the whole view, not a company/compare selection.
+  const shownSt = new Set(f.statuses || STATUSES_ALL);
+  let stCount = {};
+  if (PAYLOAD && window.RoboticsGraph) {
+    RoboticsGraph.filterPayload(PAYLOAD, Object.assign({}, f, { statuses: STATUSES_ALL, showInvalidated: true, egoEntity: "", egoEntity2: "" }))
+      .edges.forEach(e => { const k = e.status || "active"; stCount[k] = (stCount[k] || 0) + 1; });
+  }
+  document.querySelectorAll("#gfStatusChips .gf-chip").forEach(chip => {
+    chip.classList.toggle("active", shownSt.has(chip.dataset.st));
+    chip.textContent = `${chip.dataset.st} ${stCount[chip.dataset.st] || 0}`;
+  });
   hydrateRelTypeSelect(f.relType || "");
   // Evidence chips
   const active = new Set(f.evidenceTypes || EVIDENCE_TYPES_ALL);
@@ -2867,14 +2900,16 @@ document.querySelectorAll("#gfTimeSeg .gf-seg-btn").forEach(btn => {
   });
 })();
 
-(function () {
-  const inv = document.getElementById("gfInvToggle");
-  if (!inv) return;
-  inv.addEventListener("change", () => {
-    writeHash({ inv: inv.checked ? "1" : "0" });
+document.querySelectorAll("#gfStatusChips .gf-chip").forEach(chip => {
+  chip.addEventListener("click", () => {
+    const cur = new Set(currentGraphFilters().statuses || STATUSES_ALL);
+    if (cur.has(chip.dataset.st)) cur.delete(chip.dataset.st); else cur.add(chip.dataset.st);
+    const list = STATUSES_ALL.filter(x => cur.has(x));
+    const isDefault = list.join(",") === "active,materialized";
+    writeHash({ st: isDefault ? "" : (list.length ? list.join(",") : "none"), inv: list.includes("invalidated") ? "1" : "" });
     onFilterChange();
   });
-})();
+});
 
 document.querySelectorAll("#gfEvidenceChips .gf-chip").forEach(chip => {
   chip.addEventListener("click", () => {
@@ -2953,6 +2988,7 @@ function edgesTouching(entityId, filters) {
   return edges.filter(e => {
     if (e.from !== entityId && e.to !== entityId) return false;
     if (!showInv && e.status === "invalidated") return false;
+    if (f.statuses && !f.statuses.includes(e.status || "active")) return false;
     if ((e.confidence || 0) < minc) return false;
     if (!ev.has(e.evidence_type)) return false;
     if (!RoboticsGraph.relTypeMatches(e, f.relType)) return false;
@@ -3443,6 +3479,7 @@ function renderMiniGraph(container, card) {
   // (default 30d) would strip edges of any older catalyst (bug: bare nodes).
   const passesFilters = e => {
     if (!f.showInvalidated && e.status === "invalidated") return false;
+    if (f.statuses && !f.statuses.includes(e.status || "active")) return false;   // Status chips
     if ((e.confidence || 0) < f.minConfidence) return false;
     return true;
   };
