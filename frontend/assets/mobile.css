@@ -149,3 +149,12 @@ html.is-mobile .edge-pin {
   left: 8px !important; right: 8px; top: auto !important; bottom: 8px;
   width: auto; max-height: 60%; overflow-y: auto;
 }
+
+/* Company | Compare side by side (left vs right) on one row; the rest of the toolbar below. */
+html.is-mobile .graph-search { right: calc(50% + 4px); }
+html.is-mobile .graph-search.graph-compare { top: 8px; left: calc(50% + 4px); right: 8px; }
+html.is-mobile .graph-search .gs-note { display: none; }
+html.is-mobile .cmp-row { grid-template-columns: 52px 1fr 1fr; }
+/* One sheet at a time: Filters / Legend hide the node/compare sheet until closed again. */
+html.is-mobile #graphView.m-filters-open .node-panel,
+html.is-mobile #graphView.m-legend-open .node-panel { display: none; }

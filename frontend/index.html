@@ -598,8 +598,35 @@ input[type="date"]:focus { border-color: var(--border-focus); }
 }
 .graph-reltype select:focus { outline: none; border-color: #06b6d4; }
 /* Too narrow for search + dropdown + legend in one row: sit under the company search instead. */
-@media (max-width: 1040px) { .graph-reltype { top: 70px; left: 284px; right: auto; } }
+/* Compare box: right of the company search, before the relationship dropdown (left vs right). */
+.graph-search.graph-compare { left: 526px; }
+/* Company · Compare · Relationship no longer fit in one row: the dropdown drops under Compare. */
+@media (max-width: 1239px) { .graph-reltype { top: 70px; left: 526px; right: auto; } }
+/* Narrower: one column next to the filter panel — Company, Compare, Relationship. */
+@media (max-width: 1040px) {
+  .graph-search.graph-compare { top: 70px; left: 284px; }
+  .graph-reltype { top: 128px; left: 284px; }
+  .graph-search .gs-note { display: none; }
+}
 @media (max-width: 760px) { .graph-reltype { top: auto; bottom: 12px; left: auto; right: 12px; width: 180px; } }
+.gfilter-panel { max-height: calc(100% - 24px); overflow-y: auto; }
+.gf-rank { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.gf-rank-row { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 6px; font-size: 12px; color: var(--text); cursor: pointer; }
+.gf-rank-row:hover { background: var(--bg-warm); }
+.gf-rank-i { width: 14px; text-align: right; color: var(--text-muted); font-size: 11px; flex: none; }
+.gf-rank-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.gf-rank-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gf-rank-val { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text-secondary); flex: none; }
+.gf-rank-layer { padding: 4px 0; border-bottom: 1px solid var(--border); }
+.gf-rank-layer .gf-rank-row { cursor: default; padding-left: 0; }
+.gf-rank-layer .gf-rank-row:hover { background: none; }
+.gf-rank-sub { font-size: 11px; color: var(--text-secondary); line-height: 1.4; padding-left: 14px; }
+.gf-rank-sub a { color: var(--accent); text-decoration: none; }
+.cmp-grid { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.cmp-row { display: grid; grid-template-columns: 58px 1fr 1fr; gap: 8px; font-size: 12px; align-items: baseline; }
+.cmp-l { font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-muted); }
+.cmp-a, .cmp-b { color: var(--text); overflow-wrap: anywhere; }
+.cmp-shared { display: flex; flex-wrap: wrap; gap: 5px; }
 .graph-load-chip { position: fixed; left: 16px; bottom: 48px; z-index: 60; display: flex; align-items: center; gap: 10px;
   background: var(--bg-card); border: 1px solid var(--border); border-radius: 999px; box-shadow: var(--shadow);
   padding: 6px 8px 6px 14px; font-size: 12px; color: var(--text-secondary); }
@@ -616,7 +643,8 @@ input[type="date"]:focus { border-color: var(--border-focus); }
 .graph-ctxmenu button { display: block; width: 100%; text-align: left; font: inherit; font-size: 12px;
   border: 0; background: none; color: var(--text); padding: 6px 10px; border-radius: 6px; cursor: pointer; }
 .graph-ctxmenu button:hover { background: var(--bg); }
-.gs-note { font-size: 11px; color: var(--text-secondary); margin-top: 6px; max-width: 320px; }
+/* 230px = the search box width, so the note never runs under the Compare box / dropdown. */
+.gs-note { font-size: 11px; color: var(--text-secondary); margin-top: 6px; max-width: 230px; }
 .gs-label {
   font-size: 10px; font-weight: 600; color: var(--text-muted);
   text-transform: uppercase; letter-spacing: 0.5px;
@@ -1177,6 +1205,16 @@ input[type="date"]:focus { border-color: var(--border-focus); }
     </div>
   </div>
 
+  <!-- Compare: a second company, right of the first (left vs right) — q2= in the hash -->
+  <div class="graph-search graph-compare" id="graphCompare">
+    <div class="gs-label">Compare with</div>
+    <div class="gs-box">
+      <input type="text" id="graphCompareInput" placeholder="Second company…" autocomplete="off" spellcheck="false">
+      <button type="button" class="gs-clear" id="graphCompareClear" title="Clear comparison" hidden>×</button>
+      <div class="gs-suggestions" id="graphCompareSugg" hidden></div>
+    </div>
+  </div>
+
   <!-- Relationship-type filter: one parent type, or one subtype (rolls up to its parent) -->
   <div class="graph-reltype" id="graphRelType">
     <div class="gs-label">Filter by relationship</div>
@@ -1219,6 +1257,22 @@ input[type="date"]:focus { border-color: var(--border-focus); }
       <div class="gf-toggle-row">
         <label><input type="checkbox" id="gfInvToggle"> Show invalidated edges</label>
       </div>
+    </div>
+    <div class="gf-section">
+      <div class="gf-label">Color by</div>
+      <div class="gf-seg" id="gfColorSeg">
+        <button class="gf-seg-btn" data-color="">Heat</button>
+        <button class="gf-seg-btn" data-color="layer">Layer</button>
+      </div>
+    </div>
+    <div class="gf-section">
+      <div class="gf-label">Top in this view</div>
+      <div class="gf-seg" id="gfRankSeg">
+        <button class="gf-seg-btn" data-rank="heat">Heat</button>
+        <button class="gf-seg-btn" data-rank="funding">Funding</button>
+        <button class="gf-seg-btn" data-rank="layers">Layers</button>
+      </div>
+      <div class="gf-rank" id="gfRankList"></div>
     </div>
   </div>
 
@@ -1558,6 +1612,7 @@ function currentGraphFilters() {
     evidenceTypes: ev,
     // rt=<rel_type> or rt=<rel_type>/<rel_subtype>; "" = all
     relType: h.rt || "",
+    colorBy: h.color === "layer" ? "layer" : "",
     // Link-only options for shared/curated views (Traction Engine DA-005):
     // noflag=1 hides edges flagged for review; xcard=ID,ID drops edges from those cards.
     hideFlagged: h.noflag === "1",
@@ -1689,18 +1744,20 @@ function updateEgoNote(filters) {
 }
 
 function syncGraphSearchUI() {
-  const input = document.getElementById("graphSearchInput");
-  const clearBtn = document.getElementById("graphSearchClear");
-  if (!input) return;
-  const q = parseHash().q || "";
-  if (document.activeElement !== input) input.value = q;
-  clearBtn.hidden = !q;
+  const h = parseHash();
+  [["graphSearchInput", "graphSearchClear", h.q], ["graphCompareInput", "graphCompareClear", h.q2]].forEach(([i, c, v]) => {
+    const input = document.getElementById(i), clearBtn = document.getElementById(c);
+    if (!input) return;
+    if (document.activeElement !== input) input.value = v || "";
+    clearBtn.hidden = !v;
+  });
 }
 
-(function initGraphSearch() {
-  const input = document.getElementById("graphSearchInput");
-  const clearBtn = document.getElementById("graphSearchClear");
-  const sugg = document.getElementById("graphSearchSugg");
+// Company search (q=) and Compare (q2=) share one implementation.
+function initEntitySearch({ inputId, clearId, suggId, onSelect, onClear }) {
+  const input = document.getElementById(inputId);
+  const clearBtn = document.getElementById(clearId);
+  const sugg = document.getElementById(suggId);
   if (!input || !clearBtn || !sugg) return;
   let items = [];
   let hi = -1;
@@ -1741,7 +1798,7 @@ function syncGraphSearchUI() {
     input.value = name;
     closeSugg();
     clearBtn.hidden = false;
-    writeHash({ q: name, twx: "", node: "", edge: "", from: "", to: "", rel: "" });
+    onSelect(name);
     onFilterChange();
   }
 
@@ -1749,8 +1806,7 @@ function syncGraphSearchUI() {
     input.value = "";
     clearBtn.hidden = true;
     closeSugg();
-    // Back to the light 7-day overview — never an accidental "load everything".
-    writeHash({ q: "", tw: "7", twx: "" });
+    onClear();
     onFilterChange();
   }
 
@@ -1784,7 +1840,19 @@ function syncGraphSearchUI() {
 
   input.addEventListener("blur", () => setTimeout(closeSugg, 150));
   clearBtn.addEventListener("click", () => { clearSearch(); input.focus(); });
-})();
+}
+
+initEntitySearch({
+  inputId: "graphSearchInput", clearId: "graphSearchClear", suggId: "graphSearchSugg",
+  onSelect: name => writeHash({ q: name, twx: "", node: "", edge: "", from: "", to: "", rel: "" }),
+  // Back to the light 7-day overview — never an accidental "load everything".
+  onClear: () => writeHash({ q: "", tw: "7", twx: "" }),
+});
+initEntitySearch({
+  inputId: "graphCompareInput", clearId: "graphCompareClear", suggId: "graphCompareSugg",
+  onSelect: name => writeHash({ q2: name, node: "", edge: "", from: "", to: "", rel: "" }),
+  onClear: () => writeHash({ q2: "" }),
+});
 
 function renderGraphFromPayload() {
   if (!PAYLOAD || !window.RoboticsGraph) return Promise.resolve(false);
@@ -1814,10 +1882,12 @@ function renderGraphFromPayload() {
   }
   let filters = effectiveGraphFilters().filters;
   const q = parseHash().q;
-  if (q) filters = Object.assign({}, filters, { egoEntity: q, egoMaxEdges: EGO_MAX_EDGES });
-  updateEgoNote(q ? filters : null);
+  const q2 = parseHash().q2;
+  const qa = q || q2;                                   // compare box alone acts like the company box
+  if (qa) filters = Object.assign({}, filters, { egoEntity: qa, egoEntity2: q && q2 && q2 !== q ? q2 : "", egoMaxEdges: EGO_MAX_EDGES });
+  updateEgoNote(qa ? filters : null);
   const tw = filters.timeWindowDays || 0;
-  if (!q && (tw === 0 || tw > 30)) {
+  if (!qa && (tw === 0 || tw > 30)) {
     // Big overview: newest first, older slices appended in the background.
     const steps = [7, 30, 90, 0].filter(d => d !== 0 ? (tw === 0 || d < tw) : tw === 0);
     if (tw !== 0) steps.push(tw);
@@ -1981,7 +2051,7 @@ function setView(view, opts = {}) {
     // Restore panels from hash
     const h = parseHash();
     if (h.node) openNodePanel(h.node);
-    else closeNodePanel();
+    else { closeNodePanel(); maybeOpenCompare(); }
     if (h.edge || h.from) openEdgePinFromHash(h);
     else closeEdgePin();
   } else {
@@ -2164,6 +2234,10 @@ function buildFullGraph(payload) {
   // recolors per filter in filterPayload; this is only the fallback.
   const allHeat = (window.RoboticsGraph && RoboticsGraph.computeHeat) ? RoboticsGraph.computeHeat(edges) : new Map();
   nodes.forEach(n => { n.heat = allHeat.get(n.id) || 0; });
+  // Supply-chain layer per company from its relationship roles over ALL history (graph.js computeLayers).
+  const layers = (window.RoboticsGraph && RoboticsGraph.computeLayers)
+    ? RoboticsGraph.computeLayers(edges, [...nodes.values()]) : new Map();
+  nodes.forEach(n => { n.layer = layers.get(n.id) || "other"; });
   return { nodes: [...nodes.values()].sort((a, b) => b.heat - a.heat), edges };
 }
 
@@ -2558,7 +2632,182 @@ function hydrateFilterPanel() {
   document.querySelectorAll("#gfEvidenceChips .gf-chip").forEach(chip => {
     chip.classList.toggle("active", active.has(chip.dataset.ev));
   });
+  document.querySelectorAll("#gfColorSeg .gf-seg-btn").forEach(b =>
+    b.classList.toggle("active", (b.dataset.color || "") === (f.colorBy || "")));
+  const rank = rankMode();
+  document.querySelectorAll("#gfRankSeg .gf-seg-btn").forEach(b => b.classList.toggle("active", b.dataset.rank === rank));
+  renderRankList(f);
 }
+
+// ══ Top in this view: ranked companies (heat / funding) and the layer summary ══
+// Everything is computed from the cards already in the browser for the current
+// filters (company search ignored: it ranks the whole view).
+function rankMode() { const r = parseHash().rank; return r === "funding" || r === "layers" ? r : "heat"; }
+
+function fundingByCompany(f) {
+  const gen = new Date((PAYLOAD && PAYLOAD.generated_at) || Date.now());
+  const cutoff = f.timeWindowDays > 0 ? new Date(gen.getTime() - f.timeWindowDays * 86400000) : null;
+  const targets = new Set();
+  ((PAYLOAD && PAYLOAD.cards) || []).forEach(c => {
+    if (c.funding && c.funding.kind === "round" && c.funding.target && (!cutoff || new Date(c.date) >= cutoff)) targets.add(c.funding.target);
+  });
+  const out = new Map();
+  targets.forEach(t => { const r = fundingRounds(t, f); if (r.rounds.length) out.set(t, r); });
+  return out;
+}
+
+// Per layer: companies, share of activity (heat), money raised, partnerships, and
+// where it concentrates — the one company holding the biggest share of that layer's
+// defining links (a bottleneck signal: e.g. one supplier on 30% of supply links).
+const LAYER_ROLE_LINKS = {
+  capital: [["invests_in", "from"]], infra: [["supplies", "from"], ["built_on", "to"]],
+  maker: [["deploys", "to"], ["pilots", "to"], ["supplies", "to"], ["built_on", "from"]], deployer: [["deploys", "from"], ["pilots", "from"]],
+  government: [["regulates", "from"]],
+};
+const LAYER_ROLE_NOUN = { capital: "investment links", infra: "supply links", maker: "customer & supply links",
+                          deployer: "deployments", government: "regulatory links" };
+function layerSummary(f) {
+  const view = RoboticsGraph.filterPayload(PAYLOAD, Object.assign({}, f, { egoEntity: "", egoEntity2: "" }));
+  const layerOf = new Map(((PAYLOAD.graph && PAYLOAD.graph.nodes) || []).map(n => [n.id, n.layer || "other"]));
+  const fund = fundingByCompany(f);
+  let heatAll = 0;
+  view.heat.forEach(v => { heatAll += v; });
+  return RoboticsGraph.LAYERS.filter(l => l !== "other").map(l => {
+    const members = view.nodes.filter(n => layerOf.get(n.id) === l);
+    const heat = members.reduce((s, n) => s + (view.heat.get(n.id) || 0), 0);
+    const raised = members.reduce((s, n) => s + ((fund.get(n.id) || {}).total || 0), 0);
+    const partners = view.edges.filter(e => e.rel === "partners_with" && (layerOf.get(e.from) === l || layerOf.get(e.to) === l)).length;
+    const counts = new Map();
+    let total = 0;
+    (LAYER_ROLE_LINKS[l] || []).forEach(([rel, side]) => view.edges.forEach(e => {
+      if (e.rel !== rel) return;
+      const who = e[side];
+      if (layerOf.get(who) !== l) return;
+      counts.set(who, (counts.get(who) || 0) + 1); total += 1;
+    }));
+    let top = null;
+    counts.forEach((n, who) => { if (!top || n > top.n) top = { who, n }; });
+    return { layer: l, companies: members.length, share: heatAll ? heat / heatAll : 0, raised, partners,
+             top: top && total >= 5 ? { who: top.who, pct: Math.round(100 * top.n / total), total } : null };
+  });
+}
+
+function renderRankList(f) {
+  const box = document.getElementById("gfRankList");
+  if (!box || !PAYLOAD || !window.RoboticsGraph || !RoboticsGraph.filterPayload) return;
+  const mode = rankMode();
+  const dot = l => `<span class="gf-rank-dot" style="background:${RoboticsGraph.LAYER_COLORS[l] || RoboticsGraph.LAYER_COLORS.other}" title="${RoboticsGraph.LAYER_LABELS[l] || ""}"></span>`;
+  const esc = t => String(t).replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+  const layerOf = new Map(((PAYLOAD.graph && PAYLOAD.graph.nodes) || []).map(n => [n.id, n.layer || "other"]));
+  let rows = "";
+  if (mode === "layers") {
+    rows = layerSummary(f).map(r => `<div class="gf-rank-layer">
+        <div class="gf-rank-row">${dot(r.layer)}<span class="gf-rank-name">${RoboticsGraph.LAYER_LABELS[r.layer]}</span>
+          <span class="gf-rank-val">${Math.round(100 * r.share)}%</span></div>
+        <div class="gf-rank-sub">${r.companies} cos · ${r.raised ? fmtUsd(r.raised) + " raised · " : ""}${r.partners} partnerships</div>
+        ${r.top ? `<div class="gf-rank-sub">Most concentrated: <a href="#" data-rank-pick="${esc(r.top.who)}">${esc(r.top.who)}</a>, ${r.top.pct}% of ${r.top.total} ${LAYER_ROLE_NOUN[r.layer]}</div>` : ""}
+      </div>`).join("") + `<div class="gf-rank-sub">% = share of activity (heat) in this view</div>`;
+  } else if (mode === "funding") {
+    const list = [...fundingByCompany(f).entries()].sort((a, b) => b[1].total - a[1].total).slice(0, 10);
+    rows = list.length ? list.map(([name, r], i) => `<div class="gf-rank-row" data-rank-pick="${esc(name)}">
+        <span class="gf-rank-i">${i + 1}</span>${dot(layerOf.get(name))}<span class="gf-rank-name">${esc(name)}</span>
+        <span class="gf-rank-val">${fmtUsd(r.total)}</span></div>`).join("")
+      : `<div class="gf-rank-sub">No funding rounds in this window</div>`;
+  } else {
+    const heat = RoboticsGraph.filterPayload(PAYLOAD, Object.assign({}, f, { egoEntity: "", egoEntity2: "" })).heat;
+    const list = [...heat.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+    rows = list.length ? list.map(([name, h], i) => `<div class="gf-rank-row" data-rank-pick="${esc(name)}">
+        <span class="gf-rank-i">${i + 1}</span>${dot(layerOf.get(name))}<span class="gf-rank-name">${esc(name)}</span>
+        <span class="gf-rank-val">${Math.round(100 * h)}%</span></div>`).join("")
+      : `<div class="gf-rank-sub">No links in this window</div>`;
+  }
+  box.innerHTML = rows;
+}
+
+document.getElementById("gfRankList").addEventListener("click", e => {
+  const el = e.target.closest("[data-rank-pick]");
+  if (!el) return;
+  e.preventDefault();
+  writeHash({ q: el.dataset.rankPick, twx: "1", node: "", edge: "", from: "", to: "", rel: "" });
+  syncGraphSearchUI();
+  onFilterChange();
+});
+document.querySelectorAll("#gfRankSeg .gf-seg-btn").forEach(btn => btn.addEventListener("click", () => {
+  writeHash({ rank: btn.dataset.rank === "heat" ? "" : btn.dataset.rank });
+  hydrateFilterPanel();
+}));
+document.querySelectorAll("#gfColorSeg .gf-seg-btn").forEach(btn => btn.addEventListener("click", () => {
+  writeHash({ color: btn.dataset.color || "" });
+  onFilterChange();
+}));
+
+// ══ Compare: company (left box) vs company (right box) — shown in the node panel slot ══
+let _cmpDismissed = "";
+function maybeOpenCompare() {
+  const h = parseHash();
+  const panel = document.getElementById("nodePanel");
+  const key = h.q && h.q2 && h.q2 !== h.q ? `${h.q}\u0001${h.q2}` : "";
+  if (!key) {
+    if (panel && panel.dataset.cmp) { delete panel.dataset.cmp; panel.classList.remove("open"); panel.setAttribute("aria-hidden", "true"); }
+    _cmpDismissed = "";
+    return;
+  }
+  if (h.node || key === _cmpDismissed) return;
+  openComparePanel(h.q, h.q2);
+}
+
+function openComparePanel(a, b) {
+  if (!PAYLOAD || !window.RoboticsGraph) return;
+  const f = effectiveGraphFilters().filters;
+  const view = RoboticsGraph.filterPayload(PAYLOAD, Object.assign({}, f, { egoEntity: "", egoEntity2: "" }));
+  const layerOf = new Map(((PAYLOAD.graph && PAYLOAD.graph.nodes) || []).map(n => [n.id, n.layer || "other"]));
+  const esc = t => String(t).replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+  const stats = name => {
+    const lines = view.edges.filter(e => e.from === name || e.to === name);
+    const nbrs = new Set(lines.map(e => (e.from === name ? e.to : e.from)));
+    const types = {};
+    lines.forEach(e => { types[e.rel] = (types[e.rel] || 0) + 1; });
+    const topTypes = Object.entries(types).sort((x, y) => y[1] - x[1]).slice(0, 3).map(([t, n]) => `${t.replace(/_/g, " ")} ${n}`).join(", ");
+    return { heat: view.heat.get(name) || 0, links: lines.length, nbrs, topTypes, fund: fundingRounds(name, f), layer: layerOf.get(name) || "other" };
+  };
+  const A = stats(a), B = stats(b);
+  const shared = [...A.nbrs].filter(n => B.nbrs.has(n) && n !== a && n !== b);
+  const direct = view.edges.filter(e => (e.from === a && e.to === b) || (e.from === b && e.to === a));
+  const row = (label, x, y) => `<div class="cmp-row"><span class="cmp-l">${label}</span><span class="cmp-a">${x}</span><span class="cmp-b">${y}</span></div>`;
+  const panel = document.getElementById("nodePanel");
+  panel.dataset.cmp = `${a}\u0001${b}`;
+  document.getElementById("npTitle").textContent = `${a} vs ${b}`;
+  const tw = f.timeWindowDays || 0;
+  document.getElementById("npSub").textContent = tw ? `last ${tw} days` : "all time";
+  const badge = document.getElementById("npTypeBadge");
+  badge.style.display = "none";
+  document.getElementById("npBody").innerHTML = `
+    <div class="cmp-grid">
+      ${row("", `<b>${esc(a)}</b>`, `<b>${esc(b)}</b>`)}
+      ${row("Layer", RoboticsGraph.LAYER_LABELS[A.layer], RoboticsGraph.LAYER_LABELS[B.layer])}
+      ${row("Heat", Math.round(100 * A.heat) + "%", Math.round(100 * B.heat) + "%")}
+      ${row("Links", A.links, B.links)}
+      ${row("Raised", A.fund.rounds.length ? `${fmtUsd(A.fund.total)} · ${A.fund.rounds.length} rd` : "—", B.fund.rounds.length ? `${fmtUsd(B.fund.total)} · ${B.fund.rounds.length} rd` : "—")}
+      ${row("Mostly", esc(A.topTypes || "—"), esc(B.topTypes || "—"))}
+    </div>
+    <div class="np-section">
+      <div class="np-section-label">Direct links between them (${direct.length})</div>
+      ${direct.length ? direct.map(e => `<div class="np-edge-row"><span class="np-rel-pill">${e.rel}</span><span class="np-edge-path">${esc(e.from)} → ${esc(e.to)}</span>
+        <button class="np-edge-link" data-open-card="${e.catalyst_id || ""}">open</button></div>`).join("")
+        : `<div class="np-caption" style="text-transform:none;letter-spacing:0">none in this view</div>`}
+    </div>
+    <div class="np-section">
+      <div class="np-section-label">Shared connections (${shared.length})</div>
+      <div class="cmp-shared">${shared.slice(0, 12).map(n => `<span class="related-chip">${esc(n)}</span>`).join("") || `<span class="np-caption" style="text-transform:none;letter-spacing:0">none in this view</span>`}</div>
+    </div>`;
+  panel.querySelectorAll("[data-open-card]").forEach(el => el.addEventListener("click", () => {
+    const card = CARDS.find(c => c.card_id === el.getAttribute("data-open-card"));
+    if (card) expandCard(card);
+  }));
+  panel.classList.add("open");
+  panel.setAttribute("aria-hidden", "false");
+}
+
 
 function evidenceHashFromChips() {
   const chips = document.querySelectorAll("#gfEvidenceChips .gf-chip");
@@ -2574,6 +2823,7 @@ function onFilterChange() {
   requestAnimationFrame(() => {
     renderGraphFromPayload();
     hydrateFilterPanel();
+    maybeOpenCompare();
   });
 }
 
@@ -2772,6 +3022,7 @@ function openNodePanel(entityId) {
   const node = findNodeById(entityId);
   const panel = document.getElementById("nodePanel");
   if (!node) { closeNodePanel(); return; }
+  delete panel.dataset.cmp;
 
   // Heat for the current filters (time window etc.), same as the node's color.
   const viewHeat = (RoboticsGraph.filterPayload(PAYLOAD, currentGraphFilters()).heat || new Map()).get(node.id) || 0;
@@ -2880,16 +3131,18 @@ function internalEventCards(name) {
     .map(c => c.card_id);
 }
 
-function closeNodePanel() {
+function closeNodePanel(userClosed) {
   const panel = document.getElementById("nodePanel");
   if (!panel) return;
+  // Only the ✕ dismisses a comparison (until the pair changes); view changes don't.
+  if (panel.dataset.cmp) { if (userClosed === true) _cmpDismissed = panel.dataset.cmp; delete panel.dataset.cmp; }
   panel.classList.remove("open");
   panel.setAttribute("aria-hidden", "true");
   const h = parseHash();
   if (h.node) writeHash({ node: "" });
 }
 
-document.getElementById("npClose").addEventListener("click", closeNodePanel);
+document.getElementById("npClose").addEventListener("click", () => closeNodePanel(true));
 
 // Edge pin
 function openEdgePin(edgeData, cyEdge) {
@@ -3025,7 +3278,7 @@ window.addEventListener("hashchange", () => {
   const graphVisible = document.getElementById("graphView").style.display !== "none";
   if (!graphVisible) return;
   if (h.node) openNodePanel(h.node);
-  else closeNodePanel();
+  else { closeNodePanel(); maybeOpenCompare(); }
   if (h.edge || h.from) openEdgePinFromHash(h);
 });
 
@@ -3035,7 +3288,7 @@ document.addEventListener("keydown", e => {
   if (document.getElementById("expandedOverlay").classList.contains("open")) return;
   const np = document.getElementById("nodePanel");
   const ep = document.getElementById("edgePin");
-  if (np && np.classList.contains("open")) { closeNodePanel(); return; }
+  if (np && np.classList.contains("open")) { closeNodePanel(true); return; }
   if (ep && ep.classList.contains("open")) { closeEdgePin(); }
 });
 

@@ -110,14 +110,44 @@ def test_reltype_filter(pg, port):
     check("'All relationships' removes rt from the URL", "rt=" not in pg.evaluate("location.hash"))
 
 
+def test_compare_and_rank(pg, port):
+    """Compare box (q2): both companies' links drawn, compare panel opens; ranked list + layer summary render."""
+    open_graph(pg, port, "view=graph&tw=0")
+    a = ego_entity(pg)
+    b = pg.evaluate("""(a) => { const c = {}; (PAYLOAD.graph.edges || []).forEach(e => { c[e.from] = (c[e.from] || 0) + 1; c[e.to] = (c[e.to] || 0) + 1; });
+      return Object.entries(c).sort((x, y) => y[1] - x[1]).map(x => x[0]).find(n => n !== a && n !== 'NVIDIA'); }""", a)
+    pg.evaluate("([a, b]) => { location.hash = 'view=graph&tw=0&q=' + encodeURIComponent(a) + '&q2=' + encodeURIComponent(b); onFilterChange(); }", [a, b])
+    pg.wait_for_timeout(4000)
+    d = pg.evaluate(DRAWN)
+    check("compare draws only links touching either company", bool(d) and all(a in (s, t) or b in (s, t) for s, t, _r in d["edges"])
+          and any(a in (s, t) for s, t, _r in d["edges"]) and any(b in (s, t) for s, t, _r in d["edges"]), f"{a} vs {b}")
+    check("compare panel opens with both names",
+          pg.evaluate("document.getElementById('nodePanel').classList.contains('open') && document.getElementById('npTitle').textContent")
+          == f"{a} vs {b}")
+    pg.click("#npClose"); pg.wait_for_timeout(300)
+    pg.evaluate("onFilterChange()"); pg.wait_for_timeout(1500)
+    check("a closed comparison stays closed on a filter change", not pg.evaluate("document.getElementById('nodePanel').classList.contains('open')"))
+    rows = pg.evaluate("document.querySelectorAll('#gfRankList .gf-rank-row').length")
+    check("Top in this view lists ranked companies", rows >= 5, f"{rows} rows")
+    pg.click("#gfRankSeg [data-rank=layers]"); pg.wait_for_timeout(500)
+    layers = pg.evaluate("document.querySelectorAll('#gfRankList .gf-rank-layer').length")
+    check("layer summary shows the 5 layers", layers == 5, f"{layers}")
+    pg.click("#gfColorSeg [data-color=layer]"); pg.wait_for_timeout(2500)
+    check("color by layer is in the URL and the legend", "color=layer" in pg.evaluate("location.hash")
+          and pg.evaluate("document.querySelector('.robotics-graph-legend').classList.contains('is-layer')"))
+
+
 def test_layout(browser, port):
     for w in (1400, 1100, 900, 700):
         pg = browser.new_page(viewport={"width": w, "height": 900})
         open_graph(pg, port)
         box = lambda s: pg.eval_on_selector(s, "e => { const r = e.getBoundingClientRect(); return [r.left, r.right, r.top, r.bottom]; }")  # noqa: E731
         d, legend, search = box("#graphRelType"), box(".robotics-graph-legend"), box("#graphSearch")
+        cmp_ = box("#graphCompare")
         overlap = lambda a, b: not (a[1] <= b[0] or b[1] <= a[0] or a[3] <= b[2] or b[3] <= a[2])  # noqa: E731
         check(f"rel-type dropdown overlaps nothing at {w}px", not overlap(d, legend) and not overlap(d, search))
+        check(f"compare box overlaps nothing at {w}px",
+              not overlap(cmp_, legend) and not overlap(cmp_, search) and not overlap(cmp_, d))
         pg.close()
 
 
@@ -176,7 +206,8 @@ def main() -> int:
         with sync_playwright() as p:
             browser = p.chromium.launch()
             for fn, kw in ((test_ego_filter_across_windows, {}), (test_ego_filter_across_windows, {"sync": True}),
-                           (test_reltype_filter, {}), (test_internal_events, {}), (test_silent_refresh, {})):
+                           (test_reltype_filter, {}), (test_internal_events, {}), (test_silent_refresh, {}),
+                           (test_compare_and_rank, {})):
                 pg = browser.new_page(viewport={"width": 1400, "height": 900})
                 errors = []
                 pg.on("pageerror", lambda e, errors=errors: errors.append(str(e)))

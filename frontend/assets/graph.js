@@ -183,23 +183,31 @@
     // Ego view (entity search): only the searched entity's 1-hop edges,
     // capped to the most recent by catalyst_date. Applied on top of the
     // regular filters above.
+    // Compare (egoEntity2): both companies' 1-hop links, each capped on its own.
     if (f.egoEntity) {
-      let ego = edges.filter(e => e.from === f.egoEntity || e.to === f.egoEntity);
       const maxE = f.egoMaxEdges == null ? 20 : f.egoMaxEdges;
-      if (ego.length > maxE) {
-        ego = ego.slice().sort((a, b) =>
-          String(b.catalyst_date || '').localeCompare(String(a.catalyst_date || '')));
-        ego = ego.slice(0, maxE);
-      }
+      const picked = new Set();
+      const ego = [];
+      [f.egoEntity, f.egoEntity2].filter(Boolean).forEach(x => {
+        let mine = edges.filter(e => e.from === x || e.to === x);
+        if (mine.length > maxE) {
+          mine = mine.slice().sort((a, b) =>
+            String(b.catalyst_date || '').localeCompare(String(a.catalyst_date || ''))).slice(0, maxE);
+        }
+        mine.forEach(e => { if (!picked.has(e)) { picked.add(e); ego.push(e); } });
+      });
       edges = ego;
     }
 
     const keep = new Set();
     edges.forEach(e => { keep.add(e.from); keep.add(e.to); });
     if (f.egoEntity) keep.add(f.egoEntity); // show the entity even edge-less
+    if (f.egoEntity && f.egoEntity2) keep.add(f.egoEntity2);
     const rawNodes = (payload.graph && payload.graph.nodes) || [];
+    const byLayer = f.colorBy === 'layer';
     const nodes = rawNodes.filter(n => keep.has(n.id))
-      .map(n => Object.assign({}, n, { heat: heat.get(n.id) || 0 }));
+      .map(n => Object.assign({}, n, { heat: heat.get(n.id) || 0,
+        _layerFill: byLayer ? (LAYER_COLORS[n.layer] || LAYER_COLORS.other) : null }));
 
     return { nodes, edges, heat };
   }
@@ -212,6 +220,71 @@
   const HEAT_NO_HEAT_RELS = new Set(['competes_with', 'benchmarks_against']);
   const HEAT_REPEAT_DAYS = 90;
   const HEAT_CURVE = 0.7;   // = heat.py CURVE: keeps v1's map brightness
+  // ── Supply-chain layer per company, from its relationship ROLES (config/
+  // relationship_vocab.yaml directions): A invests_in B → A capital; A supplies
+  // B → A infrastructure, B maker; A built_on B → B infrastructure, A maker;
+  // A deploys/pilots B → A deployer, B maker; A regulates B → A government.
+  // Highest score wins; government-type entities are government; a company with
+  // no role link takes the majority layer of the companies it competes with.
+  // Run on all-history lines so a company's layer doesn't flip with the window.
+  const LAYERS = ['capital', 'infra', 'maker', 'deployer', 'government', 'other'];
+  const LAYER_LABELS = { capital: 'Capital', infra: 'Chips, parts & platforms', maker: 'Robot & AI makers',
+                         deployer: 'Customers & deployers', government: 'Government', other: 'Unclassified' };
+  const LAYER_COLORS = { capital: '#8b5cf6', infra: '#0ea5e9', maker: '#f97316', deployer: '#10b981',
+                         government: '#64748b', other: '#d6d3d1' };
+  const LAYER_ROLES = {
+    invests_in: [['capital', 1], ['maker', 0.5]],
+    supplies: [['infra', 1], ['maker', 0.6]],
+    built_on: [['maker', 0.6], ['infra', 1]],
+    integrates_with: [null, ['infra', 0.5]],
+    deploys: [['deployer', 1], ['maker', 1]],
+    pilots: [['deployer', 1], ['maker', 1]],
+    regulates: [['government', 2], null],
+  };
+  function computeLayers(edges, nodes) {
+    const score = new Map();
+    const add = (n, l, w) => {
+      if (!n) return;
+      let s = score.get(n);
+      if (!s) { s = {}; score.set(n, s); }
+      s[l] = (s[l] || 0) + w;
+    };
+    const rivals = new Map();
+    (edges || []).forEach(e => {
+      if (!e.from || !e.to || e.from === e.to || e.status === 'invalidated') return;
+      const roles = LAYER_ROLES[e.rel];
+      if (roles) {
+        if (roles[0]) add(e.from, roles[0][0], roles[0][1]);
+        if (roles[1]) add(e.to, roles[1][0], roles[1][1]);
+      } else if (e.rel === 'competes_with' || e.rel === 'displaces') {
+        [[e.from, e.to], [e.to, e.from]].forEach(([a, b]) => {
+          if (!rivals.has(a)) rivals.set(a, []);
+          rivals.get(a).push(b);
+        });
+      }
+    });
+    const out = new Map();
+    const pick = s => LAYERS.reduce((best, l) => ((s[l] || 0) > (s[best] || 0) ? l : best), LAYERS[0]);
+    score.forEach((s, n) => out.set(n, pick(s)));
+    (nodes || []).forEach(n => { if (n.type === 'government') out.set(n.id, 'government'); });
+    // Fallback to rivals' layer, iterated to a fixed point: each pass votes from a
+    // snapshot of the previous one, so a chain (B's only rival A is itself a
+    // fallback node) resolves the same whatever order the edges arrived in.
+    for (let pass = 0; pass < 10; pass++) {
+      const snap = new Map(out);
+      let changed = 0;
+      rivals.forEach((list, n) => {
+        if (snap.has(n)) return;
+        const votes = {};
+        list.forEach(r => { const l = snap.get(r); if (l && l !== 'other') votes[l] = (votes[l] || 0) + 1; });
+        const best = LAYERS.reduce((a, l) => ((votes[l] || 0) > (votes[a] || 0) ? l : a), LAYERS[0]);
+        if (votes[best]) { out.set(n, best); changed += 1; }
+      });
+      if (!changed) break;
+    }
+    return out;
+  }
+
   function computeHeat(edges) {
     const rows = [];
     (edges || []).forEach(e => {
@@ -312,7 +385,7 @@
           heat: n.heat || 0,
           edgeCount: ec,
           _size: size,
-          _fill: heatToHex(n.heat || 0),
+          _fill: n._layerFill || heatToHex(n.heat || 0),
         },
       };
       if (usePositions && hasPresetPosition(n)) {
@@ -533,6 +606,9 @@
       '    <span class="robotics-legend-heatlabel">high</span>',
       '  </div>',
       '  <div class="robotics-legend-caption">heat = deduped, evidence-weighted links</div>',
+      '  <div class="robotics-legend-layers">',
+      LAYERS.map(l => `<div class="robotics-legend-row"><span class="robotics-legend-dot" style="background:${LAYER_COLORS[l]}"></span><span class="robotics-legend-label">${LAYER_LABELS[l]}</span></div>`).join(''),
+      '  </div>',
       '  <div class="robotics-legend-row robotics-legend-sizerow">',
       '    <span class="robotics-legend-dot robotics-legend-dot-sm"></span>',
       '    <span class="robotics-legend-dot robotics-legend-dot-md"></span>',
@@ -696,6 +772,8 @@
       (f.evidenceTypes || []).slice().sort(),
       f.relType || '',
       f.egoEntity || '',
+      f.egoEntity2 || '',
+      f.colorBy || '',
       f.egoMaxEdges || 0,
       !!f.hideFlagged,
       (f.excludeCards || []).slice().sort(),
@@ -907,13 +985,16 @@
       // as its value would silently swallow a real failure.
       const finishLoading = r => { if (token === state.renderToken) state.loading = false; return r; };
       const finishLoadingErr = e => { if (token === state.renderToken) state.loading = false; throw e; };
+      if (state.legendEl) state.legendEl.classList.toggle('is-layer', (filters || {}).colorBy === 'layer');
       const ego = (filters || {}).egoEntity;
       if (!ego) return paint.then(finishLoading, finishLoadingErr);
-      // Highlight the searched entity once the paint settles.
+      // Highlight the searched entity (and the compared one) once the paint settles.
       return paint.then(ok => {
         if (state.cy) {
-          const n = state.cy.getElementById(ego);
-          if (n && n.length) n.addClass('robotics-ego');
+          [ego, (filters || {}).egoEntity2].filter(Boolean).forEach(id => {
+            const n = state.cy.getElementById(id);
+            if (n && n.length) n.addClass('robotics-ego');
+          });
         }
         return ok;
       }).then(finishLoading, finishLoadingErr);
@@ -967,6 +1048,7 @@
       hideTip();
       state.cy.elements().remove();
 
+      if (state.legendEl) state.legendEl.classList.toggle('is-layer', finalF.colorBy === 'layer');
       const { nodes, edges } = filterPayload(payload, finalF);
       // No usable positions (layout doc missing/failed to load) → presets would
       // pile everything at (0,0). Fall back to a normal render (force layout):
@@ -1226,5 +1308,9 @@
   RoboticsGraph.relTypeMatches = relTypeMatches;
   RoboticsGraph.computeHeat = computeHeat;
   RoboticsGraph.heatToHex = heatToHex;   // card mini-graph uses the map's exact color ramp
+  RoboticsGraph.computeLayers = computeLayers;
+  RoboticsGraph.LAYERS = LAYERS;
+  RoboticsGraph.LAYER_LABELS = LAYER_LABELS;
+  RoboticsGraph.LAYER_COLORS = LAYER_COLORS;
   window.RoboticsGraph = RoboticsGraph;
 })();
