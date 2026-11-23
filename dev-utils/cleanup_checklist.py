@@ -9,6 +9,8 @@ Sections (each item has a stable key, so your ticks survive every rebuild):
   C. Generic aliases ("humanoid robots", "Gulf investors"…) sitting on real (non-group) entities (fresh scan).
   D. Layer healing (technical_spec §2.9c): companies whose supply-chain layer is doubtful (top-2 role scores
      within 20%) or missing (no role link) — `make layers-heal APPLY=1` asks the AI; ticks itself once decided.
+  E. Open work items — HAND-MAINTAINED (deploy follow-ups, bugs, decisions pending). Never generated: every
+     rebuild copies section E's lines exactly as they are.
 
 An item is ticked when you mark it `- [x]`, or automatically when prod shows it's resolved: in A the entity is
 gone / a group / has no live edges; in B and C an item the scan no longer finds stays in the list, ticked, marked
@@ -53,16 +55,24 @@ def _legacy_key(section: str, eid: int, alias: str) -> str:
     return f"{section}:{eid}:{hashlib.sha1(alias.strip().lower().encode()).hexdigest()[:10]}"
 
 
+_SEC_E: list[str] = []      # section E's raw lines from the current file (filled by _previous)
+
+
 def _previous() -> tuple[set[str], dict[str, tuple[str, str]], list[str]]:
     """From the current checklist: ticked keys; {key: (section letter, item text)}; section A's raw lines."""
     ticked: set[str] = set()
     items: dict[str, tuple[str, str]] = {}
     sec_a: list[str] = []
+    global _SEC_E
+    _SEC_E = []
     if OUT.exists():
         section = ""
         for line in OUT.read_text().splitlines():
             if line.startswith("## "):
                 section = line[3:4]
+                continue
+            if section == "E":                            # hand-maintained: kept verbatim, keys or not
+                _SEC_E.append(line)
                 continue
             found = list(_KEY.finditer(line))     # the LAST marker is the real one; notes after it are allowed
             if not found:
@@ -212,6 +222,14 @@ def build(con) -> tuple[str, list[str]]:
         counts.append(f"{title.split('.')[0]} {open_n}/{len(its)} open")
         lines += [f"## {title} — {open_n} open of {len(its)}", "", how, ""] + ([note, ""] if note else []) \
             + (its or ["- nothing found"]) + [""]
+    body_e = list(_SEC_E)
+    while body_e and not body_e[-1].strip():
+        body_e.pop()
+    while body_e and not body_e[0].strip():
+        body_e.pop(0)
+    counts.append(f"E {sum(1 for x in body_e if is_open.match(x))} open (hand-kept)")
+    lines += ["## E. Open work items (hand-maintained — kept exactly as is on every rebuild)", ""] \
+        + (body_e or ["Add items as `- [ ] …`; tick `- [x]` when done."]) + [""]
     return "\n".join(lines), counts
 
 
