@@ -1,5 +1,5 @@
 """Tests for the ingest direct-evidence check (src/ingest.py story_text / checked_evidence;
-docs/ticket-ingest-direct-evidence-check.md): a `direct` edge needs both ends named in the card's OWN text.
+docs/ticket-log.md#ticket-ingest-direct-evidence-check): a `direct` edge needs both ends named in the card's OWN text.
 
 Run: python -m unittest tests/test_ingest_direct_check.py -v   (inside the ingest image)
 """

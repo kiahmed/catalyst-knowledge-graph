@@ -23,7 +23,7 @@ from . import direction, entities, hashtags, subtypes
 LIVE = ("active", "materialized")
 EVIDENCE_TYPES = ("direct", "inferred", "web_grounded", "speculative")   # = src/extract.py EvidenceType
 EDGE_STATUSES = ("active", "materialized", "invalidated", "rejected", "internal")   # every status a relationship can hold
-# 'internal' = an internal event: a self-loop kept outside every live view (docs/ticket-internal-events.md)
+# 'internal' = an internal event: a self-loop kept outside every live view (docs/ticket-log.md#ticket-internal-events)
 LINK_RELATIONS = ("subsidiary_of", "sister_of")
 # "group" = a generic bucket ("Venture Capital", "European robotics companies"):
 # kept as an entity so later mentions match it for free, but not a company.
@@ -603,7 +603,7 @@ def _apply(con: duckdb.DuckDBPyConnection, op: str, p: dict[str, Any], vocab: se
                  "unresolved": unresolved, "edges": edges}, {"deleted": eid, "edges_deleted": len(edges)}, True,
                 {e["catalyst_id"] for e in edges})
 
-    if op == "edit_edge":   # evidence type / mechanism / subtype of one edge (docs/ticket-admin-edit-edge-details.md)
+    if op == "edit_edge":   # evidence type / mechanism / subtype of one edge (docs/ticket-log.md#ticket-admin-edit-edge-details)
         (rel_id,) = _need(p, "rel_id")
         row = con.execute("""SELECT evidence_type, mechanism, rel_subtype, coalesce(rel_subtype_locked, false), rel_type,
                                     catalyst_id FROM relationships WHERE rel_id = ?""",
@@ -903,7 +903,7 @@ def _status_many(con: duckdb.DuckDBPyConnection, op_name: str, rel_ids: Any, one
 def restore_many(con: duckdb.DuckDBPyConnection, *, rel_ids: list[int], email: str, ip: str | None,
                  vocab: set[str], extra: dict[str, Any] | None = None) -> dict[str, Any]:
     """Rejected list → Restore: a rejected edge comes back active; a rejected self-loop comes back as an
-    internal event (docs/ticket-internal-events.md)."""
+    internal event (docs/ticket-log.md#ticket-internal-events)."""
     return _status_many(con, "restore_many", rel_ids, lambda rid, cur: ("set_edge_status", {
         "rel_id": rid, "status": "internal" if cur["entity_a_id"] == cur["entity_b_id"] else "active",
         "expect": {"status": "rejected"}}), email=email, ip=ip, vocab=vocab, extra=extra)

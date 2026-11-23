@@ -62,7 +62,7 @@
     return m;
   }
 
-  // Silent refresh (docs/ticket-frontend-silent-refresh.md). One doc read when nothing changed: the
+  // Silent refresh (docs/ticket-log.md#ticket-frontend-silent-refresh). One doc read when nothing changed: the
   // catalysts parent doc's `version` moves only when the backend wrote cards (ingest export or an admin
   // save). When it moved: fetch ONLY the cards written after the newest one this page holds, plus the
   // ids deleted since. Resolves null (nothing new) or {version, changed: [card docs], deleted: [ids]}.

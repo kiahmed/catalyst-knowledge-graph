@@ -1,4 +1,4 @@
-"""Tests for the admin add_edge op (docs/ticket-admin-add-edge.md).
+"""Tests for the admin add_edge op (docs/ticket-log.md#ticket-admin-add-edge).
 
 Run: python -m unittest tests/test_admin_add_edge.py -v   (inside the ingest image)
 """

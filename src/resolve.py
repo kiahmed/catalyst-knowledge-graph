@@ -120,7 +120,7 @@ def _candidates(con: duckdb.DuckDBPyConnection, name: str) -> list[tuple[int, st
     return con.execute(f"SELECT entity_id, name FROM entities WHERE entity_id IN ({marks})", ids).fetchall()
 
 
-# ── Classification (docs/ticket-ingest-entity-resolution.md §3.3) ──
+# ── Classification (docs/ticket-log.md#ticket-ingest-entity-resolution §3.3) ──
 
 def _alias_trusted(alias: str, ent_name: str, ticker: str | None, verified: bool | None) -> bool:
     """A legacy (unverified) alias is still safe when it is just the name

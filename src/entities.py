@@ -334,7 +334,7 @@ def merge(con: duckdb.DuckDBPyConnection, src_id: int, dst_id: int, *, confidenc
     con.execute("DELETE FROM entities WHERE entity_id = ?", [src_id])
     # An edge between the two became a self-loop. A directional one is an internal event ("Tesla deploys
     # Optimus" after Optimus → Tesla): kept as status 'internal', outside every live count, graph and card
-    # edge list (docs/ticket-internal-events.md). A two-party type ("X partners_with X") is noise: rejected.
+    # edge list (docs/ticket-log.md#ticket-internal-events). A two-party type ("X partners_with X") is noise: rejected.
     if cards:
         sym = sorted(direction.symmetric_types()) or [""]
         con.execute(f"""UPDATE relationships SET status = CASE WHEN rel_type IN (SELECT UNNEST(?::VARCHAR[]))

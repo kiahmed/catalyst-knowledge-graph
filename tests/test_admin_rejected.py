@@ -1,5 +1,5 @@
 """Tests for the admin Rejected list (bulk restore / delete permanently) and the delete-entity name guard
-(docs/ticket-admin-rejected-list-delete-guard.md), plus internal-event review fixes.
+(docs/ticket-log.md#ticket-admin-rejected-list-delete-guard), plus internal-event review fixes.
 
 Run: python -m unittest tests/test_admin_rejected.py -v   (inside the ingest image)
 """

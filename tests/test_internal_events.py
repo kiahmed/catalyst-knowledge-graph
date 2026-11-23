@@ -1,4 +1,4 @@
-"""Tests for internal events (docs/ticket-internal-events.md): self-loops kept as status 'internal',
+"""Tests for internal events (docs/ticket-log.md#ticket-internal-events): self-loops kept as status 'internal',
 outside every live view and count; shown only as a card's `internal_events`.
 
 Run: python -m unittest tests/test_internal_events.py -v   (inside the ingest image)

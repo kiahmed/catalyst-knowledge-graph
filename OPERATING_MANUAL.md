@@ -388,19 +388,19 @@ Hand-fix entities and edges (wrong alias landing, mis-pointed edge, missing pare
    - **Repoint checked → …:** moves the ticked relationships from this entity to another existing entity in one save (the "all" box ticks everything shown). Each edge goes through the normal single repoint (self-loop and duplicate-edge guards, dedupe, hashtags, card/entity refresh, re-embedding; the stale-screen check is "the edge still involves this entity") and gets its own revertible log row. It's all or nothing: if any one is refused, nothing is saved.
    - **Edit an edge's details** (Edit form): **Evidence** (direct / inferred / web_grounded / speculative),
      **Mechanism** (editable text) and **Subtype**. Subtype "auto (rules)" lets the rules pick it from the mechanism;
-     choosing one locks it ("set by admin"), and a type change lifts the lock (docs/ticket-admin-edit-edge-details.md).
+     choosing one locks it ("set by admin"), and a type change lifts the lock (docs/ticket-log.md#ticket-admin-edit-edge-details).
    - **Add edge on this card** (relationship pane): an edge the extractor missed — source/target from the card chips,
-     type, subtype, evidence, a one-sentence mechanism (docs/ticket-admin-add-edge.md).
+     type, subtype, evidence, a one-sentence mechanism (docs/ticket-log.md#ticket-admin-add-edge).
    - **Rejected (N)** (header): every rejected edge, filter by entity, "select all shown", bulk **Restore** (comes back
      exactly as it is now; a self-loop comes back as an internal event) or **Delete permanently**.
    - **Internal events** (entity pane): an entity's self-loop events (e.g. "Tesla deploys Optimus" after a merge), with
-     Reject / Delete. Never drawn as graph edges (docs/ticket-internal-events.md).
+     Reject / Delete. Never drawn as graph edges (docs/ticket-log.md#ticket-internal-events).
    - **Delete entity** with live edges asks you to type its exact name (the server checks it too).
    - **Spin out** (button on an alias): when an alias really names another organization ("SEER Robotics" on Serve Robotics), it becomes its own entity. The relationships you checked in the third column move with it, and only the side that pointed at the current entity changes. With nothing checked, it just creates the bare entity and removes the alias. One revertible edit; the revert is refused once the new entity has other edges, aliases or links.
 4. **Save** applies it right away:
    - pull the GCS DuckDB → apply → push (generation-checked; if someone else changed it, you get a 409, so reload);
    - rewrite just the touched card docs and the entity docs in Firestore. Open pages pick the change up on their next
-     lookup (silent refresh, no reload — docs/ticket-frontend-silent-refresh.md); the graph doc, insights and card
+     lookup (silent refresh, no reload — docs/ticket-log.md#ticket-frontend-silent-refresh); the graph doc, insights and card
      PNGs catch up at the next ingest / `make render-stale APPLY=1`.
 
 **Safety:**
@@ -418,7 +418,7 @@ Hand-fix entities and edges (wrong alias landing, mis-pointed edge, missing pare
 | Python unit tests | `docker compose run --rm --no-deps -v "$PWD:/repo:ro" -w /repo --entrypoint python robotics-ingest -m unittest tests.<module>` | One module at a time (`unittest discover` can hang on network-touching modules). |
 | Browser tests | `make test-ui` | Two headless-Chromium suites on a READ-ONLY prod snapshot; writes nothing to prod. **Public site** (`.ui-test-site/`, gitignored): ego view across 90/30/7 days, relationship-type filter, internal-events row, silent refresh (simulated Firestore), dropdown layout at 4 widths. **Admin page**: the real admin app in test mode (`tests/ui/admin_server.py`, container `ckg-admin-uitest` on 127.0.0.1:8791) with a fake signed-in admin; saves go to a local copy of the snapshot — reject → Rejected-list restore, edit evidence/subtype/mechanism + revert, add edge, typed-name delete guard, internal events. Invariants, not prod numbers. Needs `pip install playwright && playwright install chromium` on the host. |
 | Data-cleanup checklist | `make cleanup-checklist` | Rebuilds the ONE cleanup file `data/cleanup_checklist.md` from prod (read-only): concept entities, aliases pulling in cards that never name the entity, generic aliases. Your `- [x]` ticks are kept; automatic ticks (flag `auto`) are recomputed, so anything that comes back re-opens. Don't write notes after a line's `<!-- key:… -->` marker. |
-| Stale card images | `make render-stale [APPLY=1]` | Cards whose DRAWN content changed — export's `render_fp` (src/render_fp.py) differs from the hash stamped on the card PNG / graph poster, or an image is missing / unstamped (docs/ticket-render-fingerprint.md) — and ORPHANED images (card deleted / merged away; merged duplicates' ids are kept for old share links). Report in fixed files `data/render_stale.txt`, `.ids`, `data/render_orphans.ids`. `APPLY=1` re-renders the stale cards (an unchanged image isn't re-uploaded) and, only if every chunk succeeded, deletes the orphan images at the end — each re-checked first; blocked on a suspicious read (< 100 live cards or > half the images). |
+| Stale card images | `make render-stale [APPLY=1]` | Cards whose DRAWN content changed — export's `render_fp` (src/render_fp.py) differs from the hash stamped on the card PNG / graph poster, or an image is missing / unstamped (docs/ticket-log.md#ticket-render-fingerprint) — and ORPHANED images (card deleted / merged away; merged duplicates' ids are kept for old share links). Report in fixed files `data/render_stale.txt`, `.ids`, `data/render_orphans.ids`. `APPLY=1` re-renders the stale cards (an unchanged image isn't re-uploaded) and, only if every chunk succeeded, deletes the orphan images at the end — each re-checked first; blocked on a suspicious read (< 100 live cards or > half the images). |
 
 The browser tests exist so a reviewer runs the same checks the author ran (they used to live in a temp folder) and so
 bugs found by hand (e.g. the ego-view report of 2026-11-17) stay covered.

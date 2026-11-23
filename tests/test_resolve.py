@@ -108,7 +108,7 @@ class TestResolve(unittest.TestCase):
         r = self._resolve("  European Union ")                       # stray whitespace → same entity
         self.assertEqual(r.entity_id, self.eu)
 
-    # ── 2026-11-09 resolution fix (docs/ticket-ingest-entity-resolution.md) ──
+    # ── 2026-11-09 resolution fix (docs/ticket-log.md#ticket-ingest-entity-resolution) ──
 
     def _serve_with_legacy_seer_alias(self):
         serve = db.insert_entity(self.con, "Serve Robotics", None, "public_company")

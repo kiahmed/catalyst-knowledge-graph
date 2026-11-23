@@ -1,5 +1,5 @@
 """Tests for the admin edit_edge op — evidence type, mechanism, locked subtype
-(docs/ticket-admin-edit-edge-details.md).
+(docs/ticket-log.md#ticket-admin-edit-edge-details).
 
 Run: python -m unittest tests/test_admin_edit_edge.py -v   (inside the ingest image)
 """

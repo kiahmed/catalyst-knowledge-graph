@@ -205,11 +205,3 @@
   background: var(--bg-card, #fdfcfa);
   color: #06b6d4;
 }
-
-/* Color-by-layer mode (filter panel "Color by → Layer"): the legend swaps the
-   heat ramp for the layer swatches. */
-.robotics-graph .robotics-graph-legend .robotics-legend-layers { display: none; margin: 2px 0 6px; }
-.robotics-graph .robotics-graph-legend.is-layer .robotics-legend-layers { display: block; }
-.robotics-graph .robotics-graph-legend.is-layer .robotics-legend-heatrow,
-.robotics-graph .robotics-graph-legend.is-layer .robotics-legend-heatrow + .robotics-legend-caption { display: none; }
-.robotics-graph .robotics-graph-legend .robotics-legend-layers .robotics-legend-dot { width: 10px; height: 10px; margin-right: 6px; flex: none; }

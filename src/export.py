@@ -24,7 +24,7 @@ from typing import Any
 
 import duckdb
 
-from . import db, detect, funding, handles, heat, recap, render_fp, story, upstream_dedup
+from . import db, detect, funding, handles, heat, layers, recap, render_fp, story, upstream_dedup
 from .config import RoboticsConfig
 
 
@@ -217,7 +217,7 @@ def _load_cards(
             for (a, rt, b, c, et, mech, ms, im, fl, sr, st, sub, org) in rel_rows
         ]
 
-        # Internal events (status 'internal' self-loops, docs/ticket-internal-events.md): their own list,
+        # Internal events (status 'internal' self-loops, docs/ticket-log.md#ticket-internal-events): their own list,
         # never in `relationships`, so no edge view or count sees them. One per (entity, type).
         internal_events = []
         for (ent, rt, sub, mech, c, et) in con.execute(
@@ -654,7 +654,9 @@ def build_payload(cfg: RoboticsConfig) -> dict[str, Any]:
         # from the same windows as `insights` (same connection, same data).
         recap.tag_insights(insights, cfg.sector)   # per-row `hashtags` for the digest
         # Graph-tab positions for every entity in the DB (independent of card_limit).
-        layout = {"positions": full_history_layout(con, cfg.sector)}
+        layout = {"positions": full_history_layout(con, cfg.sector),
+                  # §2.9c part 3: AI/admin layer decisions; the browser prefers them over role layers.
+                  "layer_overrides": layers.overrides(con)}
         recap_block = recap.build_recap(con, cfg.sector, insights)
     finally:
         con.close()

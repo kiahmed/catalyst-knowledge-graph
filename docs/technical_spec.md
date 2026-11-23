@@ -1177,6 +1177,106 @@ only for the ≤4-slice evidence-grounding split (C). Bars are also what a
 
 Primary: **Gemini 2.0 Flash** (authenticated via Arboryx's GCP project). Fallback: **Gemini 2.5 Pro** for ambiguous cases. Alternative: Claude API for A/B eval if Gemini precision is below threshold on the 200-edge set.
 
+#### 2.9c Supply-chain layers + value-chain view — role layers BUILT 76a9d57; view (part 2) + healing (part 3) BUILT 2026-11-22, not deployed
+
+**Principle — a company's layer is the role it PLAYS in our catalysts, not its
+label.** OpenAI is "an LLM company" in general, but in this graph it mostly
+funds robot makers, so it sits in Capital. That is the insight a generic
+classifier would hide. Layers are therefore derived from relationship roles in
+the catalysts we ingested; AI is only a context-bound healer for gaps (below),
+never a general "what industry is X" lookup.
+
+**Layers (fixed list, `graph.js` LAYERS):** `capital` (Capital), `infra`
+(Chips, parts & platforms), `maker` (Robot & AI makers), `deployer`
+(Customers & deployers), `government`, `other` (unclassified).
+
+**1. Role layers — BUILT (client-side, `frontend/assets/graph.js computeLayers`).**
+- Computed in the browser on every load from ALL-history edges (stable per
+  company; no storage, no backfill, no LLM, milliseconds; new companies get a
+  layer as soon as they have a role edge).
+- Role scores per edge, direction per `config/relationship_vocab.yaml`:
+  invests_in A→capital 1, B→maker .5 · supplies A→infra 1, B→maker .6 ·
+  built_on A→maker .6, B→infra 1 · integrates_with B→infra .5 ·
+  deploys/pilots A→deployer 1, B→maker 1 · regulates A→government 2.
+  Highest score wins; ties by LAYERS order; entity `type = government` →
+  government.
+- No role edge: majority layer of its `competes_with`/`displaces` neighbours,
+  iterated to a fixed point (snapshot per pass, ≤10 passes, order-independent).
+  Still nothing → `other`.
+- Prod snapshot 2026-11-21: infra 454, maker 763, deployer 222, capital 352,
+  government 91, other 343 (~14%). Known soft spots: diversified giants land by
+  dominant role (OpenAI/Microsoft/Foxconn → capital — intended, see principle);
+  companies with only rivalry/partnership links → `other`.
+
+**Multi-role companies (decided 2026-11-22).** A company can play several
+roles (NVIDIA supplies AND invests). Placement stays ONE dot per company, in
+its dominant-role column (no duplicates, so counts stay honest). The roles show
+in the flows instead: ribbons count every relationship by its TYPE regardless
+of the company's column — NVIDIA's investments are in the money ribbon although
+its dot sits in Chips, and the ribbon says "incl. N from companies outside
+Capital". Companies whose second role scores ≥ 2 role points and ≥ 75% of the
+first get a ring in the second layer's colour (multi-role marker) and list both
+roles on hover (50% ringed half the map — too noisy, tightened 2026-11-22).
+
+**2. Value-chain view — BUILT (`frontend/assets/chain.js`; replaces "Color by: Layer").**
+- Left panel: the "Color by: Heat | Layer" control becomes a view switch
+  "Map | Value chain" (hash `view2=chain`); the layer-colored node map is
+  removed. Same filters apply (time window, evidence, status, min confidence).
+- Graph area draws 4 columns left→right: Capital → Chips, parts & platforms →
+  Robot & AI makers → Customers & deployers; Government as a thin band below.
+  Each column is a cloud of its companies active in the window (phyllotaxis
+  packing, hottest in the centre, dot size + brightness = heat v2). Cloud size
+  = how many companies → density per layer is visible at a glance.
+  Column header: layer name, companies, $ raised in window (fundingRounds),
+  share of activity (heat %).
+- Flows = labelled ribbons WITH ARROWHEADS between columns, width ∝ unique
+  links in the window: Capital→Makers (invests_in), Chips→Makers
+  (supplies; built_on reversed), Makers→Customers (deploys/pilots, drawn
+  vendor→customer). Label: "N money / supply / deployment links" + the hub
+  company and its share ("NVIDIA on 24%"). Ribbons are straight/gently curved
+  between NEIGHBOURING columns; Capital→Makers routes above Chips with a clear
+  arrow, never a loop or "Y" (the 2026-11-22 sketch's flaw).
+- Takeaway line under the title, rule-based (like recap verdicts): the most
+  concentrated flow ("Supply is concentrated: NVIDIA on 24% of supply links")
+  vs the most spread ("Money is spread out: top investor on 4%").
+- Interaction: hover a dot → name, layer, heat, $ raised; click → back to Map
+  with that company as the company filter (q=). Top-4 per column labelled,
+  labels must not overlap (collision nudge or skip).
+- Phone: columns stack top→bottom (Capital first), ribbons vertical; same
+  sheet rules as the map (mobile.css). Desktop is unchanged elsewhere.
+- Prototype for reference: sketch built from the live snapshot 2026-11-22
+  (columns + clouds + ribbons) — reproduce the idea, not its flow drawing.
+- Tests (tests/ui/test_ui.py): switch → SVG has 4 columns with counts equal to
+  computeLayers on the view; each ribbon count equals the unique links of its
+  type in the window; click a dot → q= set and Map shown; no page errors at
+  1400/1100/900 + iPhone; legacy `color=layer` links fall back to the Map.
+
+**3. Layer healing — BUILT (`src/layers.py`, `make layers-heal`; on-demand, NOT in ingest).**
+- `make layers-heal` = dry run: rebuilds section D ("Layer healing — doubtful /
+  no-role companies") of data/cleanup_checklist.md, the ONE running cleanup file
+  (read-only prod copy, no LLM, no writes; ticks carry over, items tick
+  themselves once decided). `make layers-heal APPLY=1` runs the Cloud
+  Scheduler job `robotics-layers-heal` (paused, on-demand only; Terraform) →
+  the ingest function with `{"layers_heal": {"limit": N}}`: same writer as
+  the daily ingest (pull DuckDB → heal → export → push).
+- Candidates: (a) role layer `other`, (b) doubtful: top-2 role scores within
+  20%. Typically a few hundred, not all 2,600. Server-side role scoring =
+  `src/layers.py` (mirror of graph.js computeLayers, like heat.py/heat).
+- The LLM decides FROM OUR CATALYST CONTEXT, not general knowledge: input =
+  the company's live edges (rel, other party, mechanism text) + headlines of
+  its cards; question = "Which role does this company play in THESE catalysts?"
+  answered from the fixed layer list or `unknown`. Strict response_schema;
+  backtest on the snapshot + spot-check sample (memory: extraction validation).
+- Output: table `entity_layers(entity_id, layer, source 'ai'|'admin', locked,
+  reason, decided_at, edges_at_decision)`; exported as
+  `layer_overrides {name: layer}` in the layout doc
+  (CKG-<sector>/graph/layout/<sector>, already loaded by the site); the
+  browser prefers an override over the role layer. `unknown` answers are
+  stored and not retried until the company has more live edges than at
+  decision time. Admin page set/lock by hand (source `admin`, locked) = later.
+- Decide to build it only if the value-chain view proves useful AND
+  misplacements visibly hurt the takeaways.
+
 ---
 
 ## 3. Directory structure (Phase 1)

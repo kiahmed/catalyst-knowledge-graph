@@ -158,3 +158,6 @@ html.is-mobile .cmp-row { grid-template-columns: 52px 1fr 1fr; }
 /* One sheet at a time: Filters / Legend hide the node/compare sheet until closed again. */
 html.is-mobile #graphView.m-filters-open .node-panel,
 html.is-mobile #graphView.m-legend-open .node-panel { display: none; }
+/* Value chain on a phone: full width under the toolbar; columns stack top → bottom (chain.js). */
+html.is-mobile .chain-view { top: 96px; left: 8px; right: 8px; bottom: 8px; }
+html.is-mobile #graphView.is-chain .m-graph-tools button[data-panel="legend"] { display: none; }

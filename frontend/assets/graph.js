@@ -205,10 +205,8 @@
     if (f.egoEntity) keep.add(f.egoEntity); // show the entity even edge-less
     if (f.egoEntity && f.egoEntity2) keep.add(f.egoEntity2);
     const rawNodes = (payload.graph && payload.graph.nodes) || [];
-    const byLayer = f.colorBy === 'layer';
     const nodes = rawNodes.filter(n => keep.has(n.id))
-      .map(n => Object.assign({}, n, { heat: heat.get(n.id) || 0,
-        _layerFill: byLayer ? (LAYER_COLORS[n.layer] || LAYER_COLORS.other) : null }));
+      .map(n => Object.assign({}, n, { heat: heat.get(n.id) || 0 }));
 
     return { nodes, edges, heat };
   }
@@ -242,7 +240,11 @@
     pilots: [['deployer', 1], ['maker', 1]],
     regulates: [['government', 2], null],
   };
-  function computeLayers(edges, nodes) {
+  function computeLayers(edges, nodes) { return computeLayerDetail(edges, nodes).layer; }
+
+  // { layer: Map name → layer, second: Map name → layer } — second = a different
+  // role scoring ≥ 2 points and ≥ 75% of the main one (multi-role marker in the value chain).
+  function computeLayerDetail(edges, nodes) {
     const score = new Map();
     const add = (n, l, w) => {
       if (!n) return;
@@ -265,8 +267,16 @@
       }
     });
     const out = new Map();
+    const second = new Map();
     const pick = s => LAYERS.reduce((best, l) => ((s[l] || 0) > (s[best] || 0) ? l : best), LAYERS[0]);
-    score.forEach((s, n) => out.set(n, pick(s)));
+    score.forEach((s, n) => {
+      const main = pick(s);
+      out.set(n, main);
+      const rest = Object.assign({}, s, { [main]: 0 });
+      const two = pick(rest);
+      // a real second role: ≥ 2 role points and ≥ 75% of the main one (not every stray edge)
+      if ((rest[two] || 0) >= 2 && rest[two] >= 0.75 * s[main]) second.set(n, two);
+    });
     (nodes || []).forEach(n => { if (n.type === 'government') out.set(n.id, 'government'); });
     // Fallback to rivals' layer, iterated to a fixed point: each pass votes from a
     // snapshot of the previous one, so a chain (B's only rival A is itself a
@@ -283,7 +293,9 @@
       });
       if (!changed) break;
     }
-    return out;
+    // government-typed entities have no second role; neither do fallback-only ones
+    (nodes || []).forEach(n => { if (n.type === 'government') second.delete(n.id); });
+    return { layer: out, second };
   }
 
   function computeHeat(edges) {
@@ -386,7 +398,7 @@
           heat: n.heat || 0,
           edgeCount: ec,
           _size: size,
-          _fill: n._layerFill || heatToHex(n.heat || 0),
+          _fill: heatToHex(n.heat || 0),
         },
       };
       if (usePositions && hasPresetPosition(n)) {
@@ -607,9 +619,6 @@
       '    <span class="robotics-legend-heatlabel">high</span>',
       '  </div>',
       '  <div class="robotics-legend-caption">heat = deduped, evidence-weighted links</div>',
-      '  <div class="robotics-legend-layers">',
-      LAYERS.map(l => `<div class="robotics-legend-row"><span class="robotics-legend-dot" style="background:${LAYER_COLORS[l]}"></span><span class="robotics-legend-label">${LAYER_LABELS[l]}</span></div>`).join(''),
-      '  </div>',
       '  <div class="robotics-legend-row robotics-legend-sizerow">',
       '    <span class="robotics-legend-dot robotics-legend-dot-sm"></span>',
       '    <span class="robotics-legend-dot robotics-legend-dot-md"></span>',
@@ -775,7 +784,6 @@
       f.relType || '',
       f.egoEntity || '',
       f.egoEntity2 || '',
-      f.colorBy || '',
       f.egoMaxEdges || 0,
       !!f.hideFlagged,
       (f.excludeCards || []).slice().sort(),
@@ -987,7 +995,6 @@
       // as its value would silently swallow a real failure.
       const finishLoading = r => { if (token === state.renderToken) state.loading = false; return r; };
       const finishLoadingErr = e => { if (token === state.renderToken) state.loading = false; throw e; };
-      if (state.legendEl) state.legendEl.classList.toggle('is-layer', (filters || {}).colorBy === 'layer');
       const ego = (filters || {}).egoEntity;
       if (!ego) return paint.then(finishLoading, finishLoadingErr);
       // Highlight the searched entity (and the compared one) once the paint settles.
@@ -1050,7 +1057,6 @@
       hideTip();
       state.cy.elements().remove();
 
-      if (state.legendEl) state.legendEl.classList.toggle('is-layer', finalF.colorBy === 'layer');
       const { nodes, edges } = filterPayload(payload, finalF);
       // No usable positions (layout doc missing/failed to load) → presets would
       // pile everything at (0,0). Fall back to a normal render (force layout):
@@ -1311,6 +1317,7 @@
   RoboticsGraph.computeHeat = computeHeat;
   RoboticsGraph.heatToHex = heatToHex;   // card mini-graph uses the map's exact color ramp
   RoboticsGraph.computeLayers = computeLayers;
+  RoboticsGraph.computeLayerDetail = computeLayerDetail;
   RoboticsGraph.LAYERS = LAYERS;
   RoboticsGraph.LAYER_LABELS = LAYER_LABELS;
   RoboticsGraph.LAYER_COLORS = LAYER_COLORS;

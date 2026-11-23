@@ -119,7 +119,7 @@ class TestDeltaExport(unittest.TestCase):
         self.assertEqual(self.client.docs["CKG-Robotics/catalysts"]["count"], 5)
 
     def test_silent_refresh_markers(self):
-        # docs/ticket-frontend-silent-refresh.md: written cards carry synced_at (outside the hash), the
+        # docs/ticket-log.md#ticket-frontend-silent-refresh: written cards carry synced_at (outside the hash), the
         # parent's version moves only when something was written, and an admin refresh keeps the count.
         fx._write_catalysts(self.cfg, _cards(5))
         base = self.client.docs["CKG-Robotics/catalysts"]

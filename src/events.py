@@ -1,4 +1,4 @@
-"""Card-level event type — deterministic, no LLM (2026-11-11, docs/ticket-card-event-type.md).
+"""Card-level event type — deterministic, no LLM (2026-11-11, docs/ticket-log.md#ticket-card-event-type).
 
 What HAPPENED in a card's story, as one label: an IPO, an acquisition, a funding round, a product launch,
 a factory / production start, a deployment / contract / order, a partnership, a regulation, a research

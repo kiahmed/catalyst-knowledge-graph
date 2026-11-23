@@ -102,6 +102,47 @@ def _publish_ingest_done(sector: str, written: int) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+def _run_layers_heal(cfg: Any, opts: dict[str, Any], start: float):
+    """Heal layers on the pulled DB, push (generation-guarded), THEN export so the
+    site only ever shows decisions that are in the authoritative DB."""
+    import duckdb  # noqa: PLC0415
+    from google import genai  # noqa: PLC0415
+
+    from src import layers  # noqa: PLC0415
+
+    limit = int(opts.get("limit") or 200)
+    con = duckdb.connect(cfg.duckdb_path)
+    try:
+        layers.ensure_schema(con)
+        summary = layers.heal(con, genai.Client(api_key=cfg.extraction.api_key), cfg,
+                              limit=limit, dry_run=bool(opts.get("dry_run")))
+        con.execute("CHECKPOINT")
+    except Exception as exc:
+        _log("layers_heal_failed", error=str(exc), error_type=type(exc).__name__)
+        return {"ok": False, "error": str(exc)}, 500
+    finally:
+        con.close()
+    _log("layers_heal_done", **{k: v for k, v in summary.items() if k != "sample"})
+    if not summary.get("written"):
+        return {"ok": True, "layers_heal": summary, "duration_s": round(time.monotonic() - start, 2)}
+    push = duckdb_push(cfg.duckdb_path)
+    _log("duckdb_push", **push)
+    if not push.get("pushed"):
+        # generation_conflict = the daily ingest wrote meanwhile: nothing lost, just rerun.
+        return {"ok": False, "error": f"duckdb push not done ({push.get('reason')}) — decisions not saved; rerun",
+                "layers_heal": summary}, 409
+    fs = None
+    try:
+        export_cards(cfg)
+        fs = export_to_firestore(cfg)
+        _log("firestore_export_done", **fs)
+    except Exception as exc:
+        _log("firestore_export_failed", error=str(exc), error_type=type(exc).__name__)
+        fs = {"error": str(exc)}
+    return {"ok": True, "layers_heal": summary, "duckdb_push": push, "firestore_export": fs,
+            "duration_s": round(time.monotonic() - start, 2)}
+
+
 @functions_framework.http
 def run_ingest(request: Request):
     start = time.monotonic()
@@ -131,6 +172,11 @@ def run_ingest(request: Request):
     except Exception as exc:
         _log("duckdb_pull_failed", error=str(exc), error_type=type(exc).__name__)
         return {"ok": False, "error": f"duckdb pull failed: {exc}"}, 500
+
+    # §2.9c part 3 — on-demand layer healing (`make layers-heal APPLY=1` → the
+    # robotics-layers-heal scheduler job). Same writer as the daily ingest; no ingest.
+    if params.get("layers_heal") is not None:
+        return _run_layers_heal(cfg, params.get("layers_heal") or {}, start)
 
     try:
         ingest_result = run_ingest_pipeline(cfg, dry_run=dry_run, limit=limit)

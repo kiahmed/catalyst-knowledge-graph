@@ -1,4 +1,4 @@
-"""Render fingerprint — one short hash of exactly what a card's images show (docs/ticket-render-fingerprint.md).
+"""Render fingerprint — one short hash of exactly what a card's images show (docs/ticket-log.md#ticket-render-fingerprint).
 
 Both images of a card — the card PNG (cards/<id>.png) and its graph poster (graphs/<id>.png) — are drawn only from
 that card's own data: headline, date, subtitle, its live between-entity edges and their entities. Export writes this

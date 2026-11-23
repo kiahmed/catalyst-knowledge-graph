@@ -167,7 +167,7 @@ def checked_evidence(con: duckdb.DuckDBPyConnection, rel: dict[str, Any], ends: 
                      aliases: dict[str, set[str]]) -> tuple[str, str | None]:
     """(evidence_type to store, why it changed or None). A `direct` edge needs BOTH ends named in the card's own
     text (name, alias, or the extracted mention); otherwise the claim came from research → `web_grounded` when it
-    cites a source, else `inferred` (docs/ticket-ingest-direct-evidence-check.md). Deterministic, no LLM.
+    cites a source, else `inferred` (docs/ticket-log.md#ticket-ingest-direct-evidence-check). Deterministic, no LLM.
     `ends` = [(entity_id, the extracted name that resolved to it)] — paired BEFORE any symmetric reordering, so
     a swapped two-party edge can't credit one end with the other end's name.
     Edges touching a `group` bucket are left alone (a generic bucket can't be matched by name)."""
@@ -253,7 +253,7 @@ def write_extraction(
                 continue
             if a_id == b_id:   # both names resolved to one entity: dropped. Ingest can't tell an internal
                 # event ("Optimus" → Tesla) from a bad alias ("Samsung SDS" → Samsung SDI) — only a deliberate
-                # admin merge makes internal events (docs/ticket-internal-events.md, CI audit W1).
+                # admin merge makes internal events (docs/ticket-log.md#ticket-internal-events, CI audit W1).
                 continue
             if rel["rel_type"] in symmetric and a_id > b_id:
                 a_id, b_id = b_id, a_id          # one stored direction for symmetric types

@@ -132,9 +132,34 @@ def test_compare_and_rank(pg, port):
     pg.click("#gfRankSeg [data-rank=layers]"); pg.wait_for_timeout(500)
     layers = pg.evaluate("document.querySelectorAll('#gfRankList .gf-rank-layer').length")
     check("layer summary shows the 5 layers", layers == 5, f"{layers}")
-    pg.click("#gfColorSeg [data-color=layer]"); pg.wait_for_timeout(2500)
-    check("color by layer is in the URL and the legend", "color=layer" in pg.evaluate("location.hash")
-          and pg.evaluate("document.querySelector('.robotics-graph-legend').classList.contains('is-layer')"))
+
+
+def test_value_chain(pg, port):
+    """§2.9c part 2: View → Value chain draws 4 layer columns + flow ribbons from the current view."""
+    open_graph(pg, port, "view=graph&tw=90&color=layer")
+    check("legacy color=layer link falls back to the map", pg.evaluate("document.getElementById('chainView').hidden"))
+    pg.click("#gfViewSeg [data-view2=chain]"); pg.wait_for_timeout(2500)
+    cols = pg.evaluate("[...document.querySelectorAll('.vc-col')].map(g => [g.dataset.layer, +g.dataset.count])")
+    want = pg.evaluate("""() => { const f = effectiveGraphFilters().filters;
+      const v = RoboticsGraph.filterPayload(PAYLOAD, Object.assign({}, f, {egoEntity: '', egoEntity2: ''}));
+      const lay = new Map(PAYLOAD.graph.nodes.map(n => [n.id, n.layer]));
+      return ['capital', 'infra', 'maker', 'deployer'].map(l => [l, v.nodes.filter(n => lay.get(n.id) === l).length]); }""")
+    check("value chain: 4 columns with the view's company counts", "view2=chain" in pg.evaluate("location.hash") and cols == want, str(cols))
+    flows = pg.evaluate("Object.fromEntries([...document.querySelectorAll('.vc-flow')].map(f => [f.dataset.kind, +f.dataset.n]))")
+    exp = pg.evaluate("""() => { const f = effectiveGraphFilters().filters;
+      const v = RoboticsGraph.filterPayload(PAYLOAD, Object.assign({}, f, {egoEntity: '', egoEntity2: ''}));
+      const n = t => v.edges.filter(e => t.includes(e.rel)).length;
+      return {money: n(['invests_in']), supply: n(['supplies', 'built_on']), deploy: n(['deploys', 'pilots'])}; }""")
+    check("value chain: ribbon counts = unique links of each type", {k: v for k, v in exp.items() if v} == flows, f"{flows} vs {exp}")
+    ov = pg.evaluate("""() => { const n = PAYLOAD.graph.nodes.find(x => x.layer === 'maker').id;
+      const p = Object.assign({}, PAYLOAD, {layout: Object.assign({}, PAYLOAD.layout || {}, {layer_overrides: {[n]: 'deployer'}})});
+      return [n, buildFullGraph(p).nodes.find(x => x.id === n).layer]; }""")
+    check("an AI/admin layer override beats the role layer", ov[1] == "deployer", ov[0])
+    name = pg.evaluate("document.querySelector('.vc-dot').dataset.name")
+    # dots in a dense cloud overlap their neighbours, so dispatch on the element itself
+    pg.eval_on_selector(".vc-dot", "e => e.dispatchEvent(new MouseEvent('click', {bubbles: true}))"); pg.wait_for_timeout(2500)
+    check("value chain: clicking a dot opens it on the map", pg.evaluate("parseHash().q") == name
+          and "view2" not in pg.evaluate("location.hash") and pg.evaluate("document.getElementById('chainView').hidden"), name)
 
 
 def test_status_and_funding_tag(pg, port):
@@ -174,6 +199,10 @@ def test_layout(browser, port):
         check(f"rel-type dropdown overlaps nothing at {w}px", not overlap(d, legend) and not overlap(d, search))
         check(f"compare box overlaps nothing at {w}px",
               not overlap(cmp_, legend) and not overlap(cmp_, search) and not overlap(cmp_, d))
+        pg.evaluate("location.hash = 'view=graph&tw=90&view2=chain'"); pg.wait_for_timeout(2500)
+        vc = box("#chainView"); fp = box("#gfilterPanel")
+        check(f"value chain fills the graph area at {w}px", pg.evaluate("document.querySelectorAll('.vc-col').length") == 4
+              and (w <= 760 or not overlap(vc, fp)))
         pg.close()
 
 
@@ -233,7 +262,7 @@ def main() -> int:
             browser = p.chromium.launch()
             for fn, kw in ((test_ego_filter_across_windows, {}), (test_ego_filter_across_windows, {"sync": True}),
                            (test_reltype_filter, {}), (test_internal_events, {}), (test_silent_refresh, {}),
-                           (test_compare_and_rank, {}), (test_status_and_funding_tag, {})):
+                           (test_compare_and_rank, {}), (test_status_and_funding_tag, {}), (test_value_chain, {})):
                 pg = browser.new_page(viewport={"width": 1400, "height": 900})
                 errors = []
                 pg.on("pageerror", lambda e, errors=errors: errors.append(str(e)))

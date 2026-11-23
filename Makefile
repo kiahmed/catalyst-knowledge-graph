@@ -1,7 +1,7 @@
 # Catalyst knowledge-graph — developer commands (Robotics module).
 # Most commands wrap `docker compose` + `curl` for the tool HTTP endpoints.
 
-.PHONY: help setup doctor up down logs ps ps-short cleanup-checklist test-ui \
+.PHONY: help setup doctor up down logs ps ps-short cleanup-checklist test-ui layers-heal \
         ingest ingest-dry ingest-prod export watermark check-log firestore-ping \
         reextract backtest \
         render render-batch render-status \
@@ -54,6 +54,7 @@ help:
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "ingest" "[LIMIT=N]" "Real run (bounded if LIMIT). Always re-exports cards.json"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "ingest-dry" "" "Preview ingest (reads, no writes, no export)"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "ingest-prod" "" "Trigger the PROD pipeline now (cloud owns ingest since 07-28)"
+	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "layers-heal" "[APPLY=1]" "Layer healing: checklist section D; APPLY runs the AI job (§2.9c)"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "export" "" "Re-export cards.json from current DuckDB (no ingest)"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "reextract" "ID=... [IDS=a,b] [WRITE=1] [PV=v2]" "Re-extract one or many entries"
 	@printf "  $(HB)%-20s$(HR)$(HO)%-36s$(HR)%s\n" "backtest" "[LIMIT=N] [IDS=a,b,c]" "Dump extractor output to JSONL"
@@ -218,6 +219,35 @@ ingest-prod:
 		fi; \
 		echo "  ...still running ($$((i*30))s)"; \
 	done
+
+# Layer healing (technical_spec.md §2.9c part 3). Default = dry run: rebuilds the ONE cleanup file
+# (data/cleanup_checklist.md, section D = doubtful / no-role companies), read-only, no LLM. APPLY=1 runs
+# the paused robotics-layers-heal scheduler job (resume → run → pause): the ingest function asks the LLM
+# about up to 200 candidates, pushes the DB (generation-guarded), then exports the overrides.
+# (Two recipe lines on purpose: GNU make runs any line containing $(MAKE) even under `make -n`, so
+# the APPLY branch must never share a line with it.)
+layers-heal:
+	@[ -n "$(APPLY)" ] || $(MAKE) --no-print-directory cleanup-checklist
+	@if [ -n "$(APPLY)" ]; then \
+	  TOKEN=$$(gcloud auth application-default print-access-token 2>/dev/null) || \
+	    { echo "!! ADC expired — run: gcloud auth application-default login"; exit 1; }; \
+	  job="https://cloudscheduler.googleapis.com/v1/projects/$${GCP_PROJECT:?set GCP_PROJECT}/locations/us-central1/jobs/robotics-layers-heal"; \
+	  curl -fsS "$$job" -H "Authorization: Bearer $$TOKEN" >/dev/null 2>&1 || \
+	    { echo "!! robotics-layers-heal not found — apply the Terraform first (make deploy). Nothing was run."; exit 1; }; \
+	  curl -fsS -X POST "$$job:resume" -H "Authorization: Bearer $$TOKEN" -H "Content-Type: application/json" -d '{}' >/dev/null && \
+	  curl -fsS -X POST "$$job:run" -H "Authorization: Bearer $$TOKEN" -H "Content-Type: application/json" -d '{}' >/dev/null; rc=$$?; \
+	  paused=""; for i in 1 2 3; do \
+	    TOKEN=$$(gcloud auth application-default print-access-token 2>/dev/null); \
+	    curl -fsS -X POST "$$job:pause" -H "Authorization: Bearer $$TOKEN" -H "Content-Type: application/json" -d '{}' >/dev/null \
+	      && state=$$(curl -fsS "$$job" -H "Authorization: Bearer $$TOKEN" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("state",""))') \
+	      && [ "$$state" = "PAUSED" ] && { paused=1; break; }; \
+	    sleep 5; \
+	  done; \
+	  [ -n "$$paused" ] || { echo "!! robotics-layers-heal is NOT paused — it would fire on its own schedule. Pause it now:"; \
+	    echo "   gcloud scheduler jobs pause robotics-layers-heal --location us-central1"; exit 2; }; \
+	  [ $$rc -eq 0 ] && echo "layers-heal triggered (job verified PAUSED again) — result in the robotics-ingest logs: layers_heal_done" \
+	    || { echo "!! could not run robotics-layers-heal (terraform applied?) — job verified PAUSED"; exit 1; }; \
+	fi
 
 ingest-dry:
 	@curl -fsS -X POST http://localhost:$(INGEST_PORT) \

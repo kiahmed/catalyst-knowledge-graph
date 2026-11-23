@@ -199,7 +199,7 @@ def _write_catalysts(cfg: RoboticsConfig, cards: list[dict[str, Any]], *, force:
         # parent doc holds count + updated_at for cheap "any cards yet?" reads.
         items = base.collection("items")
         written = 0
-        # Silent refresh in the web app (docs/ticket-frontend-silent-refresh.md): every written card carries
+        # Silent refresh in the web app (docs/ticket-log.md#ticket-frontend-silent-refresh): every written card carries
         # `synced_at`, and the parent doc's `version` moves only when something was written — the page
         # checks `version` on each lookup and then fetches just the cards with a newer `synced_at`.
         # Outside the hash (computed above from the card itself), so it never makes a card look changed.

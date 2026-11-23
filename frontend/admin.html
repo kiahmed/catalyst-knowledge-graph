@@ -239,7 +239,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
       el('button', { onclick: () => linkTo('subsidiary_of') }, 'Set parent…'),
       el('button', { onclick: () => linkTo('sister_of') }, 'Add sister…'),
       el('button', { class: 'danger', onclick: mergeInto }, 'Merge into…')));
-    // Internal events (self-loops kept by a merge, docs/ticket-internal-events.md): not graph edges, so not in
+    // Internal events (self-loops kept by a merge, docs/ticket-log.md#ticket-internal-events): not graph edges, so not in
     // the Relationships column — listed here so a wrong one (e.g. from a duplicate-entity merge) can be fixed.
     const ie = e.internal_events || [];
     p.append(el('h3', {}, `Internal events (${ie.length})`));
@@ -427,7 +427,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
     const [aIn, aDl] = entityPick('a', r.a), [bIn, bDl] = entityPick('b', r.b);
     const typeSel = el('select', {}, S.me.rel_types.map(t => el('option', { value: t, selected: t === r.rel_type }, t)));
     const statSel = el('select', {}, S.me.statuses.map(t => el('option', { value: t, selected: t === r.status }, t)));
-    // Evidence / subtype / mechanism (docs/ticket-admin-edit-edge-details.md)
+    // Evidence / subtype / mechanism (docs/ticket-log.md#ticket-admin-edit-edge-details)
     const curSub = r.rel_subtype_locked ? r.rel_subtype : 'auto';
     const evSel = el('select', {}, (S.me.evidence_types || []).map(t => el('option', { value: t, selected: t === r.evidence }, t)));
     const subSel = subtypeSelect(typeSel, curSub, r.rel_subtype);
@@ -493,7 +493,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
     return [inp, dl];
   }
 
-  // Add edge (docs/ticket-admin-add-edge.md): a relationship the extractor missed, on THIS card. Saved as
+  // Add edge (docs/ticket-log.md#ticket-admin-add-edge): a relationship the extractor missed, on THIS card. Saved as
   // direct evidence with the admin's mechanism; same guards as every edit; revertible from the Edit log.
   function renderAdd(r) {
     const p = $('relPane'); p.replaceChildren();
@@ -737,7 +737,7 @@ input, select { font: inherit; border: 1px solid var(--border); border-radius: 7
     $('modal').style.display = 'flex';
   });
 
-  // ── Rejected list (docs/ticket-admin-rejected-list-delete-guard.md) ──
+  // ── Rejected list (docs/ticket-log.md#ticket-admin-rejected-list-delete-guard) ──
   $('btnRejected').addEventListener('click', openRejected);
   async function openRejected() {
     let d; try { d = await api('/rejected'); } catch (e) { return toast(e.message, true); }

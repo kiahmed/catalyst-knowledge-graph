@@ -12,7 +12,7 @@ is_generic — a descriptor, not a named organization: after loose_key every wor
              is a generic noun/adjective or a place ("Chinese telecom company",
              "Customers", "humanoid robot makers").
 
-Spec: docs/ticket-ingest-entity-resolution.md §3.1–3.2.
+Spec: docs/ticket-log.md#ticket-ingest-entity-resolution §3.1–3.2.
 """
 from __future__ import annotations
 

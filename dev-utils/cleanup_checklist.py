@@ -7,6 +7,8 @@ Sections (each item has a stable key, so your ticks survive every rebuild):
      already done; this tool re-checks those entities against prod, it doesn't re-label).
   B. Aliases that pull cards onto an entity those cards never name (fresh scan).
   C. Generic aliases ("humanoid robots", "Gulf investors"…) sitting on real (non-group) entities (fresh scan).
+  D. Layer healing (technical_spec §2.9c): companies whose supply-chain layer is doubtful (top-2 role scores
+     within 20%) or missing (no role link) — `make layers-heal APPLY=1` asks the AI; ticks itself once decided.
 
 An item is ticked when you mark it `- [x]`, or automatically when prod shows it's resolved: in A the entity is
 gone / a group / has no live edges; in B and C an item the scan no longer finds stays in the list, ticked, marked
@@ -28,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import duckdb  # noqa: E402
 
-from src import duckdb_sync, entities, names  # noqa: E402
+from src import duckdb_sync, entities, layers, names  # noqa: E402
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 OUT = DATA / "cleanup_checklist.md"
@@ -173,6 +175,17 @@ def _write_atomic(path: Path, text: str) -> None:
         raise
 
 
+def _layer_candidates(con, ticked, items) -> list[str]:
+    out, found = [], set()
+    for c in layers.candidates(con):                       # doubtful first, then most-linked
+        key = f"layer:{c['entity_id']}"
+        found.add(key)
+        sc = ", ".join(f"{k} {v:g}" for k, v in sorted(c["scores"].items(), key=lambda x: -x[1])) or "no role links"
+        out.append(_item(False, key, f"**{c['name']}** (id {c['entity_id']}) — {c['why']} — role {c['role_layer']} "
+                                     f"({sc}) · {c['edges']} live links", ticked=ticked))
+    return out + _carry_resolved("D", found, items, ticked)
+
+
 def build(con) -> tuple[str, list[str]]:
     """The checklist text for this DB + the current file's ticks; also the per-section open counts."""
     ticked, items, prev_a = _previous()
@@ -182,7 +195,11 @@ def build(con) -> tuple[str, list[str]]:
             ("B. Aliases pulling in cards that never name the entity", "Fix in admin: entity → tick those cards' edges → "
              "spin out / move / drop the alias.", _aliases(con, ticked, items), ""),
             ("C. Generic aliases on real entities", "Fix in admin: move the alias to the matching group bucket, or drop it.",
-             _generic_aliases(con, ticked, items), "")]
+             _generic_aliases(con, ticked, items), ""),
+            ("D. Layer healing — doubtful / no-role companies", "Run `make layers-heal APPLY=1` (the AI decides each "
+             "company's ROLE from its own links + headlines, up to 200 per run); spot-check the doubtful answers first and "
+             "fix wrong ones by hand. Ticks itself once decided (or once its roles stop being doubtful).",
+             _layer_candidates(con, ticked, items), "")]
     stamp = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
     lines = ["# Data-cleanup checklist", "",
              f"Rebuilt {stamp} from prod by `make cleanup-checklist` (read-only). Tick `- [x]` as you go; ticks are kept on",
