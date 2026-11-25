@@ -1253,7 +1253,7 @@ roles on hover (50% ringed half the map — too noisy, tightened 2026-11-22).
 
 **3. Layer healing — BUILT (`src/layers.py`, `make layers-heal`; on-demand, NOT in ingest).**
 - `make layers-heal` = dry run: rebuilds section D ("Layer healing — doubtful /
-  no-role companies") of data/cleanup_checklist.md, the ONE running cleanup file
+  no-role companies") of data/open_items.md, the ONE running cleanup file
   (read-only prod copy, no LLM, no writes; ticks carry over, items tick
   themselves once decided). `make layers-heal APPLY=1` runs the Cloud
   Scheduler job `robotics-layers-heal` (paused, on-demand only; Terraform) →

@@ -1,6 +1,6 @@
 """Data-cleanup checklist — ONE living file, rebuilt in place from prod (read-only, no LLM, no writes to the DB).
 
-    make cleanup-checklist        →  data/cleanup_checklist.md
+    make cleanup-checklist        →  data/open_items.md
 
 Sections (each item has a stable key, so your ticks survive every rebuild):
   A. Concept / non-organization entities (the list from the 2026-11-11 LLM label pass — the only LLM step,
@@ -35,7 +35,7 @@ import duckdb  # noqa: E402
 from src import duckdb_sync, entities, layers, names  # noqa: E402
 
 DATA = Path(__file__).resolve().parent.parent / "data"
-OUT = DATA / "cleanup_checklist.md"
+OUT = DATA / "open_items.md"
 SEED = DATA / "concept_entities_labels.txt"       # the one-time LLM label list (section A's source)
 LIVE = "status IN ('active', 'materialized')"
 # Keys are machine-made: section + entity id (+ a short hash of the alias) — never free text, so no spaces and
@@ -71,12 +71,12 @@ def _previous() -> tuple[set[str], dict[str, tuple[str, str]], list[str]]:
             if line.startswith("## "):
                 section = line[3:4]
                 continue
-            if section == "E":                            # hand-maintained: kept verbatim, keys or not
-                _SEC_E.append(line)
-                continue
             found = list(_KEY.finditer(line))     # the LAST marker is the real one; notes after it are allowed
             if not found:
+                if section == "E":                        # hand-maintained lines: kept verbatim
+                    _SEC_E.append(line)
                 continue
+            # a keyed (generated) item is never hand-kept, even if it ended up below the E heading
             m = found[-1]
             if _TICK.match(line) and not m.group(2):     # only YOUR ticks carry over; auto ticks are recomputed
                 ticked.add(m.group(1))
@@ -211,7 +211,7 @@ def build(con) -> tuple[str, list[str]]:
              "fix wrong ones by hand. Ticks itself once decided (or once its roles stop being doubtful).",
              _layer_candidates(con, ticked, items), "")]
     stamp = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
-    lines = ["# Data-cleanup checklist", "",
+    lines = ["# Open items — data cleanup + open work", "",
              f"Rebuilt {stamp} from prod by `make cleanup-checklist` (read-only). Tick `- [x]` as you go; ticks are kept on",
              "every rebuild, and items prod shows as resolved tick themselves. This is the only cleanup file — rebuild it,",
              "don't make new ones.", ""]

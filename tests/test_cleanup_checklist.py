@@ -27,7 +27,7 @@ _spec.loader.exec_module(cc)
 class TestChecklist(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
-        cc.OUT, cc.SEED = self.tmp / "cleanup_checklist.md", self.tmp / "concept_entities_labels.txt"
+        cc.OUT, cc.SEED = self.tmp / "open_items.md", self.tmp / "concept_entities_labels.txt"
         self.con = duckdb.connect(":memory:")
         db.init_schema(self.con)
         e = lambda n, t="organization": db.insert_entity(self.con, n, None, t)  # noqa: E731
@@ -113,6 +113,16 @@ class TestChecklist(unittest.TestCase):
         cc.OUT.write_text(cc.OUT.read_text().replace(f"key:concept:{self.busy} -->", f"key:concept:{self.busy} --> my note"))
         self.assertTrue(self._line(self._run(), f"concept:{self.busy}").startswith("- [x]"))   # n11
         self.assertEqual(oct(cc.OUT.stat().st_mode & 0o777), "0o644")                          # n12
+
+    def test_section_e_is_kept_verbatim_across_rebuilds(self):
+        self._run()
+        cc.OUT.write_text(cc.OUT.read_text() + "\n- [ ] deploy the thing\n- [x] done thing — note\nfree text line\n")
+        t = self._run()
+        e = t.split("## E.", 1)[1]
+        self.assertIn("- [ ] deploy the thing", e)
+        self.assertIn("- [x] done thing — note", e)
+        self.assertIn("free text line", e)
+        self.assertEqual(self._run().split("## E.", 1)[1], e)                       # stable on a second rebuild
 
     def test_aliases_differing_by_case_get_their_own_keys_and_legacy_ticks_survive(self):
         self.assertNotEqual(cc._alias_key("generic", 1, "Gulf investors"), cc._alias_key("generic", 1, "gulf investors"))  # n13

@@ -221,7 +221,7 @@ ingest-prod:
 	done
 
 # Layer healing (technical_spec.md §2.9c part 3). Default = dry run: rebuilds the ONE cleanup file
-# (data/cleanup_checklist.md, section D = doubtful / no-role companies), read-only, no LLM. APPLY=1 runs
+# (data/open_items.md, section D = doubtful / no-role companies), read-only, no LLM. APPLY=1 runs
 # the paused robotics-layers-heal scheduler job (resume → run → pause): the ingest function asks the LLM
 # about up to 200 candidates, pushes the DB (generation-guarded), then exports the overrides.
 # (Two recipe lines on purpose: GNU make runs any line containing $(MAKE) even under `make -n`, so
@@ -398,7 +398,7 @@ test-ui:
 	  echo "test-ui: all passed"
 
 # One living data-cleanup checklist (concept entities, stray aliases, generic aliases), rebuilt in place from
-# prod (read-only); your [x] ticks are kept. → data/cleanup_checklist.md
+# prod (read-only); your [x] ticks are kept. → data/open_items.md
 cleanup-checklist:
 	@set -a; . ./.env.prod; set +a; \
 	  docker compose run --rm --no-deps -v "$(CURDIR):/repo" -w /repo \

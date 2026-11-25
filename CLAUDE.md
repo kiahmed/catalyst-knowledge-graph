@@ -31,5 +31,5 @@ Longer output is allowed ONLY when I explicitly ask ("deep dive",
   headless Chromium on a read-only prod snapshot — nothing reaches prod.
 - Python changes: run the touched `tests/test_*.py` modules one at a time in the
   ingest image (`python -m unittest tests.<module>`; `discover` can hang).
-- Report outputs go into fixed files (e.g. `data/cleanup_checklist.md` via
+- Report outputs go into fixed files (e.g. `data/open_items.md` via
   `make cleanup-checklist`), updated in place — no new timestamped files per run.
