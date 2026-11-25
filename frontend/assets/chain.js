@@ -54,17 +54,48 @@
     return out;
   }
 
-  // "Supply is concentrated: NVIDIA on 24% of 286 supply links · Money is spread out: top on 4%"
-  function takeaway(flows) {
-    const ok = Object.entries(flows).filter(([, f]) => f.n >= 10 && f.top);
-    if (!ok.length) return "Too few links in this window for a read on concentration.";
-    ok.sort((a, b) => b[1].share - a[1].share);
-    const [hk, hi] = ok[0], [lk, lo] = ok[ok.length - 1];
-    const name = k => FLOWS[k].label[0].toUpperCase() + FLOWS[k].label.slice(1);
-    const hiTxt = `${name(hk)} is concentrated: ${hi.top.who} on ${Math.round(100 * hi.share)}% of ${hi.n} ${FLOWS[hk].label} links`;
-    return ok.length > 1
-      ? `${hiTxt} · ${name(lk)} is spread out: the top company is on ${Math.round(100 * lo.share)}%`
-      : hiTxt;
+  // One rule for "who leads a layer", used by the cloud centre, its label, its sentence and the
+  // left panel: the layer's own companies counted on that layer's own role links.
+  // KEEP IN SYNC with computeFlows' rel/giver mapping above: ribbon "N from <layer> companies"
+  // (= f.n - f.outside) must equal layerStats(l).links — guarded by test_value_chain.
+  const ROLE = {
+    capital: [["invests_in", "from"]], infra: [["supplies", "from"], ["built_on", "to"]],
+    maker: [["deploys", "to"], ["pilots", "to"]], deployer: [["deploys", "from"], ["pilots", "from"]],
+    government: [["regulates", "from"]],
+  };
+  const WORDS = {   // who, what, verb, single
+    capital: ["investors", "investments", "made the most", "funder"],
+    infra: ["suppliers", "supply links", "supplies the most", "supplier"],
+    maker: ["makers", "deployments & pilots", "was deployed the most", "maker"],
+    deployer: ["customers", "deployments & pilots", "deployed the most", "customer"],
+    government: ["bodies", "regulatory links", "regulates the most", "regulator"],
+  };
+  const SHORT = { capital: "Capital", infra: "Chips", maker: "Makers", deployer: "Customers", government: "Government" };
+  function layerStats(edges, layerOf) {
+    const out = {};
+    Object.keys(ROLE).forEach(l => {
+      const counts = new Map();
+      let links = 0;
+      ROLE[l].forEach(([rel, side]) => edges.forEach(e => {
+        if (e.rel !== rel || layerOf.get(e[side]) !== l) return;
+        counts.set(e[side], (counts.get(e[side]) || 0) + 1); links += 1;
+      }));
+      let top = null;
+      counts.forEach((n, who) => { if (!top || n > top.n) top = { who, n }; });
+      out[l] = { links, givers: counts.size, counts, top, share: top && links ? top.n / links : 0 };
+    });
+    return out;
+  }
+  // "206 investors made 235 investments. SoftBank made the most (12). The other 223 came from
+  //  205 others, so no single funder dominates."
+  function sentence(l, st) {
+    const [who, what, verb, single] = WORDS[l];
+    if (!st || !st.links) return `No ${what} in this window.`;
+    const t = st.top, pct = Math.round(100 * st.share);
+    const rest = st.links - t.n, others = st.givers - 1;
+    return `${st.givers} ${who} · ${st.links} ${what}. ${t.who} ${verb} (${t.n}).`
+      + (others ? ` The other ${rest} came from ${others} other${others === 1 ? "" : "s"}` : "")
+      + (st.share >= 0.15 ? `${others ? "," : ""} so ${pct}% rides on ${t.who}.` : `${others ? "," : ""} so no single ${single} dominates.`);
   }
 
   // d = { nodes:[{id}], edges:[lines], heat:Map, layerOf:Map, second:Map, raised:Map, labels, colors, onPick, windowLabel }
@@ -74,31 +105,45 @@
     // page); a narrow desktop window keeps columns.
     const W = Math.max(320, container.clientWidth);
     const vertical = document.documentElement.classList.contains("is-mobile");
-    const members = COLS.map(l => d.nodes.filter(n => d.layerOf.get(n.id) === l)
-      .map(n => [n.id, d.heat.get(n.id) || 0]).sort((a, b) => b[1] - a[1]));
-    const gov = d.nodes.filter(n => d.layerOf.get(n.id) === "government");
+    const LAYOUT = [...COLS, "government"];                 // government = small cloud on its own row
+    const stats = layerStats(d.edges, d.layerOf);
+    const members = LAYOUT.map(l => d.nodes.filter(n => d.layerOf.get(n.id) === l)
+      .map(n => [n.id, d.heat.get(n.id) || 0])
+      .sort((a, b) => ((stats[l].counts.get(b[0]) || 0) - (stats[l].counts.get(a[0]) || 0)) || b[1] - a[1]));
     const flows = computeFlows(d.edges, d.layerOf);
     const heatAll = [...d.heat.values()].reduce((s, v) => s + v, 0) || 1;
-    const maxCount = Math.max(1, ...members.map(m => m.length));
+    const maxCount = Math.max(1, ...members.slice(0, 4).map(m => m.length));
 
     // Geometry. Desktop: 4 columns left→right. Phone: 4 rows top→bottom, each row =
     // header, cloud, then the gap the next arrow + its label use.
-    const SHORT = { capital: "Capital", infra: "Chips", maker: "Makers", deployer: "Customers", government: "Government" };
-    const takeLines = takeaway(flows).split(" · ").flatMap(t => (vertical ? t.replace(": ", ":\n").split("\n") : [t]));
+    const ranked = COLS.filter(l => stats[l].links >= 10).sort((a, b) => stats[b].share - stats[a].share);
+    const tk = [];
+    if (ranked.length) {
+      const hi = stats[ranked[0]], lo = stats[ranked[ranked.length - 1]];
+      const L0 = ranked[0], L1 = ranked[ranked.length - 1];
+      tk.push(`Most concentrated: ${hi.top.who} has ${hi.top.n} of the ${hi.links} ${WORDS[L0][1]} from ${SHORT[L0]} companies (${Math.round(100 * hi.share)}%).`);
+      if (ranked.length > 1) tk.push(`Most spread out: ${SHORT[L1]} — the top one, ${lo.top.who}, has only ${lo.top.n} of ${lo.links} ${WORDS[L1][1]} (${Math.round(100 * lo.share)}%).`);
+    } else tk.push("Too few links in this window for a read on concentration.");
+    const wrap = (t, n) => t.split(" ").reduce((ls, w) => { const last = ls[ls.length - 1];
+      if (last && (last + " " + w).length <= n) ls[ls.length - 1] = last + " " + w; else ls.push(w); return ls; }, []);
+    const takeLines = tk.flatMap(t => (vertical ? wrap(t, Math.floor(W / 7.2)) : [t]));
     const head = 46 + 17 * takeLines.length;
     let H, centers, Rmax, rowTop = [];
     if (vertical) {
       Rmax = Math.min(W * 0.40, 150);
-      const rowH = 56 + 2 * Rmax + 100;
-      rowTop = COLS.map((_, i) => head + 20 + i * rowH);
-      centers = rowTop.map(t => ({ x: W / 2, y: t + 56 + Rmax }));
-      H = head + 20 + COLS.length * rowH + 40;
+      const rowH = 56 + 2 * Rmax + 100;   // + 50 per row for the sentence
+      rowTop = LAYOUT.map((_, i) => head + 20 + i * (rowH + 50));
+      centers = rowTop.map(t => ({ x: W / 2, y: t + 106 + Rmax }));
+      H = head + 20 + LAYOUT.length * (rowH + 50) + 40;
     } else {
-      H = Math.max(520, container.clientHeight);
+      const row1 = Math.min(640, Math.max(470, container.clientHeight - 60));   // capped: government row follows close below
       const span = W / COLS.length;
-      const top = head + 70, bottom = H - 70;
-      Rmax = Math.min(span * 0.36, (bottom - top) * 0.40);
+      const top = head + 135, bottom = row1 - 40;
+      Rmax = Math.min(span * 0.36, (bottom - top) * 0.44);
       centers = COLS.map((_, i) => ({ x: span * (i + 0.5), y: (top + bottom) / 2 }));
+      const govTop = bottom + 70;                               // second row: Government
+      centers.push({ x: W / 2, y: govTop + 120 + Rmax * 0.4 });
+      H = govTop + 120 + Rmax * 0.8 + 60;
     }
     const step = Rmax / Math.sqrt(maxCount);                  // same spacing everywhere: bigger cloud = more companies
     const radius = members.map(m => Math.max(step, step * Math.sqrt(m.length)) + 4);
@@ -151,24 +196,27 @@
         "stroke-linecap": "butt", class: "vc-flow", "data-kind": kind, "data-n": f.n,
         "marker-end": `url(#vc-arrow-${COLS[def.a]})` });
       el(labelsG, "text", { x: lx, y: ly, "text-anchor": anchor, class: "vc-flow-label", "data-kind": kind }, `${f.n} ${def.label} links`);
-      const sub = [f.top ? `${def.hub}: ${f.top.who} ${Math.round(100 * f.share)}%` : "",
-                   f.outside ? `${f.outside} from outside ${SHORT[def.home]}` : ""].filter(Boolean);
+      // total = the layer's own links (same number as its cloud sentence / takeaway) + links from others
+      const sub = [f.outside ? `${f.n - f.outside} from ${SHORT[def.home]} companies · ${f.outside} from others` : ""].filter(Boolean);
       sub.forEach((t, i) => el(labelsG, "text", { x: lx, y: ly + 15 * (i + 1), "text-anchor": anchor, class: "vc-flow-sub" }, t));
     });
 
-    // Columns: header + cloud.
-    const placed = [];
-    const hits = (b) => placed.some(p => !(b[2] < p[0] || p[2] < b[0] || b[3] < p[1] || p[3] < b[1]));
-    COLS.forEach((l, i) => {
+    // Clouds: header, stats, plain sentence; the leader sits in the centre and is named
+    // just outside the cloud with a thin line to its dot.
+    LAYOUT.forEach((l, i) => {
       const C = centers[i], m = members[i], R = radius[i];
       const g = el(svg, "g", { class: "vc-col", "data-layer": l, "data-count": m.length });
       const heat = m.reduce((s, [, h]) => s + h, 0);
       const money = m.reduce((s, [n]) => s + (d.raised.get(n) || 0), 0);
+      const isGov = l === "government";
       const hx = vertical ? 14 : C.x, anchor = vertical ? "start" : "middle";
-      const hy = vertical ? rowTop[i] + 16 : head + 20;
+      const hy = vertical ? rowTop[i] + 16 : (isGov ? C.y - R - 112 : head + 20);
       el(g, "text", { x: hx, y: hy, "text-anchor": anchor, class: "vc-col-name", fill: d.colors[l] }, d.labels[l]);
       el(g, "text", { x: hx, y: hy + 17, "text-anchor": anchor, class: "vc-col-stat" },
-        `${m.length} companies · ${Math.round(100 * heat / heatAll)}% of activity${money ? " · " + fmtUsd(money) + " raised" : ""}`);
+        `${m.length} ${isGov ? "bodies" : "companies"} · ${Math.round(100 * heat / heatAll)}% of activity${money ? " · " + fmtUsd(money) + " raised" : ""}`);
+      const width = vertical ? W - 28 : (isGov ? Math.min(W - 40, 520) : W / COLS.length - 16);
+      wrap(sentence(l, stats[l]), Math.floor(width / 6.3)).slice(0, 4).forEach((line, k) =>
+        el(g, "text", { x: hx, y: hy + 36 + 14 * k, "text-anchor": anchor, class: "vc-sentence" }, line));
       m.forEach(([name, h], j) => {
         const ang = j * 2.39996, rad = step * Math.sqrt(j);
         const x = C.x + rad * Math.cos(ang), y = C.y + rad * Math.sin(ang);
@@ -180,25 +228,21 @@
         el(dot, "title", {}, `${name} · ${d.labels[l]}${second ? " + " + d.labels[second] : ""} · heat ${Math.round(100 * h)}%`
           + (d.raised.get(name) ? ` · ${fmtUsd(d.raised.get(name))} raised` : ""));
         dot.addEventListener("click", () => d.onPick(name));
-        if (j < 4) {
-          const tw = name.length * 6.4, ty = y - r - 5;
-          const box = [x - tw / 2, ty - 11, x + tw / 2, ty + 2];
-          if (!hits(box)) { placed.push(box); el(g, "text", { x: x.toFixed(1), y: ty.toFixed(1), "text-anchor": "middle", class: "vc-dot-label" }, name); }
-        }
       });
-      if (!m.length) el(g, "text", { x: C.x, y: C.y, "text-anchor": "middle", class: "vc-col-stat" }, "none in this window");
+      if (m.length) {                                        // leader: named outside the cloud, top-right
+        const lx = C.x + R * 0.75 + 8, ly = C.y - R * 0.75 - 10;
+        el(g, "line", { x1: C.x, y1: C.y, x2: lx - 2, y2: ly + 3, class: "vc-leader" });
+        el(g, "text", { x: lx, y: ly, "text-anchor": "start", class: "vc-top-label", "data-name": m[0][0] }, m[0][0]);
+      } else {
+        el(g, "text", { x: C.x, y: C.y, "text-anchor": "middle", class: "vc-col-stat" }, "none in this window");
+      }
       g.setAttribute("data-r", R.toFixed(0));
     });
 
-    // Government strip.
-    const regs = d.edges.filter(e => e.rel === "regulates").length;
-    el(svg, "text", { x: vertical ? 14 : W / 2, y: H - 30, "text-anchor": vertical ? "start" : "middle",
-      class: "vc-col-stat vc-gov", fill: d.colors.government, "data-count": gov.length },
-      `${d.labels.government}: ${gov.length} bodies · ${regs} regulatory links`);
     el(svg, "text", { x: vertical ? 14 : W / 2, y: H - 12, "text-anchor": vertical ? "start" : "middle", class: "vc-note" },
       "Dot = company in its main role (ring = a second role) · size & brightness = heat · arrows = links between layers · click a dot to open it on the map");
     return { flows, members: members.map(m => m.length) };
   }
 
-  window.RoboticsChain = { render, computeFlows, COLS };
+  window.RoboticsChain = { render, computeFlows, layerStats, sentence, COLS };
 })();

@@ -643,7 +643,9 @@ input[type="date"]:focus { border-color: var(--border-focus); }
 .vc-flow-sub { font-size: 11px; fill: var(--text-secondary); paint-order: stroke; stroke: var(--bg); stroke-width: 4px; }
 .vc-dot { cursor: pointer; }
 .vc-dot:hover { stroke: var(--text); stroke-width: 1.5; }
-.vc-dot-label { font-size: 11px; font-weight: 600; fill: var(--text); paint-order: stroke; stroke: var(--bg); stroke-width: 3px; pointer-events: none; }
+.vc-top-label { font-size: 14px; font-weight: 800; fill: #1c1917; paint-order: stroke; stroke: rgba(253,252,250,0.95); stroke-width: 4px; stroke-linejoin: round; pointer-events: none; }
+.vc-leader { stroke: #1c1917; stroke-width: 1.2; opacity: 0.7; pointer-events: none; }
+.vc-sentence { font-size: 11px; fill: var(--text); }
 .vc-note { font-size: 10.5px; fill: var(--text-muted); }
 .graph-load-chip { position: fixed; left: 16px; bottom: 48px; z-index: 60; display: flex; align-items: center; gap: 10px;
   background: var(--bg-card); border: 1px solid var(--border); border-radius: 999px; box-shadow: var(--shadow);
@@ -2724,39 +2726,21 @@ function fundingByCompany(f) {
   return out;
 }
 
-// Per layer: companies, share of activity (heat), money raised, partnerships, and
-// where it concentrates — the one company holding the biggest share of that layer's
-// defining links (a bottleneck signal: e.g. one supplier on 30% of supply links).
-const LAYER_ROLE_LINKS = {
-  capital: [["invests_in", "from"]], infra: [["supplies", "from"], ["built_on", "to"]],
-  maker: [["deploys", "to"], ["pilots", "to"], ["supplies", "to"], ["built_on", "from"]], deployer: [["deploys", "from"], ["pilots", "from"]],
-  government: [["regulates", "from"]],
-};
-const LAYER_ROLE_NOUN = { capital: "investment links", infra: "supply links", maker: "customer & supply links",
-                          deployer: "deployments", government: "regulatory links" };
+// Per layer: companies, share of activity (heat), money raised, and the plain sentence from
+// chain.js (same leader rule as the value-chain clouds).
 function layerSummary(f) {
   const view = RoboticsGraph.filterPayload(PAYLOAD, Object.assign({}, f, { egoEntity: "", egoEntity2: "" }));
   const layerOf = new Map(((PAYLOAD.graph && PAYLOAD.graph.nodes) || []).map(n => [n.id, n.layer || "other"]));
   const fund = fundingByCompany(f);
+  const st = RoboticsChain.layerStats(view.edges, layerOf);
   let heatAll = 0;
   view.heat.forEach(v => { heatAll += v; });
   return RoboticsGraph.LAYERS.filter(l => l !== "other").map(l => {
     const members = view.nodes.filter(n => layerOf.get(n.id) === l);
     const heat = members.reduce((s, n) => s + (view.heat.get(n.id) || 0), 0);
     const raised = members.reduce((s, n) => s + ((fund.get(n.id) || {}).total || 0), 0);
-    const partners = view.edges.filter(e => e.rel === "partners_with" && (layerOf.get(e.from) === l || layerOf.get(e.to) === l)).length;
-    const counts = new Map();
-    let total = 0;
-    (LAYER_ROLE_LINKS[l] || []).forEach(([rel, side]) => view.edges.forEach(e => {
-      if (e.rel !== rel) return;
-      const who = e[side];
-      if (layerOf.get(who) !== l) return;
-      counts.set(who, (counts.get(who) || 0) + 1); total += 1;
-    }));
-    let top = null;
-    counts.forEach((n, who) => { if (!top || n > top.n) top = { who, n }; });
-    return { layer: l, companies: members.length, share: heatAll ? heat / heatAll : 0, raised, partners,
-             top: top && total >= 5 ? { who: top.who, pct: Math.round(100 * top.n / total), total } : null };
+    return { layer: l, companies: members.length, share: heatAll ? heat / heatAll : 0, raised,
+             sentence: RoboticsChain.sentence(l, st[l]) };
   });
 }
 
@@ -2772,8 +2756,8 @@ function renderRankList(f) {
     rows = layerSummary(f).map(r => `<div class="gf-rank-layer">
         <div class="gf-rank-row">${dot(r.layer)}<span class="gf-rank-name">${RoboticsGraph.LAYER_LABELS[r.layer]}</span>
           <span class="gf-rank-val">${Math.round(100 * r.share)}%</span></div>
-        <div class="gf-rank-sub">${r.companies} cos · ${r.raised ? fmtUsd(r.raised) + " raised · " : ""}${r.partners} partnerships</div>
-        ${r.top ? `<div class="gf-rank-sub">Most concentrated: <a href="#" data-rank-pick="${esc(r.top.who)}">${esc(r.top.who)}</a>, ${r.top.pct}% of ${r.top.total} ${LAYER_ROLE_NOUN[r.layer]}</div>` : ""}
+        <div class="gf-rank-sub">${r.companies} companies${r.raised ? " · " + fmtUsd(r.raised) + " raised" : ""}</div>
+        <div class="gf-rank-sub">${esc(r.sentence)}</div>
       </div>`).join("") + `<div class="gf-rank-sub">% = share of activity (heat) in this view</div>`;
   } else if (mode === "funding") {
     const list = [...fundingByCompany(f).entries()].sort((a, b) => b[1].total - a[1].total).slice(0, 10);

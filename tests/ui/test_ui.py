@@ -143,14 +143,20 @@ def test_value_chain(pg, port):
     want = pg.evaluate("""() => { const f = effectiveGraphFilters().filters;
       const v = RoboticsGraph.filterPayload(PAYLOAD, Object.assign({}, f, {egoEntity: '', egoEntity2: ''}));
       const lay = new Map(PAYLOAD.graph.nodes.map(n => [n.id, n.layer]));
-      return ['capital', 'infra', 'maker', 'deployer'].map(l => [l, v.nodes.filter(n => lay.get(n.id) === l).length]); }""")
-    check("value chain: 4 columns with the view's company counts", "view2=chain" in pg.evaluate("location.hash") and cols == want, str(cols))
+      return ['capital', 'infra', 'maker', 'deployer', 'government'].map(l => [l, v.nodes.filter(n => lay.get(n.id) === l).length]); }""")
+    check("value chain: 4 columns + government with the view's company counts", "view2=chain" in pg.evaluate("location.hash") and cols == want, str(cols))
     flows = pg.evaluate("Object.fromEntries([...document.querySelectorAll('.vc-flow')].map(f => [f.dataset.kind, +f.dataset.n]))")
     exp = pg.evaluate("""() => { const f = effectiveGraphFilters().filters;
       const v = RoboticsGraph.filterPayload(PAYLOAD, Object.assign({}, f, {egoEntity: '', egoEntity2: ''}));
       const n = t => v.edges.filter(e => t.includes(e.rel)).length;
       return {money: n(['invests_in']), supply: n(['supplies', 'built_on']), deploy: n(['deploys', 'pilots'])}; }""")
     check("value chain: ribbon counts = unique links of each type", {k: v for k, v in exp.items() if v} == flows, f"{flows} vs {exp}")
+    same = pg.evaluate("""() => { const f = effectiveGraphFilters().filters;
+      const v = RoboticsGraph.filterPayload(PAYLOAD, Object.assign({}, f, {egoEntity: '', egoEntity2: ''}));
+      const st = RoboticsChain.layerStats(v.edges, new Map(PAYLOAD.graph.nodes.map(n => [n.id, n.layer])));
+      const sub = [...document.querySelectorAll('.vc-flow-sub')].map(t => t.textContent).join(' | ');
+      return [sub.includes(st.capital.links + ' from Capital companies'), sub.includes(st.infra.links + ' from Chips companies'), sub]; }""")
+    check("value chain: ribbon splits match the clouds' own numbers", same[0] and same[1], same[2][:120])
     ov = pg.evaluate("""() => { const n = PAYLOAD.graph.nodes.find(x => x.layer === 'maker').id;
       const p = Object.assign({}, PAYLOAD, {layout: Object.assign({}, PAYLOAD.layout || {}, {layer_overrides: {[n]: 'deployer'}})});
       return [n, buildFullGraph(p).nodes.find(x => x.id === n).layer]; }""")
@@ -201,7 +207,7 @@ def test_layout(browser, port):
               not overlap(cmp_, legend) and not overlap(cmp_, search) and not overlap(cmp_, d))
         pg.evaluate("location.hash = 'view=graph&tw=90&view2=chain'"); pg.wait_for_timeout(2500)
         vc = box("#chainView"); fp = box("#gfilterPanel")
-        check(f"value chain fills the graph area at {w}px", pg.evaluate("document.querySelectorAll('.vc-col').length") == 4
+        check(f"value chain fills the graph area at {w}px", pg.evaluate("document.querySelectorAll('.vc-col').length") == 5
               and (w <= 760 or not overlap(vc, fp)))
         pg.close()
 
