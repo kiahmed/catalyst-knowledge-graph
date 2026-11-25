@@ -1,6 +1,6 @@
 """Data-cleanup checklist — ONE living file, rebuilt in place from prod (read-only, no LLM, no writes to the DB).
 
-    make cleanup-checklist        →  data/open_items.md
+    make open-items        →  data/open_items.md
 
 Sections (each item has a stable key, so your ticks survive every rebuild):
   A. Concept / non-organization entities (the list from the 2026-11-11 LLM label pass — the only LLM step,
@@ -212,7 +212,7 @@ def build(con) -> tuple[str, list[str]]:
              _layer_candidates(con, ticked, items), "")]
     stamp = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
     lines = ["# Open items — data cleanup + open work", "",
-             f"Rebuilt {stamp} from prod by `make cleanup-checklist` (read-only). Tick `- [x]` as you go; ticks are kept on",
+             f"Rebuilt {stamp} from prod by `make open-items` (read-only). Tick `- [x]` as you go; ticks are kept on",
              "every rebuild, and items prod shows as resolved tick themselves. This is the only cleanup file — rebuild it,",
              "don't make new ones.", ""]
     is_open = re.compile(r"^\s*[-*+]\s+\[ \]")

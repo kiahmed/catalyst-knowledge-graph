@@ -1,7 +1,7 @@
 # Catalyst knowledge-graph — developer commands (Robotics module).
 # Most commands wrap `docker compose` + `curl` for the tool HTTP endpoints.
 
-.PHONY: help setup doctor up down logs ps ps-short cleanup-checklist test-ui layers-heal \
+.PHONY: help setup doctor up down logs ps ps-short open-items test-ui layers-heal \
         ingest ingest-dry ingest-prod export watermark check-log firestore-ping \
         reextract backtest \
         render render-batch render-status \
@@ -227,7 +227,7 @@ ingest-prod:
 # (Two recipe lines on purpose: GNU make runs any line containing $(MAKE) even under `make -n`, so
 # the APPLY branch must never share a line with it.)
 layers-heal:
-	@[ -n "$(APPLY)" ] || $(MAKE) --no-print-directory cleanup-checklist
+	@[ -n "$(APPLY)" ] || $(MAKE) --no-print-directory open-items
 	@if [ -n "$(APPLY)" ]; then \
 	  TOKEN=$$(gcloud auth application-default print-access-token 2>/dev/null) || \
 	    { echo "!! ADC expired — run: gcloud auth application-default login"; exit 1; }; \
@@ -399,7 +399,7 @@ test-ui:
 
 # One living data-cleanup checklist (concept entities, stray aliases, generic aliases), rebuilt in place from
 # prod (read-only); your [x] ticks are kept. → data/open_items.md
-cleanup-checklist:
+open-items:
 	@set -a; . ./.env.prod; set +a; \
 	  docker compose run --rm --no-deps -v "$(CURDIR):/repo" -w /repo \
 	    -v "$$FIREBASE_DEPLOY_KEY:/tmp/sa.json:ro" -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json \
